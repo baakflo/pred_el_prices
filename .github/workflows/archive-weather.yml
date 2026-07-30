@@ -1,0 +1,76 @@
+name: Archive weather
+
+on:
+  schedule:
+    # Three best-effort attempts (GitHub cron can be delayed or skipped);
+    # the archiver is idempotent and exits fast once the day's file exists.
+    # 00Z ICON-EU-EPS files are complete on DWD's server by ~05:30 UTC.
+    - cron: "45 5 * * *"
+    - cron: "0 7 * * *"
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: archive-weather
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Clone data repo
+        run: >
+          git clone
+          "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_weather_archive.git"
+          archive_repo
+
+      - name: Install
+        run: uv sync
+
+      - name: Archive today's 00Z run
+        run: uv run python -m pred_el_prices.cli archive-weather --archive-dir archive_repo
+
+      - name: Push new data
+        run: |
+          cd archive_repo
+          git config user.name "archive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+          else
+            git commit -m "Archive $(date -u +%F)"
+            git push
+          fi
+
+      # Silent gaps are unrecoverable (DWD deletes files after ~24h), so a
+      # missing past day must become a loud signal, not a log line.
+      - name: Gap detection (previous 3 days)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd archive_repo
+          missing=""
+          for d in 1 2 3; do
+            day=$(date -u -d "-$d day" +%Y%m%d)
+            f="icon-eu-eps/${day:0:4}/icon-eu-eps_${day}00.parquet"
+            [ -f "$f" ] || missing="$missing $day"
+          done
+          if [ -n "$missing" ]; then
+            open=$(gh issue list --repo "${{ github.repository }}" --state open \
+              --search "Weather archive gap" --json number --jq 'length')
+            if [ "$open" = "0" ]; then
+              gh issue create --repo "${{ github.repository }}" \
+                --title "Weather archive gap:$missing" \
+                --body "Missing daily ICON-EU-EPS parquet for:$missing. These days are likely unrecoverable (DWD keeps ~24h). Check workflow runs and fix before the gap grows."
+            fi
+          fi
