@@ -45,8 +45,9 @@ def main() -> None:
     fuels.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
     smard = sub.add_parser(
-        "fetch-smard", help="Update the SMARD day-ahead price cache (keyless cross-check)"
+        "fetch-smard", help="Update the SMARD caches (keyless: prices, load, wind/solar)"
     )
+    smard.add_argument("--datasets", nargs="+", default=None, help="Subset (default: all)")
     smard.add_argument("--start", default="2015-01-01", help="UTC start date")
     smard.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
@@ -84,10 +85,16 @@ def main() -> None:
     elif args.command == "fetch-smard":
         import pandas as pd
 
+        from pred_el_prices.pipeline.smard import DATASETS as SMARD_DATASETS
         from pred_el_prices.pipeline.smard import update_cache
 
-        n = update_cache(args.cache_dir, pd.Timestamp(args.start, tz="UTC"))
-        print(f"smard_day_ahead_prices: {n} rows fetched")
+        datasets = args.datasets or list(SMARD_DATASETS)
+        unknown = set(datasets) - set(SMARD_DATASETS)
+        if unknown:
+            parser.error(f"unknown datasets: {sorted(unknown)}; choose from {list(SMARD_DATASETS)}")
+        for dataset in datasets:
+            n = update_cache(args.cache_dir, dataset, pd.Timestamp(args.start, tz="UTC"))
+            print(f"{dataset}: {n} rows fetched", flush=True)
     elif args.command == "report-qa":
         from pred_el_prices.reporting.build import build_qa_report
 

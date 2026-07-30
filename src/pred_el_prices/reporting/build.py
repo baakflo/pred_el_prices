@@ -22,7 +22,9 @@ from pred_el_prices.reporting import qa
 
 
 def _dataset_names() -> list[str]:
-    return [f"entsoe/{n}" for n in DATASETS] + ["smard_day_ahead_prices", "fuels_daily"]
+    from pred_el_prices.pipeline.smard import DATASETS as SMARD_DATASETS
+
+    return [f"entsoe/{n}" for n in DATASETS] + [*SMARD_DATASETS, "fuels_daily"]
 
 
 def compute_artifact(cache_root: Path) -> dict:

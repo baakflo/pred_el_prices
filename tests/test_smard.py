@@ -12,7 +12,7 @@ def ms(s: str) -> int:
 class TestSeriesToFrame:
     def test_parses_and_drops_nulls(self):
         series = [[ms("2020-01-01 00:00"), 30.5], [ms("2020-01-01 01:00"), None]]
-        df = _series_to_frame(series)
+        df = _series_to_frame(series, "price_eur_mwh")
         assert len(df) == 1
         assert df.index[0] == pd.Timestamp("2020-01-01 00:00", tz="UTC")
         assert df["price_eur_mwh"].iloc[0] == 30.5
