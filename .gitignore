@@ -1,3 +1,8 @@
+# Claude conventions (see CLAUDE.md)
+.trash/
+_scratch/
+.claude/settings.local.json
+
 # Data cache and archives are local-only (Parquet cache, weather archive)
 data/
 !data/**/.gitkeep
