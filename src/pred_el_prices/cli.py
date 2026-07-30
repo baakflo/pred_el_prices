@@ -55,6 +55,12 @@ def main() -> None:
     report.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
     report.add_argument("--out", type=Path, default=Path("reports/data_qa"))
 
+    build = sub.add_parser(
+        "build-dataset", help="Build the leakage-safe hourly feature/target table"
+    )
+    build.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    build.add_argument("--out", type=Path, default=Path("data/dataset/hourly.parquet"))
+
     args = parser.parse_args()
     if args.command == "archive-weather":
         from pred_el_prices.pipeline.dwd import archive_run
@@ -100,6 +106,13 @@ def main() -> None:
 
         page = build_qa_report(args.cache_dir, args.out)
         print(f"report written: {page}")
+    elif args.command == "build-dataset":
+        import json
+
+        from pred_el_prices.features.dataset import write_dataset
+
+        summary = write_dataset(args.cache_dir, args.out)
+        print(json.dumps(summary, indent=2))
     else:
         parser.print_help()
 
