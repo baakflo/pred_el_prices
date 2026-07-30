@@ -17,9 +17,25 @@ fuel/carbon costs, merit order structure). Full plan: [docs/pred_el_prices_proje
 ## Setup
 
 ```
-pip install -e ".[dev]"
-copy .env.example .env   # then fill in ENTSOE_API_KEY
+uv sync --extra dev
 ```
+
+The ENTSO-E API key lives outside the repo in `~/.config/pred_el_prices/.env`
+(`ENTSOE_API_KEY=...`); it is never committed.
+
+## CLI
+
+```
+uv run pep archive-weather   # archive today's 00Z ICON-EU-EPS ensemble run
+uv run pep fetch-entsoe      # backfill/update the ENTSO-E cache (resumable, monthly chunks)
+uv run pep fetch-smard       # SMARD day-ahead prices (keyless cross-check source)
+uv run pep fetch-fuels       # daily TTF gas / coal / EUA-proxy settlements (Yahoo)
+uv run pep report-qa         # render the data-QA page into reports/data_qa/
+```
+
+Weather archiving runs unattended via GitHub Actions into
+[pred_el_prices_weather_archive](https://github.com/baakflo/pred_el_prices_weather_archive)
+(DWD deletes files after ~24 h; the forward archive is the only history).
 
 ## Principles
 
