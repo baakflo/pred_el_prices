@@ -40,6 +40,10 @@ def main() -> None:
         "--cache-dir", type=Path, default=Path("data/cache/entsoe"), help="Cache root"
     )
 
+    report = sub.add_parser("report-qa", help="Build the data-QA report page from the cache")
+    report.add_argument("--cache-dir", type=Path, default=Path("data/cache/entsoe"))
+    report.add_argument("--out", type=Path, default=Path("reports/data_qa"))
+
     args = parser.parse_args()
     if args.command == "archive-weather":
         from pred_el_prices.pipeline.dwd import archive_run
@@ -60,6 +64,11 @@ def main() -> None:
         end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
         client = EntsoePandasClient(api_key=entsoe_api_key())
         backfill(client, datasets, start, end, args.cache_dir)
+    elif args.command == "report-qa":
+        from pred_el_prices.reporting.build import build_qa_report
+
+        page = build_qa_report(args.cache_dir, args.out)
+        print(f"report written: {page}")
     else:
         parser.print_help()
 
