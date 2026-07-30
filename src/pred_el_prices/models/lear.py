@@ -15,6 +15,7 @@ Spec (Lago et al. 2021, and the epftoolbox reference code):
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from sklearn.linear_model import Lasso, LassoLarsIC
 
 PRICE_LAG_DAYS = [1, 2, 3, 7]
@@ -102,11 +103,14 @@ def rolling_forecast(
     test_start: pd.Timestamp,
     calibration_window: int,
     progress_every: int = 50,
+    n_jobs: int = 1,
 ) -> pd.Series:
     """Daily-recalibrated LEAR forecasts for every day from test_start to the end.
 
     `df` is hourly with exactly 24 rows per day. Exogenous values of the target
-    day are used (day-ahead forecasts: known pre-auction).
+    day are used (day-ahead forecasts: known pre-auction). Every day's
+    recalibration is independent, so n_jobs parallelizes over test days with
+    identical results to the serial run (the fit is deterministic).
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
@@ -115,14 +119,22 @@ def rolling_forecast(
     exog_all = np.stack([df[c].to_numpy().reshape(-1, 24) for c in exog_cols], axis=2)
     dow_all = np.array([d.dayofweek for d in daily_index])
 
-    preds = []
-    for i, day in enumerate(test_days):
+    def _one_day(day: pd.Timestamp) -> np.ndarray:
         d = daily_index.get_loc(day)
         lo = max(0, d - calibration_window)
         sl = slice(lo, d + 1)
-        preds.append(forecast_day(prices_all[sl], exog_all[sl], dow_all[sl]))
-        if progress_every and (i + 1) % progress_every == 0:
-            print(f"  day {i + 1}/{len(test_days)}", flush=True)
+        return forecast_day(prices_all[sl], exog_all[sl], dow_all[sl])
+
+    if n_jobs == 1:
+        preds = []
+        for i, day in enumerate(test_days):
+            preds.append(_one_day(day))
+            if progress_every and (i + 1) % progress_every == 0:
+                print(f"  day {i + 1}/{len(test_days)}", flush=True)
+    else:
+        preds = Parallel(n_jobs=n_jobs, verbose=5 if progress_every else 0)(
+            delayed(_one_day)(day) for day in test_days
+        )
 
     hours = df.index[df.index >= test_days[0]]
     return pd.Series(np.concatenate(preds), index=hours[: len(preds) * 24], name="lear_forecast")

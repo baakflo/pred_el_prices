@@ -96,3 +96,14 @@ class TestRollingForecast:
         assert preds.index[0] == test_start
         # a sane model beats wild guesses on a strongly periodic series
         assert mae(df["price"].loc[preds.index].values, preds.values) < 5.0
+        # parallel execution is bit-identical to serial (deterministic fits)
+        preds_par = rolling_forecast(
+            df,
+            "price",
+            ["load", "wind"],
+            test_start,
+            calibration_window=25,
+            progress_every=0,
+            n_jobs=2,
+        )
+        assert np.allclose(preds.values, preds_par.values)
