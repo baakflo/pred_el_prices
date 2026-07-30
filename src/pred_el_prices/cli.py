@@ -40,6 +40,12 @@ def main() -> None:
         "--cache-dir", type=Path, default=Path("data/cache/entsoe"), help="Cache root"
     )
 
+    fuels = sub.add_parser(
+        "fetch-fuels", help="Update the daily fuel/carbon price cache (Yahoo proxies)"
+    )
+    fuels.add_argument("--start", default="2015-01-01", help="UTC start date")
+    fuels.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+
     report = sub.add_parser("report-qa", help="Build the data-QA report page from the cache")
     report.add_argument("--cache-dir", type=Path, default=Path("data/cache/entsoe"))
     report.add_argument("--out", type=Path, default=Path("reports/data_qa"))
@@ -64,6 +70,13 @@ def main() -> None:
         end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
         client = EntsoePandasClient(api_key=entsoe_api_key())
         backfill(client, datasets, start, end, args.cache_dir)
+    elif args.command == "fetch-fuels":
+        import pandas as pd
+
+        from pred_el_prices.pipeline.fuels import update_cache
+
+        n = update_cache(args.cache_dir, pd.Timestamp(args.start, tz="UTC"))
+        print(f"fuels_daily: {n} rows fetched")
     elif args.command == "report-qa":
         from pred_el_prices.reporting.build import build_qa_report
 

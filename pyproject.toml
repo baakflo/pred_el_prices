@@ -21,6 +21,7 @@ dependencies = [
     "cfgrib>=0.9.15.1",
     "eccodes>=2.47.0",
     "matplotlib>=3.11.1",
+    "yfinance>=1.5.2",
 ]
 
 [project.optional-dependencies]
