@@ -1,0 +1,263 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>L1 vs L2 — why the LASSO deletes weights</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1060px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2rem}
+  .panels{display:flex;gap:1.5rem;flex-wrap:wrap}
+  .panel{flex:1;min-width:420px}
+  canvas{border:1px solid #ddd;border-radius:4px;touch-action:none;cursor:crosshair}
+  .controls{display:flex;gap:2rem;flex-wrap:wrap;margin:1rem 0;align-items:center}
+  .controls label{font-size:0.9rem}
+  .controls input[type=range]{width:220px;vertical-align:middle}
+  .weights{font-family:ui-monospace,monospace;font-size:0.95rem;margin-top:0.4rem}
+  .zero{background:#ffd54f;padding:0 0.3rem;border-radius:3px;font-weight:bold}
+  .note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem;font-size:0.92rem}
+  .legend{font-size:0.85rem;color:#555}
+</style>
+</head>
+<body>
+<h1>Why L1 deletes weights and L2 only shrinks them</h1>
+<p class="note">
+The <b>black dot</b> is the unregularized least-squares solution — <b>drag it around</b>.
+The blue ellipses are contours of the data-fit loss (their tilt = feature correlation).
+The shaded region is the penalty ball that the regularized solution (<b>red dot</b>) effectively lives on:
+a <b>diamond</b> for L1, a <b>circle</b> for L2. The orange curve is the regularization path —
+where the solution travels as α goes from 0 to ∞.
+</p>
+
+<div class="controls">
+  <label>penalty strength α: <input type="range" id="alpha" min="-2" max="1.3" step="0.01" value="-0.3">
+    <span id="alphaVal"></span></label>
+  <label>feature correlation ρ: <input type="range" id="rho" min="-0.95" max="0.95" step="0.05" value="0.0">
+    <span id="rhoVal"></span></label>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h2>L1 — LASSO</h2>
+    <canvas id="l1" width="470" height="470"></canvas>
+    <div class="weights" id="wl1"></div>
+  </div>
+  <div class="panel">
+    <h2>L2 — ridge (weight decay)</h2>
+    <canvas id="l2" width="470" height="470"></canvas>
+    <div class="weights" id="wl2"></div>
+  </div>
+</div>
+
+<h2>The same thing in 1D: every feature pays rent</h2>
+<p class="legend">Input: the weight the data wants. Output: the weight after regularization, at the current α.
+The LASSO has a dead zone — weights that can't pay the rent α are set to exactly zero.
+Ridge divides by a constant: small weights get smaller, but never zero.</p>
+<canvas id="thresh" width="960" height="300"></canvas>
+
+<h2>What to try</h2>
+<ul style="font-size:0.93rem">
+  <li><b>Drag the black dot close to an axis</b> (data barely needs one feature): the L1 red dot snaps
+      <i>exactly onto the axis</i> — that weight is deleted. The L2 dot never quite gets there.</li>
+  <li><b>Crank α up</b>: watch the L1 path hit an axis and then <i>travel along it</i> (one weight stays
+      dead while the other shrinks). The L2 path is a smooth curve into the origin that never touches
+      an axis first.</li>
+  <li><b>Set ρ ≈ 0.9</b> (strongly correlated features, like our neighboring price lags): the ellipses
+      become a narrow tilted valley. Nudge the black dot slightly and watch the L1 solution jump between
+      the two axes — that is the coefficient instability of LASSO under correlation. Predictions
+      (the loss value) barely change; the <i>attribution</i> flips.</li>
+</ul>
+<p class="note">
+Connection to LEAR: it solves exactly the left panel, but in 247 dimensions — one diamond corner for every
+subset of features. The AIC picks α each morning, i.e. decides how expensive the rent is today; typically
+only a few dozen of the 247 features can afford to stay. The result is a different, interpretable
+feature set for every delivery hour.
+</p>
+
+<script>
+"use strict";
+const W = 3.2; // world half-width in weight units
+const state = { alpha: Math.pow(10, -0.3), rho: 0.0, b: [1.9, 1.1] };
+
+function A() { const r = state.rho; return [[1, r], [r, 1]]; }
+
+function solveRidge(alpha, b) {
+  const a = A();
+  // (A + alpha I) w = A b
+  const m = [[a[0][0] + alpha, a[0][1]], [a[1][0], a[1][1] + alpha]];
+  const rhs = [a[0][0]*b[0] + a[0][1]*b[1], a[1][0]*b[0] + a[1][1]*b[1]];
+  const det = m[0][0]*m[1][1] - m[0][1]*m[1][0];
+  return [(rhs[0]*m[1][1] - rhs[1]*m[0][1]) / det, (rhs[1]*m[0][0] - rhs[0]*m[1][0]) / det];
+}
+
+const soft = (x, t) => Math.sign(x) * Math.max(Math.abs(x) - t, 0);
+
+function solveLasso(alpha, b) {
+  const a = A();
+  let w = [b[0], b[1]];
+  for (let it = 0; it < 200; it++) {
+    // coordinate descent on (w-b)' A (w-b) + alpha * |w|_1
+    w[0] = soft(b[0] - (a[0][1]/a[0][0]) * (w[1] - b[1]), alpha / (2*a[0][0]));
+    w[1] = soft(b[1] - (a[1][0]/a[1][1]) * (w[0] - b[0]), alpha / (2*a[1][1]));
+  }
+  // snap numerically-dead weights so the display shows a clean zero
+  if (Math.abs(w[0]) < 1e-9) w[0] = 0;
+  if (Math.abs(w[1]) < 1e-9) w[1] = 0;
+  return w;
+}
+
+function lossVal(w, b) {
+  const a = A(), d = [w[0]-b[0], w[1]-b[1]];
+  return d[0]*(a[0][0]*d[0] + a[0][1]*d[1]) + d[1]*(a[1][0]*d[0] + a[1][1]*d[1]);
+}
+
+function toPx(cv, w) { return [(w[0]/W + 1) * cv.width/2, (1 - w[1]/W) * cv.height/2]; }
+function toW(cv, x, y) { return [(2*x/cv.width - 1) * W, (1 - 2*y/cv.height) * W]; }
+
+function drawEllipse(ctx, cv, b, level, style, width) {
+  // (w-b)' A (w-b) = level ; eigvecs at 45deg, eigvals 1 +/- rho
+  if (level <= 1e-12) return;
+  const r = state.rho;
+  const r1 = Math.sqrt(level / (1 + r)), r2 = Math.sqrt(level / Math.max(1 - r, 1e-6));
+  const c = toPx(cv, b), sx = cv.width / (2*W);
+  ctx.save();
+  ctx.translate(c[0], c[1]);
+  ctx.rotate(-Math.PI/4);
+  ctx.strokeStyle = style; ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, r1*sx, r2*sx, 0, 0, 2*Math.PI);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBall(ctx, cv, t, kind) {
+  if (t <= 1e-9) return;
+  const o = toPx(cv, [0,0]), s = cv.width / (2*W) * t;
+  ctx.fillStyle = "rgba(255,152,0,0.13)";
+  ctx.strokeStyle = "rgba(230,120,0,0.8)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  if (kind === "l1") {
+    ctx.moveTo(o[0]+s, o[1]); ctx.lineTo(o[0], o[1]-s); ctx.lineTo(o[0]-s, o[1]); ctx.lineTo(o[0], o[1]+s);
+    ctx.closePath();
+  } else {
+    ctx.arc(o[0], o[1], s, 0, 2*Math.PI);
+  }
+  ctx.fill(); ctx.stroke();
+}
+
+function drawPanel(id, kind) {
+  const cv = document.getElementById(id), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  // axes
+  ctx.strokeStyle = "#bbb"; ctx.lineWidth = 1;
+  const o = toPx(cv, [0,0]);
+  ctx.beginPath(); ctx.moveTo(0, o[1]); ctx.lineTo(cv.width, o[1]);
+  ctx.moveTo(o[0], 0); ctx.lineTo(o[0], cv.height); ctx.stroke();
+
+  const b = state.b;
+  const sol = kind === "l1" ? solveLasso(state.alpha, b) : solveRidge(state.alpha, b);
+
+  // fixed loss contours
+  for (const lv of [0.15, 0.6, 1.5, 3.0, 5.5]) drawEllipse(ctx, cv, b, lv, "rgba(30,110,190,0.25)", 1);
+  // the contour through the solution: the tangency picture
+  drawEllipse(ctx, cv, b, lossVal(sol, b), "rgba(30,110,190,0.9)", 1.8);
+
+  // penalty ball through the solution
+  const t = kind === "l1" ? Math.abs(sol[0]) + Math.abs(sol[1]) : Math.hypot(sol[0], sol[1]);
+  drawBall(ctx, cv, t, kind);
+
+  // regularization path
+  ctx.strokeStyle = "rgba(255,120,0,0.9)"; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  let first = true;
+  for (let i = 0; i <= 90; i++) {
+    const al = Math.pow(10, -2.2 + i * (1.8 - (-2.2)) / 90);
+    const p = toPx(cv, kind === "l1" ? solveLasso(al, b) : solveRidge(al, b));
+    first ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]);
+    first = false;
+  }
+  ctx.stroke();
+
+  // OLS dot (draggable)
+  const bp = toPx(cv, b);
+  ctx.fillStyle = "#111";
+  ctx.beginPath(); ctx.arc(bp[0], bp[1], 6, 0, 2*Math.PI); ctx.fill();
+  // solution dot
+  const sp = toPx(cv, sol);
+  ctx.fillStyle = "#d32f2f";
+  ctx.beginPath(); ctx.arc(sp[0], sp[1], 6, 0, 2*Math.PI); ctx.fill();
+
+  const fmt = (x) => x === 0
+    ? '<span class="zero">w = 0 — deleted</span>'
+    : "w = " + x.toFixed(3);
+  document.getElementById(kind === "l1" ? "wl1" : "wl2").innerHTML =
+    "w₁: " + fmt(sol[0]) + " &nbsp;&nbsp; w₂: " + fmt(sol[1]) +
+    ' &nbsp;&nbsp;<span class="legend">(black: w₁ = ' + b[0].toFixed(2) + ", w₂ = " + b[1].toFixed(2) + ")</span>";
+}
+
+function drawThresh() {
+  const cv = document.getElementById("thresh"), ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  const X = 3, toP = (x, y) => [(x/X + 1) * cv.width/2, (1 - y/X) * cv.height/2 * (cv.height/cv.height)];
+  const o = toP(0, 0);
+  ctx.strokeStyle = "#bbb"; ctx.beginPath();
+  ctx.moveTo(0, o[1]); ctx.lineTo(cv.width, o[1]); ctx.moveTo(o[0], 0); ctx.lineTo(o[0], cv.height); ctx.stroke();
+  // identity
+  ctx.strokeStyle = "#ccc"; ctx.setLineDash([5,4]); ctx.beginPath();
+  let p = toP(-X, -X); ctx.moveTo(p[0], p[1]); p = toP(X, X); ctx.lineTo(p[0], p[1]); ctx.stroke();
+  ctx.setLineDash([]);
+  const al = state.alpha;
+  // lasso: soft threshold
+  ctx.strokeStyle = "#d32f2f"; ctx.lineWidth = 2; ctx.beginPath();
+  for (let i = 0; i <= 300; i++) {
+    const x = -X + 2*X*i/300, y = soft(x, al/2);
+    const q = toP(x, y); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]);
+  }
+  ctx.stroke();
+  // ridge: shrink
+  ctx.strokeStyle = "#1976d2"; ctx.lineWidth = 2; ctx.beginPath();
+  for (let i = 0; i <= 300; i++) {
+    const x = -X + 2*X*i/300, y = x / (1 + al);
+    const q = toP(x, y); i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]);
+  }
+  ctx.stroke();
+  ctx.font = "13px system-ui"; ctx.fillStyle = "#d32f2f";
+  ctx.fillText("L1: soft threshold (dead zone = rent)", 20, 24);
+  ctx.fillStyle = "#1976d2";
+  ctx.fillText("L2: divide by (1+α) — never exactly zero", 20, 44);
+}
+
+function render() {
+  document.getElementById("alphaVal").textContent = state.alpha.toFixed(2);
+  document.getElementById("rhoVal").textContent = state.rho.toFixed(2);
+  drawPanel("l1", "l1");
+  drawPanel("l2", "l2");
+  drawThresh();
+}
+
+document.getElementById("alpha").addEventListener("input", (e) => {
+  state.alpha = Math.pow(10, parseFloat(e.target.value)); render();
+});
+document.getElementById("rho").addEventListener("input", (e) => {
+  state.rho = parseFloat(e.target.value); render();
+});
+
+for (const id of ["l1", "l2"]) {
+  const cv = document.getElementById(id);
+  let dragging = false;
+  const move = (e) => {
+    if (!dragging) return;
+    const r = cv.getBoundingClientRect();
+    const w = toW(cv, e.clientX - r.left, e.clientY - r.top);
+    state.b = [Math.max(-3, Math.min(3, w[0])), Math.max(-3, Math.min(3, w[1]))];
+    render();
+  };
+  cv.addEventListener("pointerdown", (e) => { dragging = true; cv.setPointerCapture(e.pointerId); move(e); });
+  cv.addEventListener("pointermove", move);
+  cv.addEventListener("pointerup", () => { dragging = false; });
+}
+
+render();
+</script>
+</body>
+</html>
