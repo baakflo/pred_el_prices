@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-07-30T09:28:06+00:00",
+  "generated_utc": "2026-07-30T09:58:02+00:00",
   "datasets": {
     "entsoe/day_ahead_prices": {
       "rows": 123092,
@@ -900,14 +900,14 @@
       ]
     },
     "entsoe/wind_solar_forecast": {
-      "rows": 90528,
+      "rows": 405924,
       "columns": [
         "Solar",
         "Wind Offshore",
         "Wind Onshore"
       ],
       "first": "2015-01-01 00:00:00+00:00",
-      "last": "2017-07-31 23:45:00+00:00",
+      "last": "2026-07-30 08:45:00+00:00",
       "duplicate_timestamps": 0,
       "resolution_switches": [],
       "coverage_by_year": [
@@ -925,8 +925,62 @@
         },
         {
           "year": 2017,
-          "hours_present": 5088,
-          "hours_in_span": 5088,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2018,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2019,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2020,
+          "hours_present": 8784,
+          "hours_in_span": 8784,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2021,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2022,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2023,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2024,
+          "hours_present": 8784,
+          "hours_in_span": 8784,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2025,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2026,
+          "hours_present": 5049,
+          "hours_in_span": 5049,
           "coverage_pct": 100.0
         }
       ],
@@ -955,11 +1009,295 @@
         {
           "date": "2017-03-26",
           "rows": 92
+        },
+        {
+          "date": "2017-10-29",
+          "rows": 100
+        },
+        {
+          "date": "2018-03-25",
+          "rows": 92
+        },
+        {
+          "date": "2018-10-28",
+          "rows": 100
+        },
+        {
+          "date": "2019-03-31",
+          "rows": 92
+        },
+        {
+          "date": "2019-10-27",
+          "rows": 100
+        },
+        {
+          "date": "2020-03-29",
+          "rows": 92
+        },
+        {
+          "date": "2020-10-25",
+          "rows": 100
+        },
+        {
+          "date": "2021-03-28",
+          "rows": 92
+        },
+        {
+          "date": "2021-10-31",
+          "rows": 100
+        },
+        {
+          "date": "2022-03-27",
+          "rows": 92
+        },
+        {
+          "date": "2022-10-30",
+          "rows": 100
+        },
+        {
+          "date": "2023-03-26",
+          "rows": 92
+        },
+        {
+          "date": "2023-10-29",
+          "rows": 100
+        },
+        {
+          "date": "2024-03-31",
+          "rows": 92
+        },
+        {
+          "date": "2024-10-27",
+          "rows": 100
+        },
+        {
+          "date": "2025-03-30",
+          "rows": 92
+        },
+        {
+          "date": "2025-10-26",
+          "rows": 100
+        },
+        {
+          "date": "2026-03-29",
+          "rows": 92
         }
       ]
     },
     "entsoe/generation": {
-      "rows": 0
+      "rows": 405924,
+      "columns": [
+        "Biomass / Actual Aggregated",
+        "Biomass / Actual Consumption",
+        "Fossil Brown coal/Lignite / Actual Aggregated",
+        "Fossil Brown coal/Lignite / Actual Consumption",
+        "Fossil Coal-derived gas / Actual Aggregated",
+        "Fossil Coal-derived gas / Actual Consumption",
+        "Fossil Gas / Actual Aggregated",
+        "Fossil Gas / Actual Consumption",
+        "Fossil Hard coal / Actual Aggregated",
+        "Fossil Hard coal / Actual Consumption",
+        "Fossil Oil / Actual Aggregated",
+        "Fossil Oil / Actual Consumption",
+        "Geothermal / Actual Aggregated",
+        "Geothermal / Actual Consumption",
+        "Hydro Pumped Storage / Actual Aggregated",
+        "Hydro Pumped Storage / Actual Consumption",
+        "Hydro Run-of-river and poundage / Actual Aggregated",
+        "Hydro Run-of-river and poundage / Actual Consumption",
+        "Hydro Water Reservoir / Actual Aggregated",
+        "Hydro Water Reservoir / Actual Consumption",
+        "Nuclear / Actual Aggregated",
+        "Nuclear / Actual Consumption",
+        "Other / Actual Aggregated",
+        "Other / Actual Consumption",
+        "Other renewable / Actual Aggregated",
+        "Other renewable / Actual Consumption",
+        "Solar / Actual Aggregated",
+        "Solar / Actual Consumption",
+        "Waste / Actual Aggregated",
+        "Waste / Actual Consumption",
+        "Wind Offshore / Actual Aggregated",
+        "Wind Onshore / Actual Aggregated",
+        "Wind Onshore / Actual Consumption"
+      ],
+      "first": "2015-01-01 00:00:00+00:00",
+      "last": "2026-07-30 08:45:00+00:00",
+      "duplicate_timestamps": 0,
+      "resolution_switches": [],
+      "coverage_by_year": [
+        {
+          "year": 2015,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2016,
+          "hours_present": 8784,
+          "hours_in_span": 8784,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2017,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2018,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2019,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2020,
+          "hours_present": 8784,
+          "hours_in_span": 8784,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2021,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2022,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2023,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2024,
+          "hours_present": 8784,
+          "hours_in_span": 8784,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2025,
+          "hours_present": 8760,
+          "hours_in_span": 8760,
+          "coverage_pct": 100.0
+        },
+        {
+          "year": 2026,
+          "hours_present": 5049,
+          "hours_in_span": 5049,
+          "coverage_pct": 100.0
+        }
+      ],
+      "missing_hours": {
+        "count": 0,
+        "hours": [],
+        "truncated": false
+      },
+      "dst_days": [
+        {
+          "date": "2015-03-29",
+          "rows": 92
+        },
+        {
+          "date": "2015-10-25",
+          "rows": 100
+        },
+        {
+          "date": "2016-03-27",
+          "rows": 92
+        },
+        {
+          "date": "2016-10-30",
+          "rows": 100
+        },
+        {
+          "date": "2017-03-26",
+          "rows": 92
+        },
+        {
+          "date": "2017-10-29",
+          "rows": 100
+        },
+        {
+          "date": "2018-03-25",
+          "rows": 92
+        },
+        {
+          "date": "2018-10-28",
+          "rows": 100
+        },
+        {
+          "date": "2019-03-31",
+          "rows": 92
+        },
+        {
+          "date": "2019-10-27",
+          "rows": 100
+        },
+        {
+          "date": "2020-03-29",
+          "rows": 92
+        },
+        {
+          "date": "2020-10-25",
+          "rows": 100
+        },
+        {
+          "date": "2021-03-28",
+          "rows": 92
+        },
+        {
+          "date": "2021-10-31",
+          "rows": 100
+        },
+        {
+          "date": "2022-03-27",
+          "rows": 92
+        },
+        {
+          "date": "2022-10-30",
+          "rows": 100
+        },
+        {
+          "date": "2023-03-26",
+          "rows": 92
+        },
+        {
+          "date": "2023-10-29",
+          "rows": 100
+        },
+        {
+          "date": "2024-03-31",
+          "rows": 92
+        },
+        {
+          "date": "2024-10-27",
+          "rows": 100
+        },
+        {
+          "date": "2025-03-30",
+          "rows": 92
+        },
+        {
+          "date": "2025-10-26",
+          "rows": 100
+        },
+        {
+          "date": "2026-03-29",
+          "rows": 92
+        }
+      ]
     },
     "smard_day_ahead_prices": {
       "rows": 101386,
