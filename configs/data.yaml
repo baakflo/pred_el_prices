@@ -1,0 +1,9 @@
+# Data pipeline configuration (Phase 0)
+bidding_zone: DE_LU          # entsoe-py area code; DE_AT_LU before 2018-10-01 handled explicitly
+start: "2015-01-01"
+end: null                    # null = today
+timezone_internal: UTC       # store everything UTC; convert to Europe/Berlin only for display
+target_resolution: 60min     # harmonize 15-min MTU (post-2025) to hourly for the benchmark dataset
+
+cache_dir: data/cache
+archive_dir: data/archive

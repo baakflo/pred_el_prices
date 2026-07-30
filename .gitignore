@@ -1,0 +1,20 @@
+# Data cache and archives are local-only (Parquet cache, weather archive)
+data/
+!data/**/.gitkeep
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# IDE
+.idea/
+.vscode/

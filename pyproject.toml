@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pred-el-prices"
+version = "0.1.0"
+description = "Probabilistic day-ahead electricity price forecasting for the German bidding zone (DE-LU)"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "entsoe-py>=0.6",
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "numpy>=1.26",
+    "requests>=2.32",
+    "tenacity>=8.3",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+pep = "pred_el_prices.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pred_el_prices"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
