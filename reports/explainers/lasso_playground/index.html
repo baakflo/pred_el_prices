@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>L1 vs L2 — why the LASSO deletes weights</title>
+<script>
+  MathJax = { tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["$$", "$$"]] } };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
 <style>
   body{font-family:system-ui,sans-serif;max-width:1060px;margin:2rem auto;padding:0 1rem;color:#222}
   h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2rem}
@@ -20,6 +24,24 @@
 </head>
 <body>
 <h1>Why L1 deletes weights and L2 only shrinks them</h1>
+
+<div class="note" style="border-left-color:#ce93d8">
+<p><b>The two objectives</b> (identical data-fit term, different penalty):</p>
+<p>$$\hat{w}_{\text{ridge}} \;=\; \arg\min_{w}\; \underbrace{\lVert y - Xw \rVert_2^2}_{\text{data fit}}
+\;+\; \alpha \underbrace{\sum_j w_j^2}_{\lVert w\rVert_2^2}$$</p>
+<p>$$\hat{w}_{\text{lasso}} \;=\; \arg\min_{w}\; \underbrace{\lVert y - Xw \rVert_2^2}_{\text{data fit}}
+\;+\; \alpha \underbrace{\sum_j |w_j|}_{\lVert w\rVert_1}$$</p>
+<p><b>Closed-form solutions in the 1D / uncorrelated case</b> (what the bottom plot draws), with
+\(w^{\text{OLS}}\) the unregularized weight:</p>
+<p>$$\hat{w}_{\text{ridge}} = \frac{w^{\text{OLS}}}{1+\alpha}
+\qquad\qquad
+\hat{w}_{\text{lasso}} = \operatorname{sign}\!\left(w^{\text{OLS}}\right)\,
+\max\!\left(|w^{\text{OLS}}| - \tfrac{\alpha}{2},\; 0\right)$$</p>
+<p style="font-size:0.88rem;color:#555">The \(\max(\cdot,0)\) is the dead zone: a weight smaller than the rent
+\(\alpha/2\) is set to exactly zero. The squared penalty has derivative \(2\alpha w \to 0\) near the origin —
+the push toward zero fades out, so ridge never completes the kill; the absolute value keeps a constant push
+\(\pm\alpha\) all the way in.</p>
+</div>
 <p class="note">
 The <b>black dot</b> is the unregularized least-squares solution — <b>drag it around</b>.
 The blue ellipses are contours of the data-fit loss (their tilt = feature correlation).
