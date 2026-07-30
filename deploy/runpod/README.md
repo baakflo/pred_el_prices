@@ -27,7 +27,7 @@ RunPod console → Templates → New Template:
 
 | field | value |
 |---|---|
-| Container Image | `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` (GPU) or any official CPU image for LEAR-only work |
+| Container Image | `runpod/pytorch:1.1.0-rc.146-cu1281-torch291-ubuntu2404` (newest torch/CUDA pairing as of 2026-07; the image's own python/torch go unused — uv provisions the env from the lockfile) |
 | Container Start Command | see below |
 | Container Disk | 20 GB |
 | Volume | 30 GB mounted at `/workspace` (survives pod stop/restart) |
