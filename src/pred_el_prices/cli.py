@@ -36,9 +36,7 @@ def main() -> None:
     )
     fetch.add_argument("--start", default="2015-01-01", help="UTC start date")
     fetch.add_argument("--end", default=None, help="UTC end date (default: now)")
-    fetch.add_argument(
-        "--cache-dir", type=Path, default=Path("data/cache/entsoe"), help="Cache root"
-    )
+    fetch.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
     fuels = sub.add_parser(
         "fetch-fuels", help="Update the daily fuel/carbon price cache (Yahoo proxies)"
@@ -46,8 +44,14 @@ def main() -> None:
     fuels.add_argument("--start", default="2015-01-01", help="UTC start date")
     fuels.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
+    smard = sub.add_parser(
+        "fetch-smard", help="Update the SMARD day-ahead price cache (keyless cross-check)"
+    )
+    smard.add_argument("--start", default="2015-01-01", help="UTC start date")
+    smard.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+
     report = sub.add_parser("report-qa", help="Build the data-QA report page from the cache")
-    report.add_argument("--cache-dir", type=Path, default=Path("data/cache/entsoe"))
+    report.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
     report.add_argument("--out", type=Path, default=Path("reports/data_qa"))
 
     args = parser.parse_args()
@@ -77,6 +81,13 @@ def main() -> None:
 
         n = update_cache(args.cache_dir, pd.Timestamp(args.start, tz="UTC"))
         print(f"fuels_daily: {n} rows fetched")
+    elif args.command == "fetch-smard":
+        import pandas as pd
+
+        from pred_el_prices.pipeline.smard import update_cache
+
+        n = update_cache(args.cache_dir, pd.Timestamp(args.start, tz="UTC"))
+        print(f"smard_day_ahead_prices: {n} rows fetched")
     elif args.command == "report-qa":
         from pred_el_prices.reporting.build import build_qa_report
 

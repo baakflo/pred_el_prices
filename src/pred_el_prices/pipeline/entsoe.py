@@ -105,14 +105,14 @@ def backfill(
 ) -> None:
     """Fetch month by month into the cache; resumes from the last cached month."""
     for dataset in datasets:
-        resume = cache.last_timestamp(cache_root, dataset)
+        resume = cache.last_timestamp(cache_root, f"entsoe/{dataset}")
         ds_start = start
         if resume is not None:
             # refetch the last cached month in full: it may be partial
             ds_start = max(start, resume.normalize().replace(day=1))
         for m_start, m_end in month_ranges(ds_start, end):
             df = fetch(client, dataset, m_start, m_end)
-            cache.upsert(cache_root, dataset, df)
+            cache.upsert(cache_root, f"entsoe/{dataset}", df)
             print(f"{dataset} {m_start:%Y-%m}: {len(df)} rows", flush=True)
             time.sleep(sleep_s)
 

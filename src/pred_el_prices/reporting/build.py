@@ -21,12 +21,16 @@ from pred_el_prices.pipeline.entsoe import DATASETS, resample_hourly
 from pred_el_prices.reporting import qa
 
 
+def _dataset_names() -> list[str]:
+    return [f"entsoe/{n}" for n in DATASETS] + ["smard_day_ahead_prices", "fuels_daily"]
+
+
 def compute_artifact(cache_root: Path) -> dict:
     artifact: dict = {
         "generated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "datasets": {},
     }
-    for name in DATASETS:
+    for name in _dataset_names():
         df = cache.load(cache_root, name)
         entry: dict = {"rows": len(df)}
         if not df.empty:
@@ -44,7 +48,7 @@ def compute_artifact(cache_root: Path) -> dict:
                     ),
                 }
             )
-            if name == "day_ahead_prices":
+            if "price_eur_mwh" in df.columns:
                 entry["price_stats_by_year"] = qa.price_stats_by_year(df["price_eur_mwh"])
         artifact["datasets"][name] = entry
     return artifact
@@ -53,7 +57,9 @@ def compute_artifact(cache_root: Path) -> dict:
 def make_figures(cache_root: Path, out_dir: Path) -> list[str]:
     """Overview figures; returns the written filenames."""
     figures = []
-    prices = cache.load(cache_root, "day_ahead_prices")
+    prices = cache.load(cache_root, "entsoe/day_ahead_prices")
+    if prices.empty:
+        prices = cache.load(cache_root, "smard_day_ahead_prices")
     if not prices.empty:
         hourly = resample_hourly(prices)["price_eur_mwh"]
         weekly = hourly.resample("7D").agg(["mean", "min", "max"])
