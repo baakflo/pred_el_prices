@@ -61,6 +61,12 @@ class TestMetrics:
         test = prices[prices.index >= idx[14 * 24]]
         assert rmae_with_history(prices, test, test.values) == 0.0
 
+    def test_weekly_naive_is_pure_lag7(self):
+        idx = pd.date_range("2020-01-06", periods=14 * 24, freq="1h", tz="UTC")
+        prices = pd.Series(np.arange(len(idx), dtype=float), index=idx)
+        naive = naive_forecast(prices, kind="weekly")
+        assert naive[idx[24 * 8]] == prices[idx[24 * 8] - pd.Timedelta(days=7)]
+
 
 def pytest_approx(x):
     import pytest

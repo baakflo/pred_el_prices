@@ -21,22 +21,29 @@ def smape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(100 * np.mean(2 * np.abs(y_pred - y_true) / (np.abs(y_true) + np.abs(y_pred))))
 
 
-def naive_forecast(prices: pd.Series) -> pd.Series:
-    """Standard EPF naive: Tue-Fri copy yesterday, Mon/Sat/Sun copy last week.
+def naive_forecast(prices: pd.Series, kind: str = "mixed") -> pd.Series:
+    """EPF naive baselines on an hourly series (first 7 days yield NaN).
 
-    `prices` is an hourly series; the first 7 days yield NaN.
+    kind="mixed": Tue-Fri copy yesterday, Mon/Sat/Sun copy last week (the
+    "standard" naive). kind="weekly": always copy last week — this is the
+    baseline behind the published rMAE tables in Lago et al. 2021.
     """
-    lag1 = prices.shift(24)
     lag7 = prices.shift(24 * 7)
+    if kind == "weekly":
+        return lag7
+    lag1 = prices.shift(24)
     use_weekly = prices.index.dayofweek.isin([0, 5, 6])  # Mon, Sat, Sun
     return lag7.where(use_weekly, lag1)
 
 
-def rmae_with_history(history: pd.Series, test: pd.Series, y_pred: np.ndarray) -> float:
+def rmae_with_history(
+    history: pd.Series, test: pd.Series, y_pred: np.ndarray, kind: str = "weekly"
+) -> float:
     """rMAE where the naive baseline may reach 7 days before the test period.
 
     `history` must contain hourly prices covering at least 7 days before
-    `test.index[0]` up to `test.index[-1]`.
+    `test.index[0]` up to `test.index[-1]`. Default kind matches the paper's
+    published tables (weekly persistence).
     """
-    naive = naive_forecast(history).reindex(test.index)
+    naive = naive_forecast(history, kind).reindex(test.index)
     return mae(test.values, y_pred) / mae(test.values, naive.values)
