@@ -1,0 +1,25 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>LEAR benchmark reproduction — EPEX-DE</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}
+table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #ccc;padding:0.35rem 0.7rem;text-align:right}
+th{background:#f0f0f0}img{max-width:100%}code{background:#f5f5f5;padding:0.1rem 0.3rem}</style></head><body>
+<h1>Reproducing the LEAR benchmark (Lago et al. 2021, EPEX-DE)</h1>
+<p>Generated 2026-07-30T13:37:38+00:00. Our reimplementation
+(<code>pred_el_prices.models.lear</code>) run on the paper's open dataset
+(<a href='https://zenodo.org/records/4624805'>Zenodo 4624805</a>, 2012&ndash;2017), 728-day test period
+(2016-01-04 to 2017-12-31), daily recalibration &mdash; against the published Table&nbsp;2 values.</p>
+<table><thead><tr><th>model</th><th>MAE</th><th>pub.</th><th>rMAE</th><th>pub.</th>
+<th>sMAPE&nbsp;%</th><th>pub.</th><th>RMSE</th><th>pub.</th><th>runtime&nbsp;min</th></tr></thead>
+<tbody><tr><td>LEAR<sub>56</sub></td><td>4.593</td><td>4.619</td><td>0.504</td><td>0.506</td><td>17.44</td><td>17.6</td><td>8.267</td><td>8.122</td><td>4.5</td></tr><tr><td>LEAR<sub>84</sub></td><td>4.529</td><td>4.555</td><td>0.497</td><td>0.499</td><td>17.24</td><td>17.49</td><td>8.043</td><td>7.923</td><td>8.8</td></tr><tr><td>LEAR<sub>1092</sub></td><td>3.906</td><td>4.108</td><td>0.429</td><td>0.45</td><td>16.67</td><td>16.98</td><td>6.495</td><td>6.996</td><td>66.4</td></tr><tr><td>LEAR<sub>1456</sub></td><td>3.958</td><td>4.118</td><td>0.434</td><td>0.451</td><td>16.99</td><td>17.05</td><td>6.466</td><td>6.987</td><td>94.2</td></tr></tbody></table>
+<p><strong>Short windows (56/84) match within 1&ndash;2%</strong> &mdash; the pipeline is faithful.
+<strong>Long windows beat the published numbers by ~4&ndash;7%</strong>; the sklearn AIC computation in
+<code>LassoLarsIC</code> was corrected (~v1.2, after the paper), and with n&nbsp;&raquo;&nbsp;p the criterion
+drives regularization selection. Same algorithm, corrected implementation. rMAE uses the paper's
+weekly-persistence naive. Deviation note: for windows 56/84 (samples&nbsp;&lt;&nbsp;features) modern sklearn
+requires an explicit noise-variance estimate; we use the per-hour target variance.</p>
+<img src='sample_weeks.png' alt='forecast vs actual sample weeks'>
+<img src='rolling_mae.png' alt='rolling MAE'>
+<p>Context (published, same protocol): best individual DNN MAE 4.071, DNN ensemble 3.998,
+LEAR ensemble 3.955. Our single LEAR(1092) at 3.906 already sits below all of them &mdash;
+five years of library fixes quietly moved the baseline.</p>
+</body></html>

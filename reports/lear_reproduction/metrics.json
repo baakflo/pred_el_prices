@@ -1,0 +1,54 @@
+{
+  "56": {
+    "MAE": 4.593,
+    "rMAE": 0.504,
+    "sMAPE": 17.44,
+    "RMSE": 8.267,
+    "minutes": 4.5,
+    "published": {
+      "MAE": 4.619,
+      "rMAE": 0.506,
+      "sMAPE": 17.6,
+      "RMSE": 8.122
+    }
+  },
+  "84": {
+    "MAE": 4.529,
+    "rMAE": 0.497,
+    "sMAPE": 17.24,
+    "RMSE": 8.043,
+    "minutes": 8.8,
+    "published": {
+      "MAE": 4.555,
+      "rMAE": 0.499,
+      "sMAPE": 17.49,
+      "RMSE": 7.923
+    }
+  },
+  "1092": {
+    "MAE": 3.906,
+    "rMAE": 0.429,
+    "sMAPE": 16.67,
+    "RMSE": 6.495,
+    "minutes": 66.4,
+    "published": {
+      "MAE": 4.108,
+      "rMAE": 0.45,
+      "sMAPE": 16.98,
+      "RMSE": 6.996
+    }
+  },
+  "1456": {
+    "MAE": 3.958,
+    "rMAE": 0.434,
+    "sMAPE": 16.99,
+    "RMSE": 6.466,
+    "minutes": 94.2,
+    "published": {
+      "MAE": 4.118,
+      "rMAE": 0.451,
+      "sMAPE": 17.05,
+      "RMSE": 6.987
+    }
+  }
+}
