@@ -96,6 +96,19 @@ def dst_day_check(df: pd.DataFrame, years: list[int]) -> list[dict]:
     return out
 
 
+def cross_check(a: pd.Series, b: pd.Series, tolerance: float = 0.01) -> dict:
+    """Agreement between two hourly views of the same quantity (e.g. two portals)."""
+    joined = pd.concat([a.rename("a"), b.rename("b")], axis=1).dropna()
+    diff = (joined["a"] - joined["b"]).abs()
+    return {
+        "n_common_hours": len(joined),
+        "mean_abs_diff": round(float(diff.mean()), 4),
+        "max_abs_diff": round(float(diff.max()), 4),
+        "n_beyond_tolerance": int((diff > tolerance).sum()),
+        "correlation": round(float(joined["a"].corr(joined["b"])), 6),
+    }
+
+
 def _is_dst_transition_day(day: pd.Timestamp) -> bool:
     # a naive +1 day on a tz-aware timestamp adds 24 absolute hours, which is
     # exactly wrong on transition days; go via wall-clock midnight instead

@@ -62,6 +62,14 @@ def compute_artifact(cache_root: Path) -> dict:
             if "price_eur_mwh" in df.columns:
                 entry["price_stats_by_year"] = qa.price_stats_by_year(df["price_eur_mwh"])
         artifact["datasets"][name] = entry
+
+    entsoe_prices = cache.load(cache_root, "entsoe/day_ahead_prices")
+    smard_prices = cache.load(cache_root, "smard_day_ahead_prices")
+    if not entsoe_prices.empty and not smard_prices.empty:
+        artifact["price_cross_check"] = qa.cross_check(
+            resample_hourly(entsoe_prices)["price_eur_mwh"],
+            resample_hourly(smard_prices)["price_eur_mwh"],
+        )
     return artifact
 
 
@@ -128,6 +136,9 @@ def render_html(artifact: dict, figures: list[str]) -> str:
     ]
     for fig in figures:
         parts.append(f"<img src='{escape(fig)}' alt='{escape(fig)}'>")
+    if "price_cross_check" in artifact:
+        parts.append("<h2>Price cross-check: ENTSO-E vs SMARD (hourly means)</h2>")
+        parts.append(_table([artifact["price_cross_check"]]))
     for name, entry in artifact["datasets"].items():
         parts.append(f"<h2>{escape(name)}</h2>")
         if entry["rows"] == 0:

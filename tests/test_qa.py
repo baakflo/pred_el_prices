@@ -63,6 +63,26 @@ class TestPriceStats:
         assert row["max"] == 600.0
 
 
+class TestCrossCheck:
+    def test_identical_series_agree(self):
+        idx = pd.date_range("2020-01-01", periods=24, freq="1h", tz="UTC")
+        s = pd.Series(range(24), index=idx, dtype=float)
+        result = qa.cross_check(s, s.copy())
+        assert result["n_common_hours"] == 24
+        assert result["max_abs_diff"] == 0.0
+        assert result["n_beyond_tolerance"] == 0
+
+    def test_deviation_counted_and_partial_overlap(self):
+        idx = pd.date_range("2020-01-01", periods=24, freq="1h", tz="UTC")
+        a = pd.Series(range(24), index=idx, dtype=float)
+        b = a.iloc[:12].copy()
+        b.iloc[0] += 5.0
+        result = qa.cross_check(a, b)
+        assert result["n_common_hours"] == 12
+        assert result["max_abs_diff"] == 5.0
+        assert result["n_beyond_tolerance"] == 1
+
+
 class TestDstDayCheck:
     def test_spring_and_fall_days_flagged_with_correct_counts(self):
         idx = pd.date_range(
