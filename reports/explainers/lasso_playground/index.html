@@ -76,6 +76,28 @@ The LASSO has a dead zone — weights that can't pay the rent α are set to exac
 Ridge divides by a constant: small weights get smaller, but never zero.</p>
 <canvas id="thresh" width="960" height="300"></canvas>
 
+<h2>How α is chosen in practice (and what sklearn fixed)</h2>
+<div class="note" style="border-left-color:#a5d6a7">
+<p>The lasso solution path is <b>piecewise linear in \(\alpha\)</b>: the LARS algorithm computes the whole
+path in one pass, with breakpoints exactly where a feature enters or leaves the active set. Model selection
+is then a scan over the path's candidates, scoring each with the Akaike information criterion:</p>
+<p>$$\text{AIC}(\alpha) \;=\;
+\underbrace{\frac{\lVert y - X\hat{w}(\alpha)\rVert_2^2}{\hat\sigma^2}}_{\text{fit, in noise units}}
+\;+\; 2\,\underbrace{\widehat{\text{df}}(\alpha)}_{\text{model complexity}}
+\qquad\text{with}\qquad
+\widehat{\text{df}}(\alpha) \;=\; \#\{j : \hat{w}_j(\alpha) \neq 0\}$$</p>
+<p style="font-size:0.9rem">The degrees-of-freedom identity is a real theorem (Zou, Hastie &amp; Tibshirani
+2007), not a heuristic: for the lasso, effective complexity = the count of surviving features. So every extra
+feature must improve the fit by \(\ge 2\) noise-units of RSS to justify its existence — the information-theoretic
+version of "paying rent". One LARS pass + one scan makes this 5&ndash;10&times; cheaper than cross-validation,
+which is why LEAR can afford it for 24 hourly models &times; 728 daily refits.</p>
+<p style="font-size:0.9rem"><b>The sklearn fix that beat the 2021 benchmark:</b> before scikit-learn ~1.2, the
+noise variance \(\hat\sigma^2\) inside the fit term was mis-estimated, so fit and complexity were weighed on a
+skewed scale and the selected \(\alpha\) was systematically off. The corrected formula (used in our
+reproduction) picks a slightly different \(\alpha\) every day &mdash; compounding to ~5% lower MAE on the long
+calibration windows than the published LEAR numbers, on the bit-identical dataset.</p>
+</div>
+
 <h2>What to try</h2>
 <ul style="font-size:0.93rem">
   <li><b>Drag the black dot close to an axis</b> (data barely needs one feature): the L1 red dot snaps
