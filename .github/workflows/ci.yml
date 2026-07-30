@@ -9,7 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9
+      # setup-uv publishes no major-version alias tags; pin the full version
+      - uses: astral-sh/setup-uv@v9.0.0
       - run: uv sync --extra dev
       - run: uv run ruff check .
       - run: uv run pytest
