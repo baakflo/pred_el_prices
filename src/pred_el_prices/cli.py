@@ -61,6 +61,17 @@ def main() -> None:
     build.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
     build.add_argument("--out", type=Path, default=Path("data/dataset/hourly.parquet"))
 
+    runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
+    runx.add_argument("name", help="Experiment name, e.g. lear-de")
+    runx.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        dest="overrides",
+        help="Override experiment parameters (repeatable)",
+    )
+
     args = parser.parse_args()
     if args.command == "archive-weather":
         from pred_el_prices.pipeline.dwd import archive_run
@@ -106,6 +117,19 @@ def main() -> None:
 
         page = build_qa_report(args.cache_dir, args.out)
         print(f"report written: {page}")
+    elif args.command == "run":
+        import json
+
+        from pred_el_prices.experiments import run as run_experiment
+
+        params = {}
+        for item in args.overrides:
+            key, _, value = item.partition("=")
+            try:
+                params[key.replace("-", "_")] = json.loads(value)
+            except json.JSONDecodeError:
+                params[key.replace("-", "_")] = value
+        run_experiment(args.name, params)
     elif args.command == "build-dataset":
         import json
 

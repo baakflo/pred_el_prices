@@ -26,3 +26,4 @@ dist/
 
 # Git Bash crash artifacts
 *.stackdump
+runs/
