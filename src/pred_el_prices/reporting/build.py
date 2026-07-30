@@ -36,20 +36,29 @@ def compute_artifact(cache_root: Path) -> dict:
         df = cache.load(cache_root, name)
         entry: dict = {"rows": len(df)}
         if not df.empty:
+            # the hourly-based checks are meaningless for daily settlement data
+            is_daily = len(df) > 1 and (df.index[1:] - df.index[:-1]).median() >= pd.Timedelta(
+                "1D"
+            )
             entry.update(
                 {
                     "columns": list(df.columns),
                     "first": str(df.index.min()),
                     "last": str(df.index.max()),
-                    "coverage_by_year": qa.coverage_by_year(df),
-                    "missing_hours": qa.missing_hours(df),
                     "duplicate_timestamps": qa.duplicate_timestamps(df),
                     "resolution_switches": qa.resolution_switches(df),
-                    "dst_days": qa.dst_day_check(
-                        df, years=sorted({int(y) for y in df.index.year.unique()})
-                    ),
                 }
             )
+            if not is_daily:
+                entry.update(
+                    {
+                        "coverage_by_year": qa.coverage_by_year(df),
+                        "missing_hours": qa.missing_hours(df),
+                        "dst_days": qa.dst_day_check(
+                            df, years=sorted({int(y) for y in df.index.year.unique()})
+                        ),
+                    }
+                )
             if "price_eur_mwh" in df.columns:
                 entry["price_stats_by_year"] = qa.price_stats_by_year(df["price_eur_mwh"])
         artifact["datasets"][name] = entry
@@ -129,21 +138,23 @@ def render_html(artifact: dict, figures: list[str]) -> str:
             f"{entry['duplicate_timestamps']} duplicate timestamps.</p>"
         )
         parts.append(f"<p>Columns: {escape(', '.join(entry['columns']))}</p>")
-        parts.append("<h3>Coverage by year</h3>")
-        parts.append(_table(entry["coverage_by_year"]))
-        mh = entry["missing_hours"]
-        parts.append(f"<h3>Missing hours: {mh['count']}</h3>")
-        if mh["count"]:
-            shown = ", ".join(mh["hours"])
-            suffix = " …(truncated)" if mh.get("truncated") else ""
-            parts.append(f"<p style='font-size:0.8rem'>{escape(shown)}{escape(suffix)}</p>")
+        if "coverage_by_year" in entry:
+            parts.append("<h3>Coverage by year</h3>")
+            parts.append(_table(entry["coverage_by_year"]))
+        if "missing_hours" in entry:
+            mh = entry["missing_hours"]
+            parts.append(f"<h3>Missing hours: {mh['count']}</h3>")
+            if mh["count"]:
+                shown = ", ".join(mh["hours"])
+                suffix = " …(truncated)" if mh.get("truncated") else ""
+                parts.append(f"<p style='font-size:0.8rem'>{escape(shown)}{escape(suffix)}</p>")
         if entry["resolution_switches"]:
             parts.append("<h3>Resolution switches</h3>")
             parts.append(_table(entry["resolution_switches"]))
         if entry.get("price_stats_by_year"):
             parts.append("<h3>Price stats by year (native resolution)</h3>")
             parts.append(_table(entry["price_stats_by_year"]))
-        if entry["dst_days"]:
+        if entry.get("dst_days"):
             parts.append("<h3>DST transition days (rows per local Berlin day)</h3>")
             parts.append(_table(entry["dst_days"]))
     parts.append("</body></html>")
