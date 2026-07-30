@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>LEAR baseline — own DE-LU dataset 2019-2026</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}
+table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #ccc;padding:0.35rem 0.7rem;text-align:right}
+th{background:#f0f0f0}img{max-width:100%}.note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem}</style>
+</head><body>
+<h1>LEAR(364) on our DE-LU dataset — the point-forecast floor</h1>
+<p>Generated 2026-07-30T16:10:24+00:00. Experiment <code>lear-de</code>
+(<code>pep run lear-de --set window=364</code>), test period 2019-01-01 to 2026-07-29
+(66,408 hours, daily recalibration, UTC-day convention). No published numbers exist for this
+task; the naive baselines are the honest anchors. Overall: MAE 16.85, rMAE 0.492,
+RMSE 30.47.</p>
+<table><thead><tr><th>year</th><th>MAE</th><th>rMAE (weekly)</th><th>naive weekly MAE</th>
+<th>naive mixed MAE</th><th>RMSE</th><th>hours</th></tr></thead><tbody><tr><td>2019</td><td>4.597</td><td>0.447</td><td>10.28</td><td>9.733</td><td>7.359</td><td>8,760</td></tr><tr><td>2020</td><td>5.28</td><td>0.512</td><td>10.314</td><td>9.279</td><td>8.259</td><td>8,784</td></tr><tr><td>2021</td><td>18.524</td><td>0.588</td><td>31.526</td><td>24.251</td><td>30.392</td><td>8,760</td></tr><tr><td>2022</td><td>43.502</td><td>0.5</td><td>87.077</td><td>65.871</td><td>59.288</td><td>8,760</td></tr><tr><td>2023</td><td>17.665</td><td>0.525</td><td>33.629</td><td>28.685</td><td>24.834</td><td>8,760</td></tr><tr><td>2024</td><td>14.618</td><td>0.446</td><td>32.809</td><td>27.317</td><td>29.431</td><td>8,784</td></tr><tr><td>2025</td><td>14.062</td><td>0.428</td><td>32.82</td><td>27.482</td><td>22.494</td><td>8,760</td></tr><tr><td>2026</td><td>16.395</td><td>0.453</td><td>36.171</td><td>29.995</td><td>29.052</td><td>5,040</td></tr></tbody></table>
+<img src='by_year.png'>
+<div class='note'><b>Findings.</b> (1) 2019 (MAE 4.60, rMAE 0.447) matches benchmark-era skill: pipeline
+healthy. (2) The worst <i>relative</i> year is 2021 (rMAE 0.588), not peak-crisis 2022: a 364-day window
+drags dying-regime coefficients through the run-up &mdash; the measured cost of implicit drift handling,
+and the before-picture for explicit fuel/carbon features. (3) 2024-2026 relative skill recovers to
+0.43-0.45 while absolute MAE stays ~3x the old era: the market's noise floor moved. sMAPE degrades as
+negative prices proliferate &mdash; percentage metrics are dying; proper scores take over from here.</div>
+<img src='rolling_mae.png'>
+<img src='sample_weeks.png'>
+</body></html>

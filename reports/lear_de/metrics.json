@@ -1,0 +1,87 @@
+{
+  "window": 364,
+  "test_start": "2019-01-01",
+  "overall": {
+    "n_hours": 66408,
+    "MAE": 16.85,
+    "rMAE_weekly": 0.492,
+    "sMAPE": 26.53,
+    "RMSE": 30.47,
+    "naive_weekly_MAE": 34.216,
+    "naive_mixed_MAE": 27.698
+  },
+  "by_year": {
+    "2019": {
+      "n_hours": 8760,
+      "MAE": 4.597,
+      "rMAE_weekly": 0.447,
+      "sMAPE": 17.32,
+      "RMSE": 7.359,
+      "naive_weekly_MAE": 10.28,
+      "naive_mixed_MAE": 9.733
+    },
+    "2020": {
+      "n_hours": 8784,
+      "MAE": 5.28,
+      "rMAE_weekly": 0.512,
+      "sMAPE": 25.02,
+      "RMSE": 8.259,
+      "naive_weekly_MAE": 10.314,
+      "naive_mixed_MAE": 9.279
+    },
+    "2021": {
+      "n_hours": 8760,
+      "MAE": 18.524,
+      "rMAE_weekly": 0.588,
+      "sMAPE": 22.84,
+      "RMSE": 30.392,
+      "naive_weekly_MAE": 31.526,
+      "naive_mixed_MAE": 24.251
+    },
+    "2022": {
+      "n_hours": 8760,
+      "MAE": 43.502,
+      "rMAE_weekly": 0.5,
+      "sMAPE": 25.02,
+      "RMSE": 59.288,
+      "naive_weekly_MAE": 87.077,
+      "naive_mixed_MAE": 65.871
+    },
+    "2023": {
+      "n_hours": 8760,
+      "MAE": 17.665,
+      "rMAE_weekly": 0.525,
+      "sMAPE": 29.71,
+      "RMSE": 24.834,
+      "naive_weekly_MAE": 33.629,
+      "naive_mixed_MAE": 28.685
+    },
+    "2024": {
+      "n_hours": 8784,
+      "MAE": 14.618,
+      "rMAE_weekly": 0.446,
+      "sMAPE": 30.73,
+      "RMSE": 29.431,
+      "naive_weekly_MAE": 32.809,
+      "naive_mixed_MAE": 27.317
+    },
+    "2025": {
+      "n_hours": 8760,
+      "MAE": 14.062,
+      "rMAE_weekly": 0.428,
+      "sMAPE": 31.88,
+      "RMSE": 22.494,
+      "naive_weekly_MAE": 32.82,
+      "naive_mixed_MAE": 27.482
+    },
+    "2026": {
+      "n_hours": 5040,
+      "MAE": 16.395,
+      "rMAE_weekly": 0.453,
+      "sMAPE": 32.07,
+      "RMSE": 29.052,
+      "naive_weekly_MAE": 36.171,
+      "naive_mixed_MAE": 29.995
+    }
+  }
+}
