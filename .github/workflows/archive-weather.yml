@@ -27,6 +27,11 @@ jobs:
       # setup-uv publishes no major-version alias tags; pin the full version
       - uses: astral-sh/setup-uv@v9.0.0
 
+      # The PyPI eccodes wheel bundles the native library on Windows but not
+      # on Linux, where findlibs expects a system libeccodes.
+      - name: Install ecCodes native library
+        run: sudo apt-get update && sudo apt-get install -y libeccodes-dev
+
       - name: Clone data repo
         run: >
           git clone
