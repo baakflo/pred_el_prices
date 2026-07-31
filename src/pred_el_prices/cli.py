@@ -24,6 +24,21 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
     )
 
+    ecmwf = sub.add_parser(
+        "backfill-ecmwf",
+        help="Backfill ECMWF open-data ENS runs from the AWS archive (available from 2023-01-18)",
+    )
+    ecmwf.add_argument("--start", type=date.fromisoformat, required=True, help="First run date")
+    ecmwf.add_argument(
+        "--end",
+        type=date.fromisoformat,
+        default=datetime.now(UTC).date(),
+        help="Last run date (default: today)",
+    )
+    ecmwf.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
+    )
+
     fetch = sub.add_parser(
         "fetch-entsoe",
         help="Backfill/update the local ENTSO-E Parquet cache (resumes where it left off)",
@@ -77,6 +92,10 @@ def main() -> None:
         from pred_el_prices.pipeline.dwd import archive_run
 
         archive_run(args.date, args.archive_dir)
+    elif args.command == "backfill-ecmwf":
+        from pred_el_prices.pipeline.ecmwf import backfill
+
+        backfill(args.start, args.end, args.archive_dir)
     elif args.command == "fetch-entsoe":
         import pandas as pd
         from entsoe import EntsoePandasClient
