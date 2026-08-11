@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>ENS spread vs LEAR error — correlation study (2023 era)</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2.2rem}
+  .note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem;font-size:0.92rem}
+  .verdict{background:#ffebee;border-left:4px solid #e57373;padding:0.7rem 1rem;font-size:0.95rem}
+  table{border-collapse:collapse;font-size:0.9rem;margin:0.8rem 0}
+  td,th{border:1px solid #ccc;padding:0.3rem 0.6rem;text-align:right}
+  td:first-child,th:first-child{text-align:left}
+  img{max-width:100%;border:1px solid #ddd;border-radius:4px}
+  .legend{font-size:0.85rem;color:#555}
+</style></head><body>
+
+<h1>Does ensemble weather uncertainty predict LEAR's bad days?</h1>
+
+<p class="note"><b>Setup.</b> Daily MAE of LEAR(364, academic exog) — the current
+point-forecast floor, run <code>lear-de-20260811-074202</code> — joined with
+ensemble-spread metrics from the ECMWF ENS 00Z run of D&minus;1 (leakage-safe:
+published hours before the auction gate). Spread metric per delivery day:
+std across the 51 members of the Germany-mean 10&nbsp;m wind speed / 2&nbsp;m
+temperature, averaged over the day's 3-hourly valid times.
+Overlap: <b>2023-01-19..2024-02-02, n=360 days</b> (the era where only
+10&nbsp;m wind and 2&nbsp;m temperature exist in the open-data archive).</p>
+
+<p><b>Pre-registered prediction</b> (2026-08-11, before computation): positive
+but modest rank correlation, Spearman &approx; 0.2&ndash;0.4, wind spread a better
+predictor than temperature spread.</p>
+
+<h2>Result</h2>
+
+<img src="spread_vs_error.png" alt="scatter: spread vs daily LEAR MAE">
+
+<table>
+<tr><th>predictor (daily)</th><th>Pearson</th><th>p</th><th>Spearman</th><th>p</th></tr>
+<tr><td>10 m wind spread</td><td>+0.144</td><td>6.2e-03</td><td>+0.129</td><td>1.4e-02</td></tr>
+<tr><td>2 m temp spread</td><td>&minus;0.010</td><td>0.85</td><td>+0.005</td><td>0.93</td></tr>
+<tr><td>10 m wind <i>mean</i> (control)</td><td>+0.180</td><td>6.1e-04</td><td>+0.166</td><td>1.6e-03</td></tr>
+<tr><td><b>wind spread | wind mean</b> (partial, rank)</td><td colspan="4"><b>&minus;0.006</b> (p=0.92)</td></tr>
+</table>
+
+<table>
+<tr><th>wind-spread quartile</th><th>mean MAE</th><th>median MAE</th><th>days</th></tr>
+<tr><td>Q1 (calmest ensemble)</td><td>15.03</td><td>12.38</td><td>90</td></tr>
+<tr><td>Q2</td><td>14.27</td><td>12.42</td><td>90</td></tr>
+<tr><td>Q3</td><td>14.99</td><td>13.49</td><td>90</td></tr>
+<tr><td>Q4 (most uncertain)</td><td>18.75</td><td>15.60</td><td>90</td></tr>
+</table>
+
+<div class="verdict"><b>Verdict: prediction not supported in this era.</b>
+The raw correlation exists but is weak (Spearman +0.13, below the predicted
+0.2&ndash;0.4 band), and the partial correlation controlling for plain
+windiness is <b>zero</b>: windy days have both larger ensemble spread and
+larger LEAR errors, and spread carries no incremental signal beyond the wind
+level itself. Temperature spread carries nothing. The
+spread-as-heteroscedasticity-driver hypothesis is not confirmed on 10&nbsp;m
+wind in the 2023 era.</div>
+
+<h2>Caveats and the sharper re-test</h2>
+<ul>
+<li><b>Wrong altitude:</b> turbine power responds to hub-height wind
+(&approx;100&nbsp;m); 100u/100v only enter the archive mid-March 2024. The
+power curve's cubic region makes hub-height spread the physically right
+variable.</li>
+<li><b>No solar:</b> ssrd also starts mid-March 2024; solar-forecast risk is
+invisible here.</li>
+<li><b>Coarse aggregation:</b> one Germany-mean number per day may wash out
+front-passage timing errors that hit specific hours.</li>
+<li><b>One era:</b> 2023 was a calming market; error drivers may have been
+fuel/regime noise rather than weather.</li>
+</ul>
+<p>Registered follow-up: rerun with 100&nbsp;m wind spread + ssrd spread on the
+post-March-2024 span once the full backfill lands, before concluding anything
+for the distributional phase. Prediction to beat: partial Spearman
+(hub-height spread | wind mean) &gt; +0.15 on 2024-03..2026-07.</p>
+
+<p class="legend">Inputs: <code>_scratch/spread_daily.py</code> (archive
+reduction), <code>_scratch/spread_vs_error.py</code> (analysis). Daily joined
+table: <code>daily.csv</code>; quartiles:
+<code>mae_by_spread_quartile.csv</code>.</p>
+
+</body></html>
