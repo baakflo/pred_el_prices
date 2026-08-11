@@ -48,10 +48,7 @@ def single_level_url(run_date: date, step: int, var: str) -> str:
 
 def invariant_url(run_date: date, var: str) -> str:
     stamp = f"{run_date:%Y%m%d}00"
-    return (
-        f"{BASE_URL}/{var}/"
-        f"icon-eu-eps_europe_icosahedral_time-invariant_{stamp}_{var}.grib2.bz2"
-    )
+    return f"{BASE_URL}/{var}/icon-eu-eps_europe_icosahedral_time-invariant_{stamp}_{var}.grib2.bz2"
 
 
 @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, max=60), reraise=True)
@@ -101,10 +98,7 @@ def aggregate_members(lat: np.ndarray, lon: np.ndarray, fields: np.ndarray) -> p
 def archive_run(run_date: date, archive_dir: Path) -> Path:
     """Download and aggregate one 00Z ICON-EU-EPS run. Idempotent."""
     out = (
-        archive_dir
-        / "icon-eu-eps"
-        / f"{run_date:%Y}"
-        / f"icon-eu-eps_{run_date:%Y%m%d}00.parquet"
+        archive_dir / "icon-eu-eps" / f"{run_date:%Y}" / f"icon-eu-eps_{run_date:%Y%m%d}00.parquet"
     )
     if out.exists():
         print(f"already archived: {out}")

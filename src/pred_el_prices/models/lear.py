@@ -61,9 +61,7 @@ def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray):
     return x, y
 
 
-def forecast_day(
-    prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray
-) -> np.ndarray:
+def forecast_day(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray) -> np.ndarray:
     """Fit on all complete days and predict the last day (whose price row is unused).
 
     Inputs cover the calibration window plus the target day as the final row;

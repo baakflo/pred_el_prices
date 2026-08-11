@@ -37,9 +37,7 @@ def compute_artifact(cache_root: Path) -> dict:
         entry: dict = {"rows": len(df)}
         if not df.empty:
             # the hourly-based checks are meaningless for daily settlement data
-            is_daily = len(df) > 1 and (df.index[1:] - df.index[:-1]).median() >= pd.Timedelta(
-                "1D"
-            )
+            is_daily = len(df) > 1 and (df.index[1:] - df.index[:-1]).median() >= pd.Timedelta("1D")
             entry.update(
                 {
                     "columns": list(df.columns),
