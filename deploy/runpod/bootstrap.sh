@@ -11,6 +11,9 @@ else
     git clone "https://${GITHUB_PAT}@github.com/baakflo/pred_el_prices.git" "$REPO_DIR"
 fi
 
+# GRIB decoding: the Linux eccodes wheel has no bundled binary (same as CI)
+dpkg -s libeccodes-dev >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq libeccodes-dev; }
+
 command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 

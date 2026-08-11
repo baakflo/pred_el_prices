@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>Same-horizon comparison: our dataset vs the academic benchmark</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1000px;margin:2rem auto;padding:0 1rem;color:#222}
+table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #ccc;padding:0.35rem 0.7rem;text-align:right}
+th{background:#f0f0f0}img{max-width:100%}.note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem}</style>
+</head><body>
+<h1>Our model vs the academic baseline, same time horizon</h1>
+<p>Generated 2026-08-11T06:59:28+00:00. Test horizon fixed to the
+epftoolbox EPEX-DE period: <b>2016-01-04 to 2017-12-31</b> (728 days, 17,472 hours, daily
+recalibration). Four series: published LEAR numbers (Lago et al. 2021, Table 2), our
+reproduction on their data, and LEAR on <i>our own</i> dataset with two feature sets &mdash;
+<i>academic</i> (load forecast + one aggregate RES forecast, their spec) and <i>extended</i>
+(load + wind onshore/offshore + solar split, our lear-de spec). Windows 1092/1456 are
+infeasible on our data (history starts 2015-01-05); window 364 is our headline config.
+Runs: <code>pep run lear-de --set test_start=2016-01-04 --set test_end=2017-12-31</code>.</p>
+<table><thead><tr><th>series</th><th>window</th><th>MAE</th><th>rMAE</th><th>sMAPE</th>
+<th>RMSE</th></tr></thead><tbody><tr><td style='text-align:left'>published (epftoolbox data)</td><td>56</td><td>4.619</td><td>0.506</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>published (epftoolbox data)</td><td>84</td><td>4.555</td><td>0.499</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>published (epftoolbox data)</td><td>1092</td><td>4.108</td><td>0.45</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>published (epftoolbox data)</td><td>1456</td><td>4.118</td><td>0.451</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>our repro (epftoolbox data)</td><td>56</td><td>4.593</td><td>0.504</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>our repro (epftoolbox data)</td><td>84</td><td>4.529</td><td>0.497</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>our repro (epftoolbox data)</td><td>1092</td><td>3.906</td><td>0.429</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>our repro (epftoolbox data)</td><td>1456</td><td>3.958</td><td>0.434</td><td>&mdash;</td><td>&mdash;</td></tr><tr><td style='text-align:left'>our data, academic exog</td><td>56</td><td>4.407</td><td>0.482</td><td>16.82</td><td>7.993</td></tr><tr><td style='text-align:left'>our data, academic exog</td><td>84</td><td>4.271</td><td>0.468</td><td>16.3</td><td>7.77</td></tr><tr><td style='text-align:left'>our data, academic exog</td><td>364</td><td>3.614</td><td>0.396</td><td>14.5</td><td>6.4</td></tr><tr><td style='text-align:left'>our data, extended exog</td><td>56</td><td>4.594</td><td>0.503</td><td>17.28</td><td>8.36</td></tr><tr><td style='text-align:left'>our data, extended exog</td><td>84</td><td>4.365</td><td>0.478</td><td>16.58</td><td>7.99</td></tr><tr><td style='text-align:left'>our data, extended exog</td><td>364</td><td>4.103</td><td>0.449</td><td>15.83</td><td>7.234</td></tr></tbody></table>
+<img src='comparison.png'>
+<div class='note'><b>Findings.</b> (1) <b>Our data pipeline beats the benchmark data at matched
+windows:</b> academic-exog on our data gives MAE 4.407/4.271 at windows 56/84 vs published
+4.619/4.555 (&asymp;4-6% better, rMAE 0.482/0.468 vs 0.506/0.499). Same model, same horizon,
+same feature spec &mdash; the gap is the data source (ENTSO-E/SMARD with QA + gap-patching vs
+the epftoolbox distribution). (2) <b>Window 364 + academic exog is the best config overall</b>
+(MAE 3.614, rMAE 0.396), beating even the published 1092/1456-day windows &mdash; though that
+particular comparison crosses window sizes. (3) <b>The extended feature split <i>hurts</i> on
+this early horizon</b> at every window (e.g. 4.103 vs 3.614 at 364). Plausible mechanism:
+splitting RES into three series grows the feature count &asymp;60% while 2016-2017 offshore
+wind and solar were small &mdash; extra variance, no signal. Pre-registered expectation: the
+split should pay off in the post-2021 high-RES regime; the planned window/feature ablation on
+2019-2026 tests this.</div>
+<img src='rolling_364.png'>
+<div class='note'><b>Caveats.</b> rMAE anchors are computed per-dataset (weekly persistence on
+each price series), so cross-dataset rMAE is the safer metric than raw MAE; both datasets cover
+the same DE-AT-LU zone era so MAE is still informative. Day blocks differ by 1-2h (UTC-day
+convention on our data vs the epftoolbox day convention). sMAPE/RMSE for the published/repro
+series appear in reports/lear_reproduction/.</div>
+</body></html>
