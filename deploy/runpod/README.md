@@ -69,6 +69,25 @@ Fetch results:
 scp -P <port> -r root@<ip>:/workspace/pred_el_prices/runs/<job_id> ./runs/
 ```
 
+## ECMWF ENS backfill
+
+`backfill_ecmwf.sh` shards run dates round-robin across N parallel workers
+(each date is one idempotent `pep backfill-ecmwf` call; safe to re-run, only
+missing dates are fetched). S3 needs no credentials. Start with 4 workers and
+watch the logs for `503 Slow Down` pile-ups before scaling up:
+
+```
+cd /workspace/pred_el_prices
+nohup bash deploy/runpod/backfill_ecmwf.sh 2023-01-18 2026-08-10 4 > logs/backfill.log 2>&1 &
+tail -f logs/backfill_w0.log
+```
+
+Fetch the archive home (from the laptop):
+
+```
+scp -P <port> -r root@<ip>:/workspace/pred_el_prices/data/archive/weather/ecmwf-ens ./data/archive/weather/
+```
+
 ## Notes
 
 - Secrets stay in RunPod; nothing sensitive is in the repo or the template

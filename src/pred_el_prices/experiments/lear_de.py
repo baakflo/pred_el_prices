@@ -56,14 +56,30 @@ def run(
     out_dir: Path,
     window: int = 364,
     test_start: str = "2019-01-01",
+    test_end: str | None = None,
+    exog: str = "extended",
     n_jobs: int = -1,
     dataset_path: str = "data/dataset/hourly.parquet",
 ) -> dict:
     df = _load_dataset(dataset_path)
     start = pd.Timestamp(test_start, tz="UTC")
+    if test_end is not None:
+        df = df[df.index < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)]
+    if exog == "extended":
+        exog_cols = EXOG_COLS
+    elif exog == "academic":
+        # Lago-style pair: load forecast + one aggregate RES forecast
+        df = df.assign(
+            res_forecast_mw=df[
+                ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
+            ].sum(axis=1)
+        )
+        exog_cols = ["load_forecast_mw", "res_forecast_mw"]
+    else:
+        raise ValueError(f"unknown exog mode {exog!r}; use 'extended' or 'academic'")
 
     pred = rolling_forecast(
-        df, PRICE_COL, EXOG_COLS, start, calibration_window=window, n_jobs=n_jobs
+        df, PRICE_COL, exog_cols, start, calibration_window=window, n_jobs=n_jobs
     )
     actual = df[PRICE_COL].loc[pred.index]
     pred.to_frame().assign(actual=actual).to_parquet(out_dir / "forecast.parquet")
@@ -72,6 +88,8 @@ def run(
     metrics = {
         "window": window,
         "test_start": test_start,
+        "test_end": test_end,
+        "exog": exog,
         "overall": _slice_metrics(prices_all, actual, pred),
         "by_year": {},
     }
