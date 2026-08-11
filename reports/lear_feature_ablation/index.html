@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset='utf-8'>
+<title>Feature ablation: does the RES split pay off post-2021?</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#222}
+table{border-collapse:collapse;margin:1rem 0}td,th{border:1px solid #ccc;padding:0.35rem 0.6rem;text-align:right}
+th{background:#f0f0f0}img{max-width:100%}.note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem}</style>
+</head><body>
+<h1>Feature ablation: academic vs extended exog, 2019-2026</h1>
+<p>Generated 2026-08-11T08:18:47+00:00. Test horizon 2019-01-01 to
+2026-07-29 on our dataset, daily recalibration. <i>academic</i> = load forecast + one aggregate
+RES forecast (Lago-style pair); <i>extended</i> = load + wind onshore/offshore + solar split.
+Pre-registered hypothesis (day 3, after the split <b>lost</b> on 2016-2017 in
+<a href='../lear_same_horizon/index.html'>lear_same_horizon</a>): the split should start paying
+off in the post-2021 high-RES regime (shaded).</p>
+<table><thead><tr><th>window</th><th>exog</th><th>overall rMAE</th><th>2019</th><th>2020</th><th>2021</th><th>2022</th><th>2023</th><th>2024</th><th>2025</th><th>2026</th></tr></thead>
+<tbody><tr><td>56</td><td style='text-align:left'>academic</td><td><b>0.484</b></td><td>0.462</td><td>0.522</td><td>0.514</td><td>0.491</td><td>0.485</td><td>0.453</td><td>0.453</td><td>0.498</td></tr><tr><td>56</td><td style='text-align:left'>extended</td><td><b>0.519</b></td><td>0.473</td><td>0.536</td><td>0.548</td><td>0.551</td><td>0.517</td><td>0.478</td><td>0.472</td><td>0.497</td></tr><tr><td>84</td><td style='text-align:left'>academic</td><td><b>0.475</b></td><td>0.454</td><td>0.512</td><td>0.518</td><td>0.476</td><td>0.481</td><td>0.446</td><td>0.441</td><td>0.491</td></tr><tr><td>84</td><td style='text-align:left'>extended</td><td><b>0.496</b></td><td>0.448</td><td>0.521</td><td>0.544</td><td>0.513</td><td>0.491</td><td>0.457</td><td>0.462</td><td>0.479</td></tr><tr><td>364</td><td style='text-align:left'>academic</td><td><b>0.407</b></td><td>0.414</td><td>0.436</td><td>0.442</td><td>0.378</td><td>0.498</td><td>0.392</td><td>0.379</td><td>0.38</td></tr><tr><td>364</td><td style='text-align:left'>extended</td><td><b>0.492</b></td><td>0.447</td><td>0.512</td><td>0.588</td><td>0.5</td><td>0.525</td><td>0.446</td><td>0.428</td><td>0.453</td></tr></tbody></table>
+<img src='ablation.png'>
+<div class='note' id='verdict'><b>Verdict: the pre-registered hypothesis is refuted.</b> The
+extended split does <i>not</i> pay off post-2021 &mdash; the academic aggregate wins nearly every
+year at every window, and the gap is <i>widest</i> exactly where the split was supposed to help:
+the volatile 2021-2022 years at window 364 (0.442 vs 0.588 and 0.378 vs 0.500). Only three
+year/window cells go the other way, all by &le;0.012. Mechanism (post-hoc, untested): LEAR
+multiplies each exog series into dozens of lagged/hourly features, so the split grows the
+feature count ~60% with heavily collinear wind series; in a lasso that buys variance, and
+volatile years price variance highest. Two consequences: (1) <b>the point-forecast floor moves
+from rMAE 0.492 to 0.407</b> &mdash; LEAR(364, academic exog) is the new baseline every later
+model must beat; (2) the RES split is shelved for linear models &mdash; revisit it only in the
+neural phase, where nonlinear interactions could in principle use it, as an explicit ablation
+with this result as the prior.</div>
+</body></html>
