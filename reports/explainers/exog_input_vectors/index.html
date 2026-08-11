@@ -1,0 +1,144 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>One target hour, three input vectors — extended vs academic vs residual-only</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2.2rem}
+  .note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem;font-size:0.92rem}
+  .legend{font-size:0.85rem;color:#555}
+  #tip{font-size:0.9rem;min-height:2.8em;color:#333;font-family:ui-monospace,monospace;background:#fafafa;
+       border:1px solid #eee;border-radius:4px;padding:0.4rem 0.7rem;margin-top:0.6rem}
+  .vec{margin:1.1rem 0}
+  .vecname{font-size:0.95rem;font-weight:600;margin-bottom:0.25rem}
+  .vecname .cnt{font-weight:400;color:#666}
+  .bar{display:flex;height:46px;border:1px solid #bbb;border-radius:4px;overflow:hidden}
+  .blk{display:flex;align-items:center;justify-content:center;font-size:0.72rem;color:#fff;
+       cursor:default;border-right:1px solid rgba(255,255,255,0.55);white-space:nowrap;overflow:hidden}
+  .blk:hover{filter:brightness(1.15);outline:2px solid #333;outline-offset:-2px}
+  .ghost{background:repeating-linear-gradient(45deg,#eee,#eee 6px,#f8f8f8 6px,#f8f8f8 12px);color:#999}
+  table{border-collapse:collapse;font-size:0.9rem;margin:0.8rem 0}
+  td,th{border:1px solid #ccc;padding:0.3rem 0.6rem;text-align:right}
+  td:first-child,th:first-child{text-align:left}
+  .eq{font-family:ui-monospace,monospace;font-size:0.92rem;background:#fafafa;border:1px solid #eee;
+      border-radius:4px;padding:0.6rem 0.9rem;margin:0.5rem 0;overflow-x:auto}
+  .free{color:#c62828;font-weight:600}.tied{color:#888}
+  .warn{background:#ffe082;padding:0.12rem 0.5rem;border-radius:4px;font-weight:600}
+</style></head><body>
+
+<h1>One target hour, three input vectors</h1>
+
+<p class="note">Every bar below is the <b>full input vector of one hourly LEAR model</b>
+(here: predicting the 12:00&nbsp;UTC price of <b>Wed 2024-06-12</b>). Block width =
+number of weights. Hover any block to see what it holds and its real noon value from our
+dataset. The <b>price lags and weekday dummies are identical in all three cases</b> —
+the only thing that changes is the middle: how the same load/RES physics is packaged.</p>
+
+<div id="bars"></div>
+<div id="tip">hover a block&hellip;</div>
+
+<h2>The noon slice, with real numbers</h2>
+
+<p>Freeze everything except the day-<i>d</i> noon exog values and look at what each model
+is allowed to learn. Red weights are free; grey structure is frozen before training.</p>
+
+<div class="eq"><b>extended (4 free weights on this slice):</b><br>
+price&#770; = &hellip; + <span class="free">&beta;<sub>load</sub></span>&middot;62.4 + <span class="free">&beta;<sub>won</sub></span>&middot;8.5 + <span class="free">&beta;<sub>woff</sub></span>&middot;3.1 + <span class="free">&beta;<sub>sol</sub></span>&middot;33.3</div>
+
+<div class="eq"><b>academic (2 free weights — RES weights tied to each other):</b><br>
+price&#770; = &hellip; + <span class="free">&beta;<sub>load</sub></span>&middot;62.4 + <span class="free">&beta;<sub>res</sub></span>&middot;<span class="tied">(8.5+3.1+33.3)</span>
+&nbsp;&nbsp;<span class="tied">&larr; forces &beta;<sub>won</sub>=&beta;<sub>woff</sub>=&beta;<sub>sol</sub></span></div>
+
+<div class="eq"><b>residual-only (1 free weight — load weight tied to &minus;RES weight):</b><br>
+price&#770; = &hellip; + <span class="free">&beta;</span>&middot;<span class="tied">(62.4 &minus; 8.5 &minus; 3.1 &minus; 33.3)</span>
+&nbsp;&nbsp;<span class="tied">&larr; additionally forces &beta;<sub>load</sub> = &minus;&beta;<sub>res</sub></span></div>
+
+<p>So the three cases are <b>nested</b>: anything residual-only can express, academic can
+imitate (set &beta;<sub>load</sub>=&beta;, &beta;<sub>res</sub>=&minus;&beta;), and anything academic can
+express, extended can imitate. Going down the ladder never adds information — it
+<b>freezes weights</b>, trading expressiveness for fewer parameters to estimate.
+In ANN terms: a frozen linear layer <code>[+1,&minus;1,&minus;1,&minus;1]</code> inserted before the model.</p>
+
+<h2>Why the single feature is tempting: the merit-order week</h2>
+
+<p>Noon values around our example day. Residual load alone almost sorts the prices —
+that is the "merit-order position as one number" argument:</p>
+
+<table>
+<tr><th>noon of</th><th>load GW</th><th>RES GW</th><th>residual GW</th><th>price &euro;/MWh</th></tr>
+<tr><td>Sun 06-09 (d&minus;3)</td><td>47.3</td><td>48.6</td><td><b>&minus;1.3</b></td><td><b>&minus;37.1</b></td></tr>
+<tr><td>Tue 06-11 (d&minus;1)</td><td>61.6</td><td>55.5</td><td><b>6.1</b></td><td><b>0.0</b></td></tr>
+<tr><td>Wed 06-12 (d)</td><td>62.4</td><td>44.9</td><td><b>17.4</b></td><td><b>39.7</b></td></tr>
+<tr><td>Wed 06-05 (d&minus;7)</td><td>62.3</td><td>42.3</td><td><b>20.2</b></td><td><b>26.3</b></td></tr>
+<tr><td>Mon 06-10 (d&minus;2)</td><td>62.2</td><td>38.5</td><td><b>23.6</b></td><td><b>67.1</b></td></tr>
+</table>
+
+<p>But note the Sunday row: the &minus;37.1 needs <i>RES specifically</i> (subsidized bids
+below zero) plus weekend demand — a residual-only model sees &minus;1.3&nbsp;GW and cannot
+tell a windy winter night from a sunny summer Sunday. The academic pair can, because it
+keeps load and RES as separate axes.</p>
+
+<h2>The parameter bill at window 364</h2>
+
+<table>
+<tr><th>case</th><th>weights per hourly model</th><th>training rows (win 364)</th><th>fit regime</th></tr>
+<tr><td>extended (4 exog)</td><td>96 + 288 + 7 = <b>391</b></td><td>357</td><td><span class="warn">n &lt; p</span> — LASSO must prune hard</td></tr>
+<tr><td>academic (2 exog)</td><td>96 + 144 + 7 = <b>247</b></td><td>357</td><td>n &gt; p, comfortable</td></tr>
+<tr><td>residual-only (1 exog)</td><td>96 + 72 + 7 = <b>175</b></td><td>357</td><td>n &raquo; p, lowest variance</td></tr>
+</table>
+
+<p class="legend">Rows: a 364-day calibration window yields 365 stacked days, minus 7
+burn-in for the lags, minus the target day = 357 training rows — fewer than the extended
+model's 391 weights. Day-3 ablation verdict: extended rMAE 0.492, academic <b>0.407</b>.
+Residual-only untested; pre-registered prediction: near-tie, academic stays &le;.</p>
+
+<script>
+const FAM = {
+  p1:{c:"#455a64",short:"price d-1",n:"prices d-1 (Tue 06-11), 24 h",v:"noon: 0.0 €/MWh"},
+  p2:{c:"#546e7a",short:"price d-2",n:"prices d-2 (Mon 06-10), 24 h",v:"noon: 67.1 €/MWh"},
+  p3:{c:"#607d8b",short:"price d-3",n:"prices d-3 (Sun 06-09), 24 h",v:"noon: -37.1 €/MWh (sunny Sunday!)"},
+  p7:{c:"#78909c",short:"price d-7",n:"prices d-7 (Wed 06-05), 24 h",v:"noon: 26.3 €/MWh"},
+  ld:{c:"#ef6c00",short:"load",n:"load forecast",vv:{0:"62.4 GW",1:"61.6 GW",7:"62.3 GW"}},
+  wn:{c:"#2e7d32",short:"wind on",n:"wind onshore fc",vv:{0:"8.5 GW",1:"19.3 GW",7:"10.3 GW"}},
+  wf:{c:"#00838f",short:"wind off",n:"wind offshore fc",vv:{0:"3.1 GW",1:"3.9 GW",7:"2.9 GW"}},
+  so:{c:"#f9a825",short:"solar",n:"solar fc",vv:{0:"33.3 GW",1:"32.3 GW",7:"29.1 GW"}},
+  rs:{c:"#6a1b9a",short:"RES agg",n:"RES aggregate fc = won+woff+sol",vv:{0:"44.9 GW",1:"55.5 GW",7:"42.3 GW"}},
+  rl:{c:"#c62828",short:"resid load",n:"residual load fc = load - RES",vv:{0:"17.4 GW",1:"6.1 GW",7:"20.2 GW"}},
+  dw:{c:"#9e9e9e",n:"day-of-week dummies (7)",v:"Wed → [0,0,1,0,0,0,0]"}
+};
+const priceBlocks = ["p1","p2","p3","p7"].map(k=>({f:k,w:24}));
+function exogBlocks(keys){
+  const out=[];
+  for(const k of keys) for(const lag of [0,1,7]) out.push({f:k,w:24,lag});
+  return out;
+}
+const CASES = [
+  {name:"extended — 4 exog series", total:391,
+   blocks:[...priceBlocks, ...exogBlocks(["ld","wn","wf","so"]), {f:"dw",w:7}]},
+  {name:"academic — 2 exog series (current floor, rMAE 0.407)", total:247,
+   blocks:[...priceBlocks, ...exogBlocks(["ld","rs"]), {f:"dw",w:7}]},
+  {name:"residual-only — 1 exog series (untested)", total:175,
+   blocks:[...priceBlocks, ...exogBlocks(["rl"]), {f:"dw",w:7}]},
+];
+const MAXW = 391;
+const bars = document.getElementById("bars"), tip = document.getElementById("tip");
+for(const c of CASES){
+  const div = document.createElement("div"); div.className="vec";
+  div.innerHTML = `<div class="vecname">${c.name} <span class="cnt">— ${c.total} weights per hourly model (×24 models, refit daily)</span></div>`;
+  const bar = document.createElement("div"); bar.className="bar";
+  bar.style.width = (100*c.total/MAXW)+"%";
+  for(const b of c.blocks){
+    const fam = FAM[b.f];
+    const el = document.createElement("div"); el.className="blk";
+    el.style.width = (100*b.w/c.total)+"%";
+    el.style.background = fam.c;
+    const lagTxt = b.lag===undefined ? "" : (b.lag===0?" day d":" d-"+b.lag);
+    if(b.w>=24) el.textContent = (fam.short||fam.n.split(" ")[0]) + lagTxt;
+    const val = fam.vv ? fam.vv[b.lag] : fam.v;
+    el.onmouseenter = ()=> tip.textContent =
+      `${fam.n}${lagTxt ? " — lag:"+lagTxt : ""} • ${b.w} weights (24 hourly values${b.f==="dw"?"":", one weight each"}) • example noon value: ${val}`;
+    bar.appendChild(el);
+  }
+  div.appendChild(bar); bars.appendChild(div);
+}
+</script>
+</body></html>
