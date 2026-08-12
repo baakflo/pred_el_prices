@@ -1,0 +1,86 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>ENS spread vs LEAR error — registered re-test (6-var era)</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1080px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2.2rem}
+  .note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem;font-size:0.92rem}
+  .verdict{background:#ffebee;border-left:4px solid #e57373;padding:0.7rem 1rem;font-size:0.95rem}
+  table{border-collapse:collapse;font-size:0.9rem;margin:0.8rem 0}
+  td,th{border:1px solid #ccc;padding:0.3rem 0.6rem;text-align:right}
+  td:first-child,th:first-child{text-align:left}
+  img{max-width:100%;border:1px solid #ddd;border-radius:4px}
+  .legend{font-size:0.85rem;color:#555}
+</style></head><body>
+
+<h1>Hub-height wind spread vs LEAR error — the registered re-test</h1>
+
+<p class="note"><b>Setup.</b> Same design as the
+<a href="../spread_vs_error/index.html">2023-era study</a>, on the era where
+the physically right variables exist: 100&nbsp;m wind (hub height, cubic
+power-curve region) and ssrd (de-accumulated to per-3&nbsp;h energy), both
+from the ECMWF ENS 00Z run of D&minus;1 (leakage-safe). Daily MAE of
+LEAR(364, academic exog), run <code>lear-de-20260811-074202</code>.
+Overlap: <b>2024-03-20..2025-06-04, n=441 days</b>.</p>
+
+<p><b>Pre-registered prediction</b> (2026-08-11, before computation): partial
+Spearman (hub-height wind spread | wind mean) &gt; +0.15.</p>
+
+<p class="note"><b>Interim status.</b> The registered design says "once the
+full archive lands"; this run uses the ~60% of the 6-var era backfilled so
+far (through 2025-06-04, backfill in progress). To be re-run on the full
+2024-03..2026-07 span when the archive completes.</p>
+
+<h2>Result</h2>
+
+<img src="spread_vs_error.png" alt="scatter: spread vs daily LEAR MAE">
+
+<table>
+<tr><th>predictor (daily)</th><th>Pearson</th><th>p</th><th>Spearman</th><th>p</th></tr>
+<tr><td>100 m wind spread</td><td>+0.012</td><td>0.80</td><td>+0.164</td><td>5.5e-04</td></tr>
+<tr><td>ssrd spread</td><td>&minus;0.122</td><td>1.0e-02</td><td>&minus;0.139</td><td>3.4e-03</td></tr>
+<tr><td>10 m wind spread</td><td>+0.034</td><td>0.47</td><td>+0.182</td><td>1.2e-04</td></tr>
+<tr><td>2 m temp spread</td><td>+0.023</td><td>0.63</td><td>+0.093</td><td>0.050</td></tr>
+<tr><td>100 m wind <i>mean</i> (control)</td><td>&minus;0.031</td><td>0.52</td><td>+0.145</td><td>2.3e-03</td></tr>
+<tr><td><b>100 m wind spread | wind mean</b> (partial, rank)</td><td colspan="4"><b>+0.088</b> (p=0.065)</td></tr>
+<tr><td>ssrd spread | ssrd mean (partial, rank)</td><td colspan="4">&minus;0.143 (p=2.6e-03)</td></tr>
+<tr><td>10 m wind spread | wind mean (partial, rank)</td><td colspan="4">+0.134 (p=4.8e-03)</td></tr>
+</table>
+
+<table>
+<tr><th>100 m wind-spread quartile</th><th>mean MAE</th><th>median MAE</th><th>days</th></tr>
+<tr><td>Q1 (calmest ensemble)</td><td>14.98</td><td>11.00</td><td>111</td></tr>
+<tr><td>Q2</td><td>12.52</td><td>10.62</td><td>110</td></tr>
+<tr><td>Q3</td><td>13.14</td><td>11.26</td><td>110</td></tr>
+<tr><td>Q4 (most uncertain)</td><td>13.38</td><td>12.84</td><td>110</td></tr>
+</table>
+
+<div class="verdict"><b>Verdict (interim): prediction not met.</b> The
+partial Spearman of hub-height wind spread given plain windiness is
+<b>+0.088</b> (p=0.065) — positive, unlike the 2023-era zero, but below the
+registered +0.15 bar and not significant at n=441. The raw rank correlation
+(+0.164) again mostly reflects windiness itself. The quartile profile is
+flat in the mean; only the median creeps up in Q4. ssrd spread correlates
+<i>negatively</i> with error even after controlling for its level — almost
+certainly seasonal confounding (solar spread scales with the annual
+insolation cycle; a season control was not part of the registered design),
+not a genuine "solar uncertainty helps" effect.</div>
+
+<h2>Reading and next steps</h2>
+<ul>
+<li>Moving to hub height moved the partial from 0.00 to +0.09 — the right
+direction, but weak. Daily Germany-mean aggregation remains the prime
+suspect for washing out timing-error signal.</li>
+<li>Re-run on the full span when the backfill lands (registered); the
+threshold stays +0.15.</li>
+<li>If the full-span partial stays below the bar, spread enters the
+distributional phase as a candidate feature at most — not as the
+heteroscedasticity driver the hypothesis wanted.</li>
+</ul>
+
+<p class="legend">Inputs: <code>_scratch/spread_daily_v2.py</code> (archive
+reduction, 6-var era only), <code>_scratch/spread_vs_error_retest.py</code>
+(analysis). Daily joined table: <code>daily.csv</code>; quartiles:
+<code>mae_by_spread_quartile.csv</code>.</p>
+
+</body></html>
