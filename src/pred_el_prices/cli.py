@@ -24,6 +24,14 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
     )
 
+    pegel = sub.add_parser(
+        "archive-pegel",
+        help="Archive PEGELONLINE gauge readings (Rhine at Kaub; rolling ~31-day API window)",
+    )
+    pegel.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/water"), help="Output directory"
+    )
+
     ecmwf = sub.add_parser(
         "backfill-ecmwf",
         help="Backfill ECMWF open-data ENS runs from the AWS archive (available from 2023-01-18)",
@@ -92,6 +100,11 @@ def main() -> None:
         from pred_el_prices.pipeline.dwd import archive_run
 
         archive_run(args.date, args.archive_dir)
+    elif args.command == "archive-pegel":
+        from pred_el_prices.pipeline.pegel import archive_window
+
+        written = archive_window(args.archive_dir)
+        print(f"pegel-kaub: {len(written)} day file(s) written")
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 

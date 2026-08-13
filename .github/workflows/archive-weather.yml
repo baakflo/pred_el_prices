@@ -44,6 +44,11 @@ jobs:
       - name: Archive today's 00Z run
         run: uv run python -m pred_el_prices.cli archive-weather --archive-dir archive_repo
 
+      # PEGELONLINE keeps a rolling ~31-day raw window, so any day missed
+      # here is refilled automatically for a month (unlike the DWD files).
+      - name: Archive Pegel Kaub
+        run: uv run python -m pred_el_prices.cli archive-pegel --archive-dir archive_repo
+
       - name: Push new data
         run: |
           cd archive_repo
