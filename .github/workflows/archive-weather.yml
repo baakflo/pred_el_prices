@@ -8,6 +8,9 @@ on:
     - cron: "45 5 * * *"
     - cron: "0 7 * * *"
     - cron: "0 9 * * *"
+    # Last pre-gate attempt for the ENTSO-E forecast snapshot: gate is
+    # 12:00 CET/CEST = 11:00/10:00 UTC, so 09:45 UTC is pre-gate year-round.
+    - cron: "45 9 * * *"
   workflow_dispatch:
 
 permissions:
@@ -63,6 +66,19 @@ jobs:
             exit 0
           fi
           uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo
+
+      # ENTSO-E serves only the latest submitted forecast version, so the
+      # pre-auction vintage must be snapshotted daily. Written only once
+      # both series are published; earlier slots retry via later slots.
+      - name: Archive ENTSO-E day-ahead forecast snapshot
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+        run: |
+          if [ -z "$ENTSOE_API_KEY" ]; then
+            echo "::warning::ENTSOE_API_KEY not set; forecast snapshot NOT archived"
+            exit 0
+          fi
+          uv run python -m pred_el_prices.cli archive-entsoe-forecasts --archive-dir archive_repo
 
       - name: Push new data
         run: |

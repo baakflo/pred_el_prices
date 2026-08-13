@@ -40,6 +40,14 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/benchmarks"), help="Output directory"
     )
 
+    esnap = sub.add_parser(
+        "archive-entsoe-forecasts",
+        help="Snapshot tomorrow's ENTSO-E day-ahead load + wind/solar forecasts as published",
+    )
+    esnap.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/forecasts"), help="Output directory"
+    )
+
     ecmwf = sub.add_parser(
         "backfill-ecmwf",
         help="Backfill ECMWF open-data ENS runs from the AWS archive (available from 2023-01-18)",
@@ -119,6 +127,15 @@ def main() -> None:
 
         written = archive_snapshot(args.archive_dir, energyforecast_token())
         print(f"energyforecast: {written if written else 'already archived today'}")
+    elif args.command == "archive-entsoe-forecasts":
+        from entsoe import EntsoePandasClient
+
+        from pred_el_prices.config import entsoe_api_key
+        from pred_el_prices.pipeline.entsoe_snapshot import archive_snapshot
+
+        client = EntsoePandasClient(api_key=entsoe_api_key())
+        written = archive_snapshot(args.archive_dir, client)
+        print(f"entsoe-forecasts: {written if written else 'nothing written'}")
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 
