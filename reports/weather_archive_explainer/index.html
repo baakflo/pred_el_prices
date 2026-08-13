@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The weather behind the price forecast — ECMWF ENS archive explained</title>
+<style>
+  :root{
+    --ink:#1c2733; --muted:#5b6b7a; --line:#dde5ec; --bg:#ffffff;
+    --accent:#1565c0; --accent-soft:#e3f0fc; --warn:#c62828;
+    --wind:#1565c0; --solar:#ef6c00; --temp:#6a1b9a;
+  }
+  body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;max-width:1100px;
+       margin:2rem auto;padding:0 1.2rem;color:var(--ink);line-height:1.55}
+  h1{font-size:1.7rem;line-height:1.25;margin-bottom:0.2rem}
+  h2{font-size:1.25rem;margin-top:3rem;border-bottom:2px solid var(--line);padding-bottom:0.3rem}
+  h3{font-size:1.02rem;margin-top:1.6rem}
+  .sub{color:var(--muted);margin-top:0}
+  .cards{display:flex;gap:0.8rem;flex-wrap:wrap;margin:1.4rem 0}
+  .card{flex:1 1 140px;background:#f6f8fa;border:1px solid var(--line);border-radius:8px;
+        padding:0.7rem 0.9rem;text-align:center}
+  .card b{display:block;font-size:1.35rem;color:var(--accent)}
+  .card span{font-size:0.8rem;color:var(--muted)}
+  table{border-collapse:collapse;font-size:0.88rem;margin:1rem 0;width:100%}
+  td,th{border:1px solid var(--line);padding:0.4rem 0.6rem;text-align:left;vertical-align:top}
+  th{background:#f6f8fa}
+  code{background:#f2f4f6;padding:0.05rem 0.3rem;border-radius:3px;font-size:0.86em}
+  .note{background:var(--accent-soft);border-left:4px solid var(--accent);
+        padding:0.7rem 1rem;font-size:0.92rem;border-radius:0 6px 6px 0;margin:1.2rem 0}
+  .ann{background:#f3e8fd;border-left:4px solid #8e44ad;padding:0.7rem 1rem;
+       font-size:0.92rem;border-radius:0 6px 6px 0;margin:1.2rem 0}
+  .ann b.tag{color:#8e44ad}
+  .warnbox{background:#fff3e0;border-left:4px solid var(--solar);padding:0.7rem 1rem;
+       font-size:0.92rem;border-radius:0 6px 6px 0;margin:1.2rem 0}
+  svg{display:block;max-width:100%}
+  .chartbox{border:1px solid var(--line);border-radius:8px;padding:1rem;margin:1rem 0;background:#fff}
+  .controls{display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center;margin-bottom:0.6rem;font-size:0.86rem}
+  .controls .group{display:flex;gap:0.3rem;align-items:center}
+  .controls .grouplabel{color:var(--muted);margin-right:0.2rem}
+  button.opt{border:1px solid var(--line);background:#f6f8fa;border-radius:6px;
+             padding:0.3rem 0.7rem;cursor:pointer;font-size:0.84rem;color:var(--ink)}
+  button.opt.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  input[type=range]{width:130px;vertical-align:middle}
+  .readout{font-size:0.86rem;color:var(--muted);margin-top:0.4rem}
+  .readout b{color:var(--ink)}
+  .legend{font-size:0.82rem;color:var(--muted)}
+  .funnel{display:flex;flex-wrap:wrap;gap:0.5rem;align-items:stretch;margin:1rem 0}
+  .fstage{flex:1 1 150px;border:1px solid var(--line);border-radius:8px;padding:0.6rem 0.7rem;
+          font-size:0.82rem;background:#f9fbfc;position:relative}
+  .fstage b{display:block;font-size:0.9rem;margin-bottom:0.2rem}
+  .fstage .vol{color:var(--accent);font-weight:600}
+  .arrow{align-self:center;color:var(--muted);font-size:1.2rem}
+  .timeline-lab{font-size:0.78rem;color:var(--muted)}
+  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);
+         font-size:0.82rem;color:var(--muted)}
+  a{color:var(--accent)}
+</style></head><body>
+
+<h1>The weather behind the price forecast</h1>
+<p class="sub">An interactive tour of the ECMWF ensemble archive we backfilled —
+what is in it, how it was collected, why the 51 forecasts disagree, and how the
+physics model that produces them works.</p>
+
+<div class="cards">
+  <div class="card"><b id="stat-files">—</b><span>daily forecast runs</span></div>
+  <div class="card"><b>51</b><span>ensemble members per run</span></div>
+  <div class="card"><b>6</b><span>weather variables (latest era)</span></div>
+  <div class="card"><b id="stat-span">—</b><span>run dates covered</span></div>
+  <div class="card"><b id="stat-size">—</b><span>on disk (Parquet)</span></div>
+</div>
+
+<h2>1 · What is in the archive</h2>
+
+<p>Each file is one <b>00Z run of the ECMWF ENS</b> (the ensemble version of the
+Integrated Forecasting System, IFS), reduced to Germany. Not one forecast — <b>51
+parallel forecasts</b> of the same period, each a physically plausible version of
+tomorrow's weather. Six surface variables, chosen because each one maps onto a
+price mechanism:</p>
+
+<table>
+<tr><th>Variable</th><th>What it is</th><th>Units (stored)</th><th>Why prices care</th><th>Available since</th></tr>
+<tr><td><code>u_100m</code>, <code>v_100m</code></td>
+    <td>Wind vector at 100&nbsp;m — hub height of modern turbines</td>
+    <td>m/s</td>
+    <td>Wind generation enters the merit order at ~zero marginal cost; windy days push gas out and prices down. The physically correct altitude for power.</td>
+    <td>2024-03-19</td></tr>
+<tr><td><code>u_10m</code>, <code>v_10m</code></td>
+    <td>Wind vector at 10&nbsp;m (standard meteorological height)</td>
+    <td>m/s</td>
+    <td>Proxy for hub-height wind in the early era; strongly correlated but attenuated by surface friction.</td>
+    <td>2023-01-18 (start)</td></tr>
+<tr><td><code>t_2m</code></td>
+    <td>Air temperature at 2&nbsp;m</td>
+    <td>K</td>
+    <td>Demand driver (heating/cooling), plus thermal-plant efficiency and river-cooling stress in heat waves.</td>
+    <td>2023-01-18 (start)</td></tr>
+<tr><td><code>ssrd</code></td>
+    <td>Surface solar radiation downwards, <b>accumulated</b> J/m² since forecast start — de-accumulate by differencing consecutive steps to get W/m²</td>
+    <td>J/m²</td>
+    <td>Solar PV generation; the midday price valley lives and dies by this number.</td>
+    <td>2024-03-06</td></tr>
+</table>
+
+<h3>Three eras, because the open-data catalogue grew</h3>
+<p>ECMWF's free feed added parameters over time, so the archive has eras. The
+model itself also improved underneath: native resolution jumped from 18&nbsp;km to
+9&nbsp;km in June 2023, and the published grid from 0.4° to 0.25° in February
+2024.</p>
+<div class="chartbox"><svg id="era-svg" width="1040" height="110"></svg>
+<div class="legend">Red tick: 6 missing run dates (2023-04-27..05-02) — an upstream
+hole in ECMWF's S3 bucket, verified twice, unrecoverable. Everything else is complete
+and QA-verified (every file readable, ≥50 members, era-correct variable set).</div></div>
+
+<h2>2 · What we actually pulled (and what we deliberately didn't)</h2>
+
+<p>ECMWF publishes each 3-hourly forecast step as <b>one global GRIB file of
+~2.5&nbsp;GB</b> containing every variable and all members. Downloading that whole
+file ×10 steps ×1,301 dates would be ~25&nbsp;TB. Instead, each GRIB ships with a
+<code>.index</code> sidecar listing the byte offset of every field — so we
+range-request only the six Germany-relevant surface fields:</p>
+
+<div class="funnel">
+  <div class="fstage"><b>Global GRIB on S3</b>all 51 members, all params, whole planet
+    <div class="vol">~25 GB / date</div></div>
+  <div class="arrow">→</div>
+  <div class="fstage"><b>Byte-range fetch</b>only our 6 params via the
+    <code>.index</code> sidecar<div class="vol">0.8–2.7 GB / date</div></div>
+  <div class="arrow">→</div>
+  <div class="fstage"><b>Germany crop</b>47–56°N, 5–16°E cut from the global grid
+    <div class="vol">~99 grid cells</div></div>
+  <div class="arrow">→</div>
+  <div class="fstage"><b>1° cell means</b>per member, per step — regional structure
+    kept, file size tamed<div class="vol">~1.4 MB / date</div></div>
+</div>
+
+<p>So one Parquet row is: <i>(1°&nbsp;cell, member, valid&nbsp;time, variable) →
+value</i>. We keep the full member dimension — no averaging across the ensemble at
+archive time. The distribution is the asset; collapsing it to a mean would throw
+away exactly the information a probabilistic model needs.</p>
+
+<h3>The timing constraint that shaped everything</h3>
+<p>The day-ahead auction closes at <b>12:00 CET on D−1</b>. Any feature must be
+knowable before that gate — our hardest project rule (no leakage). That dictates
+which run and which steps:</p>
+
+<div class="chartbox"><svg id="gate-svg" width="1040" height="130"></svg></div>
+
+<ul>
+<li><b>Which run:</b> the 00Z run of D−1, published ~07:00–08:00 UTC — comfortably
+before the gate. The 06Z run would be fresher but publishes too close to (or after)
+the gate, so it is excluded by design, not oversight.</li>
+<li><b>Which steps:</b> lead times +21&nbsp;h to +48&nbsp;h, 3-hourly. That window covers
+the delivery day D completely in UTC <i>and</i> in CET/CEST, including the 23/25-hour
+DST days.</li>
+</ul>
+
+<h2>3 · See the ensemble — 51 forecasts of the same day</h2>
+
+<p>These are real days from the archive. Every faint line is one member's DE-mean
+forecast for the delivery day; hover to follow a single member. The four days were
+picked by the archive itself: the calmest and the most wind-uncertain day of the
+6-variable era, the median day, and the most solar-uncertain day.</p>
+
+<div class="chartbox">
+  <div class="controls">
+    <div class="group"><span class="grouplabel">Day:</span>
+      <button class="opt day" data-day="calm">Calmest</button>
+      <button class="opt day active" data-day="stormy">Most uncertain wind</button>
+      <button class="opt day" data-day="median">Median</button>
+      <button class="opt day" data-day="sunny">Most uncertain solar</button>
+    </div>
+    <div class="group"><span class="grouplabel">Variable:</span>
+      <button class="opt var active" data-var="wind100">100 m wind</button>
+      <button class="opt var" data-var="ssrd_step">Solar</button>
+      <button class="opt var" data-var="t_2m">2 m temp</button>
+    </div>
+    <div class="group"><span class="grouplabel">Members:</span>
+      <input type="range" id="nmem" min="1" max="51" value="51">
+      <span id="nmem-label">51</span>
+    </div>
+    <div class="group">
+      <label><input type="checkbox" id="showband" checked> p10–p90 band + median</label>
+    </div>
+  </div>
+  <svg id="spag-svg" width="1040" height="420"></svg>
+  <div class="readout" id="spag-readout"></div>
+  <div class="legend">Times are UTC on the delivery day. DE-mean = average over the
+  1° cells covering Germany. Member 0 is the unperturbed control run where present
+  (newer files omit it — the solar day has 50 members, a real catalogue quirk).</div>
+</div>
+
+<p><b>Try this:</b> drag the member slider down to 5 on the "most uncertain wind"
+day, then back up. With few members the spread estimate jumps around; with all 51
+it stabilizes. That is the whole argument for paying the 51× storage cost — a
+distribution estimated from 5 samples is noise, from 51 it is usable.</p>
+
+<div class="ann"><b class="tag">ANN analogy.</b> The ensemble is Monte-Carlo
+sampling at inference time — the same idea as MC-dropout or a deep ensemble. One
+forward pass gives a point estimate; 51 perturbed forward passes give samples from
+a predictive distribution. Spread across members ≈ predictive variance.</div>
+
+<h2>4 · Where the uncertainty comes from</h2>
+
+<p>The members differ because ECMWF injects noise at exactly the two places where
+its knowledge is imperfect:</p>
+
+<table>
+<tr><th></th><th>What is perturbed</th><th>How</th><th>ANN analogy</th></tr>
+<tr><td><b>1. Initial conditions</b></td>
+    <td>The starting state of the atmosphere — never known exactly (finite
+    observations, instrument error, gaps over oceans)</td>
+    <td>An <i>Ensemble of Data Assimilations</i> (EDA) plus singular-vector
+    perturbations — tiny nudges chosen in the directions where errors grow
+    fastest over the next 48 h</td>
+    <td>Perturbing the <i>input</i>, with the perturbations aligned to the most
+    error-amplifying directions — adversarial-example logic, used for honesty
+    instead of attack</td></tr>
+<tr><td><b>2. Model error</b></td>
+    <td>The physics the model cannot resolve (clouds, turbulence smaller than the
+    9 km grid)</td>
+    <td>Stochastic physics (SPPT / SPP schemes): the parameterized tendencies are
+    randomly jittered during the run, differently per member</td>
+    <td>Dropout inside the network's hand-crafted layers at inference time —
+    admitting the submodules themselves are approximations</td></tr>
+</table>
+
+<p>Chaos does the rest: the atmosphere amplifies small differences exponentially
+(the butterfly effect, quantitatively real). You can see the amplification inside
+our own 27-hour window — spread at +48 h is systematically larger than at +21 h:</p>
+
+<div class="chartbox"><svg id="lead-svg" width="1040" height="260"></svg>
+<div class="legend">Std-dev across members of DE-mean 100 m wind speed, by forecast
+lead time, averaged over 29 runs sampled across the 6-variable era. The shaded part
+is the delivery-day window we archive.</div></div>
+
+<h3>How uncertain is a typical day?</h3>
+<p>Daily hub-height wind spread over all <span id="ndays">—</span> days of the
+6-variable era. The featured days from the chart above are marked — "calm" and
+"stormy" are genuine tails, roughly 6× apart:</p>
+
+<div class="chartbox"><svg id="hist-svg" width="1040" height="240"></svg></div>
+
+<div class="warnbox"><b>What this spread is — and is not — good for.</b> We
+tested the obvious hypothesis: on days when the ensemble disagrees, is our price
+model's error larger? Pre-registered answer: <b>no</b> — partial rank correlation
+−0.002 (p=0.95) over 862 days, refuted in
+<a href="../spread_vs_error_retest/index.html">a registered study</a>. Daily
+Germany-mean spread carries no incremental error signal. If ensemble information
+earns its keep in the neural phase, it will be as hourly/regional features scored
+with proper distributional rules (CRPS), not as a daily error dial.</div>
+
+<h2>5 · How the model underneath roughly works</h2>
+
+<p>The IFS is not a learned model — it is a <b>hard-coded forward function built
+from physics</b>, run at brutal scale. In ANN vocabulary:</p>
+
+<h3>The state vector</h3>
+<p>The atmosphere is discretized onto a global grid: ~9 km horizontal spacing, 137
+vertical levels, with wind, temperature, humidity, pressure and cloud variables at
+every point — a state of order 10⁹ numbers. That is the "activation" the model
+evolves.</p>
+
+<h3>The forward pass</h3>
+<p>One timestep applies the discretized equations of fluid dynamics and
+thermodynamics (Navier–Stokes on a rotating sphere, plus radiation and moisture)
+to advance the state a few minutes. A 48-hour forecast is hundreds of these steps
+composed — a very deep residual network whose "weights" are the laws of physics
+and were never trained. The numerics (spectral transforms, semi-Lagrangian
+advection) exist to make each step stable and cheap.</p>
+
+<h3>The hand-crafted layers: parameterizations</h3>
+<p>Anything smaller than the grid — individual clouds, turbulent eddies, radiation
+passing through cloud droplets — cannot be resolved and is replaced by
+<i>parameterization schemes</i>: approximate, semi-empirical submodules that map
+the resolved state to the sub-grid effects. These are the model's weakest, most
+approximate parts — which is exactly why the stochastic-physics noise from
+section&nbsp;4 is injected there and nowhere else.</p>
+
+<h3>The "training step": data assimilation</h3>
+<p>The one place gradient-based optimization genuinely appears. Every 12 hours,
+<b>4D-Var</b> finds the initial state that best explains tens of millions of fresh
+observations (satellites, aircraft, radiosondes, ground stations) while staying
+close to the previous forecast. It minimizes a loss with two terms — misfit to
+observations plus deviation from the prior — and the gradients flow through the
+forecast model itself via an adjoint model, which is exactly backpropagation
+through the physics. But note what is optimized: the <i>initial state</i>, not the
+weights. The physics is fixed; only "where the atmosphere is right now" is fitted,
+fresh, every cycle.</p>
+
+<div class="ann"><b class="tag">The full loop, ANN-style.</b> 4D-Var = optimizing
+the input embedding against a two-term loss (obs likelihood + prior), gradients
+via an adjoint (backprop). Forecast = a fixed, physics-defined forward pass
+composed hundreds of times. Ensemble = MC sampling over input noise and layer
+noise. The output we store = 51 samples from the predictive distribution of
+tomorrow's weather over Germany.</div>
+
+<p class="note"><b>Aside:</b> ECMWF now also operates AIFS — an actually-learned
+neural forecast model running alongside the physics IFS, trained on decades of
+reanalysis. Our archive is the physics ENS; the fact that a learned model is
+becoming competitive with a 10⁹-state physics integrator is one of the most
+interesting stories in the field.</p>
+
+<h2>6 · Provenance</h2>
+<footer>
+<p>Collection: <code>src/pred_el_prices/pipeline/ecmwf.py</code> (byte-range
+backfill from ECMWF's open-data S3 bucket, run on a RunPod instance over ~3 days,
+total compute cost ≈ $6.30, hourly-pulled to the local archive). Daily forward
+collection of the sibling ICON-EU-EPS feed continues via GitHub Actions. QA:
+<code>_scratch/qa_full_archive.py</code> — all files readable, ≥50 members,
+era-consistent variables; 6 upstream-missing dates documented above. Data on this
+page: <code>_scratch/explainer_data.py</code> → <code>data.js</code> (real archive
+extracts, no synthetic data). License: ECMWF open data, CC-BY-4.0.</p>
+</footer>
+
+<script src="data.js"></script>
+<script>
+"use strict";
+const D = window.DATA;
+const $ = id => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+
+function el(parent, tag, attrs, text) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text !== undefined) e.textContent = text;
+  parent.appendChild(e);
+  return e;
+}
+
+// ---- stat cards ----
+const inv = D.inventory;
+$("stat-files").textContent = inv.n_files.toLocaleString("en");
+$("stat-span").textContent = inv.first.slice(0,4) + "–" + inv.last.slice(0,4);
+$("stat-size").textContent = (inv.size_mb/1000).toFixed(1) + " GB";
+$("ndays").textContent = D.spread_dist.length;
+
+// ---- era timeline ----
+(function eraTimeline(){
+  const svg = $("era-svg"), W = 1040, x0 = 10, x1 = W-10, y = 34, h = 30;
+  const t = s => new Date(s.slice(0,4)+"-"+s.slice(4,6)+"-"+s.slice(6,8)).getTime();
+  const tMin = t(inv.first), tMax = t(inv.last);
+  const X = d => x0 + (t(d)-tMin)/(tMax-tMin)*(x1-x0);
+  const eras = [
+    {from: inv.first, to: "20240305", c:"#90a4ae", label:"3 vars — 10 m wind + 2 m temp", n:inv.era_counts["3var"]},
+    {from: "20240306", to: "20240318", c:"#ffb74d", label:"+ssrd", n:inv.era_counts["4var"]},
+    {from: "20240319", to: inv.last, c:"#42a5f5", label:"6 vars — +100 m wind (current)", n:inv.era_counts["6var"]},
+  ];
+  for (const e of eras) {
+    el(svg, "rect", {x:X(e.from), y:y, width:X(e.to)-X(e.from)+1, height:h, fill:e.c, rx:3});
+  }
+  el(svg, "text", {x:X("20230118"), y:y-8, "font-size":11, fill:"#5b6b7a"}, "3 vars (" + eras[0].n + " files)");
+  el(svg, "text", {x:X("20240306")-30, y:y+h+34, "font-size":11, fill:"#ef6c00"}, "+ssrd 2024-03-06 (13 files)");
+  el(svg, "line", {x1:X("20240310"), y1:y+h+2, x2:X("20240310"), y2:y+h+22, stroke:"#ef6c00", "stroke-width":1});
+  el(svg, "text", {x:X("20240319")+8, y:y-8, "font-size":11, fill:"#1565c0"}, "6 vars incl. 100 m wind, from 2024-03-19 (" + eras[2].n + " files)");
+  el(svg, "line", {x1:X("20230427"), y1:y-4, x2:X("20230427"), y2:y+h+4, stroke:"#c62828", "stroke-width":3});
+  el(svg, "text", {x:X("20230427")-18, y:y+h+18, "font-size":10, fill:"#c62828"}, "6-day S3 hole");
+  const marks = ["20230601","20240101","20250101","20260101"];
+  for (const m of marks) {
+    el(svg, "line", {x1:X(m), y1:y+h, x2:X(m), y2:y+h+5, stroke:"#5b6b7a"});
+  }
+  el(svg, "text", {x:X("20240101")-14, y:y+h+18, "font-size":10, fill:"#5b6b7a"}, "2024");
+  el(svg, "text", {x:X("20250101")-14, y:y+h+18, "font-size":10, fill:"#5b6b7a"}, "2025");
+  el(svg, "text", {x:X("20260101")-14, y:y+h+18, "font-size":10, fill:"#5b6b7a"}, "2026");
+})();
+
+// ---- gate timing diagram ----
+(function gate(){
+  const svg = $("gate-svg"), x0 = 60, x1 = 990, y = 62;
+  // timeline hours: D-1 00:00 UTC .. D+1 00:00 UTC  (48h span)
+  const X = hUTC => x0 + hUTC/48*(x1-x0);
+  el(svg, "line", {x1:x0-10, y1:y, x2:x1+10, y2:y, stroke:"#1c2733", "stroke-width":1.5});
+  // day shading: delivery day D = hours 24..48
+  el(svg, "rect", {x:X(24), y:y-26, width:X(48)-X(24), height:52, fill:"#e3f0fc", rx:4});
+  el(svg, "text", {x:X(36)-52, y:y-32, "font-size":12, fill:"#1565c0", "font-weight":"600"}, "delivery day D");
+  el(svg, "text", {x:X(12)-64, y:y-32, "font-size":12, fill:"#5b6b7a"}, "D−1 (auction day)");
+  const pts = [
+    {h:0,  c:"#1565c0", up:false, label:"00Z run starts"},
+    {h:7.5,c:"#2e7d32", up:true,  label:"published ~07:30 UTC"},
+    {h:11, c:"#c62828", up:false, label:"auction gate 12:00 CET"},
+    {h:21, c:"#1565c0", up:true,  label:"first step +21 h"},
+    {h:48, c:"#1565c0", up:true,  label:"last step +48 h"},
+  ];
+  for (const p of pts) {
+    el(svg, "circle", {cx:X(p.h), cy:y, r:5, fill:p.c});
+    const ty = p.up ? y+30 : y-14;
+    el(svg, "line", {x1:X(p.h), y1:y+(p.up?6:-6), x2:X(p.h), y2:p.up?ty-10:ty+4, stroke:p.c, "stroke-width":1});
+    el(svg, "text", {x:Math.min(X(p.h)-40, 900), y:ty+(p.up?4:0), "font-size":11, fill:p.c}, p.label);
+  }
+  // steps ticks
+  for (let h=21; h<=48; h+=3) el(svg, "line", {x1:X(h), y1:y-4, x2:X(h), y2:y+4, stroke:"#1565c0"});
+  el(svg, "text", {x:X(32)-100, y:y+52, "font-size":11, fill:"#5b6b7a"}, "3-hourly steps +21..+48 h cover day D in UTC and CET/CEST");
+})();
+
+// ---- spaghetti chart ----
+const VARMETA = {
+  wind100: {label:"100 m wind speed", unit:"m/s", color:"#1565c0"},
+  ssrd_step: {label:"solar radiation (3-h mean)", unit:"W/m²", color:"#ef6c00"},
+  t_2m: {label:"2 m temperature", unit:"°C", color:"#6a1b9a"},
+};
+// fixed y-range per variable across all featured days, so switching days is honest
+const VRANGE = {};
+for (const v in VARMETA) {
+  let lo = Infinity, hi = -Infinity;
+  for (const k in D.days) {
+    for (const row of D.days[k][v]) for (const x of row) {
+      if (x === null || Number.isNaN(x)) continue;
+      if (x < lo) lo = x; if (x > hi) hi = x;
+    }
+  }
+  const pad = (hi-lo)*0.06;
+  VRANGE[v] = [lo-pad, hi+pad];
+}
+
+const state = {day:"stormy", vr:"wind100", n:51, band:true};
+
+function quantile(sorted, q) {
+  const pos = (sorted.length-1)*q, lo = Math.floor(pos), hi = Math.ceil(pos);
+  return sorted[lo] + (sorted[hi]-sorted[lo])*(pos-lo);
+}
+
+function drawSpaghetti() {
+  const svg = $("spag-svg");
+  svg.innerHTML = "";
+  const day = D.days[state.day], meta = VARMETA[state.vr];
+  const mat = day[state.vr];
+  const nShow = Math.min(state.n, mat.length);
+  const W = 1040, H = 420, mL = 60, mR = 20, mT = 24, mB = 40;
+  const [ylo, yhi] = VRANGE[state.vr];
+  const X = i => mL + i/(day.times.length-1)*(W-mL-mR);
+  const Y = v => mT + (yhi-v)/(yhi-ylo)*(H-mT-mB);
+
+  // axes + gridlines
+  const nt = 6;
+  for (let i=0; i<=nt; i++) {
+    const v = ylo + (yhi-ylo)*i/nt;
+    el(svg, "line", {x1:mL, y1:Y(v), x2:W-mR, y2:Y(v), stroke:"#eef2f5"});
+    el(svg, "text", {x:mL-8, y:Y(v)+4, "font-size":11, fill:"#5b6b7a", "text-anchor":"end"}, v.toFixed(1));
+  }
+  day.times.forEach((t,i) => {
+    el(svg, "text", {x:X(i)-16, y:H-mB+20, "font-size":11, fill:"#5b6b7a"}, t);
+  });
+  el(svg, "text", {x:mL, y:14, "font-size":12, fill:"#1c2733", "font-weight":"600"},
+     meta.label + " (" + meta.unit + ") — " + day.date + ", DE mean, " + nShow + "/" + day.n_members + " members");
+
+  // band + median over SHOWN members
+  const shown = mat.slice(0, nShow);
+  if (state.band && nShow >= 3) {
+    const p10 = [], p50 = [], p90 = [];
+    for (let i=0; i<day.times.length; i++) {
+      const col = shown.map(r => r[i]).filter(x => x !== null && !Number.isNaN(x)).sort((a,b)=>a-b);
+      p10.push(quantile(col, 0.1)); p50.push(quantile(col, 0.5)); p90.push(quantile(col, 0.9));
+    }
+    let path = "M";
+    p10.forEach((v,i) => path += X(i)+","+Y(v)+" ");
+    for (let i=p90.length-1; i>=0; i--) path += X(i)+","+Y(p90[i])+" ";
+    el(svg, "polygon", {points:path.slice(1), fill:meta.color, opacity:0.13});
+    el(svg, "polyline", {points:p50.map((v,i)=>X(i)+","+Y(v)).join(" "),
+       fill:"none", stroke:meta.color, "stroke-width":3, opacity:0.9});
+  }
+
+  // member lines
+  const hoverLabel = el(svg, "text", {x:W-mR, y:14, "font-size":12, fill:meta.color,
+                        "text-anchor":"end", "font-weight":"600"}, "");
+  shown.forEach((row, m) => {
+    const pts = row.map((v,i) => X(i)+","+Y(v)).join(" ");
+    const line = el(svg, "polyline", {points:pts, fill:"none", stroke:meta.color,
+                     "stroke-width":1, opacity:0.28, "data-m":m});
+    line.style.cursor = "pointer";
+    line.addEventListener("mouseenter", () => {
+      line.setAttribute("stroke-width", 2.6); line.setAttribute("opacity", 1);
+      const tag = (m === 0 && day.n_members === 51) ? " (control, unperturbed)" : "";
+      hoverLabel.textContent = "member " + m + tag;
+    });
+    line.addEventListener("mouseleave", () => {
+      line.setAttribute("stroke-width", 1); line.setAttribute("opacity", 0.28);
+      hoverLabel.textContent = "";
+    });
+  });
+
+  // readout: mean spread across shown members
+  let spreadSum = 0;
+  for (let i=0; i<day.times.length; i++) {
+    const col = shown.map(r => r[i]).filter(x => x !== null && !Number.isNaN(x));
+    const mu = col.reduce((a,b)=>a+b,0)/col.length;
+    spreadSum += Math.sqrt(col.reduce((a,b)=>a+(b-mu)*(b-mu),0)/Math.max(col.length-1,1));
+  }
+  const daySpread = (spreadSum/day.times.length).toFixed(2);
+  $("spag-readout").innerHTML = "Ensemble spread (std across the <b>" + nShow +
+    "</b> shown members, averaged over the day): <b>" + daySpread + " " + meta.unit +
+    "</b>" + (nShow < day.n_members ? " — move the slider to see this estimate stabilize." : "");
+}
+
+document.querySelectorAll("button.day").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("button.day").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); state.day = b.dataset.day; drawSpaghetti();
+}));
+document.querySelectorAll("button.var").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("button.var").forEach(x => x.classList.remove("active"));
+  b.classList.add("active"); state.vr = b.dataset.var; drawSpaghetti();
+}));
+$("nmem").addEventListener("input", e => {
+  state.n = +e.target.value; $("nmem-label").textContent = e.target.value; drawSpaghetti();
+});
+$("showband").addEventListener("change", e => { state.band = e.target.checked; drawSpaghetti(); });
+drawSpaghetti();
+
+// ---- spread vs lead time ----
+(function leadChart(){
+  const svg = $("lead-svg"), W = 1040, H = 260, mL = 60, mR = 20, mT = 24, mB = 40;
+  const hs = D.lead_time.hours, ss = D.lead_time.spread;
+  const ylo = 0, yhi = Math.max(...ss)*1.15;
+  const X = h => mL + (h-hs[0])/(hs[hs.length-1]-hs[0])*(W-mL-mR);
+  const Y = v => mT + (yhi-v)/(yhi-ylo)*(H-mT-mB);
+  el(svg, "rect", {x:X(24), y:mT, width:X(48)-X(24), height:H-mT-mB, fill:"#e3f0fc", opacity:0.6});
+  el(svg, "text", {x:X(36)-70, y:mT+16, "font-size":11, fill:"#1565c0"}, "delivery-day window");
+  for (let i=0; i<=4; i++) {
+    const v = ylo + (yhi-ylo)*i/4;
+    el(svg, "line", {x1:mL, y1:Y(v), x2:W-mR, y2:Y(v), stroke:"#eef2f5"});
+    el(svg, "text", {x:mL-8, y:Y(v)+4, "font-size":11, fill:"#5b6b7a", "text-anchor":"end"}, v.toFixed(2));
+  }
+  hs.forEach(h => el(svg, "text", {x:X(h)-12, y:H-mB+20, "font-size":11, fill:"#5b6b7a"}, "+"+h+"h"));
+  el(svg, "polyline", {points:hs.map((h,i)=>X(h)+","+Y(ss[i])).join(" "),
+     fill:"none", stroke:"#1565c0", "stroke-width":2.5});
+  hs.forEach((h,i) => el(svg, "circle", {cx:X(h), cy:Y(ss[i]), r:4, fill:"#1565c0"}));
+  el(svg, "text", {x:mL, y:14, "font-size":12, "font-weight":"600", fill:"#1c2733"},
+     "Ensemble spread of DE-mean 100 m wind (m/s) grows with lead time");
+})();
+
+// ---- histogram of daily spread ----
+(function hist(){
+  const svg = $("hist-svg"), W = 1040, H = 240, mL = 60, mR = 20, mT = 24, mB = 40;
+  const vals = D.spread_dist, lo = vals[0], hi = vals[vals.length-1];
+  const nb = 40, counts = new Array(nb).fill(0);
+  for (const v of vals) counts[Math.min(nb-1, Math.floor((v-lo)/(hi-lo)*nb))]++;
+  const cmax = Math.max(...counts);
+  const X = v => mL + (v-lo)/(hi-lo)*(W-mL-mR);
+  const Y = c => mT + (1-c/cmax)*(H-mT-mB);
+  counts.forEach((c,i) => {
+    const bx = mL + i/nb*(W-mL-mR);
+    el(svg, "rect", {x:bx, y:Y(c), width:(W-mL-mR)/nb-1, height:H-mB-Y(c), fill:"#90caf9"});
+  });
+  for (let i=0; i<=5; i++) {
+    const v = lo + (hi-lo)*i/5;
+    el(svg, "text", {x:X(v)-10, y:H-mB+20, "font-size":11, fill:"#5b6b7a"}, v.toFixed(1));
+  }
+  el(svg, "text", {x:W/2-140, y:H-4, "font-size":11, fill:"#5b6b7a"},
+     "daily-mean ensemble spread of 100 m wind (m/s)");
+  const markers = [["calm","#2e7d32"],["median","#5b6b7a"],["stormy","#c62828"],["sunny","#ef6c00"]];
+  for (const [k, c] of markers) {
+    const v = D.days[k].daily_spread;
+    el(svg, "line", {x1:X(v), y1:mT, x2:X(v), y2:H-mB, stroke:c, "stroke-width":2, "stroke-dasharray":"4 3"});
+    el(svg, "text", {x:X(v)+4, y:mT+12+(k==="median"?14:0)+(k==="sunny"?28:0), "font-size":10, fill:c},
+       k + " " + D.days[k].date);
+  }
+})();
+</script>
+</body></html>
