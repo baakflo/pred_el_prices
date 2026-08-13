@@ -49,6 +49,21 @@ jobs:
       - name: Archive Pegel Kaub
         run: uv run python -m pred_el_prices.cli archive-pegel --archive-dir archive_repo
 
+      # Benchmark forecast for the public site. All three cron slots are
+      # pre-auction (gate 12:00 CET), so any retry still captures a clean
+      # snapshot; skipped snapshots are unrecoverable. Guarded so a missing
+      # token doesn't block the weather/pegel push (secrets can't be used in
+      # step-level `if`).
+      - name: Archive energyforecast.de benchmark
+        env:
+          ENERGYFORECAST_TOKEN: ${{ secrets.ENERGYFORECAST_TOKEN }}
+        run: |
+          if [ -z "$ENERGYFORECAST_TOKEN" ]; then
+            echo "::warning::ENERGYFORECAST_TOKEN not set; benchmark forecast NOT archived"
+            exit 0
+          fi
+          uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo
+
       - name: Push new data
         run: |
           cd archive_repo

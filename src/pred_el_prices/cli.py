@@ -32,6 +32,14 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/water"), help="Output directory"
     )
 
+    efc = sub.add_parser(
+        "archive-energyforecast",
+        help="Archive today's pre-auction energyforecast.de benchmark forecast (DE-LU)",
+    )
+    efc.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/benchmarks"), help="Output directory"
+    )
+
     ecmwf = sub.add_parser(
         "backfill-ecmwf",
         help="Backfill ECMWF open-data ENS runs from the AWS archive (available from 2023-01-18)",
@@ -105,6 +113,12 @@ def main() -> None:
 
         written = archive_window(args.archive_dir)
         print(f"pegel-kaub: {len(written)} day file(s) written")
+    elif args.command == "archive-energyforecast":
+        from pred_el_prices.config import energyforecast_token
+        from pred_el_prices.pipeline.energyforecast import archive_snapshot
+
+        written = archive_snapshot(args.archive_dir, energyforecast_token())
+        print(f"energyforecast: {written if written else 'already archived today'}")
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 

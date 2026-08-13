@@ -16,3 +16,11 @@ def entsoe_api_key() -> str:
     if not key:
         raise RuntimeError(f"ENTSOE_API_KEY not set; expected it in {ENV_PATH}")
     return key
+
+
+def energyforecast_token() -> str:
+    load_dotenv(ENV_PATH, encoding="utf-8-sig")
+    token = os.environ.get("ENERGYFORECAST_TOKEN", "")
+    if not token:
+        raise RuntimeError(f"ENERGYFORECAST_TOKEN not set; expected it in {ENV_PATH}")
+    return token
