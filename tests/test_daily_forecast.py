@@ -5,7 +5,36 @@ import json
 import numpy as np
 import pandas as pd
 
-from pred_el_prices.daily_forecast import write_site_json
+from pred_el_prices.daily_forecast import lear_forecast, write_site_json
+
+
+def test_lear_forecast_heals_the_local_day_boundary():
+    """The last 2 UTC hours of D-1 (next local day: unauctioned, no TSO
+    forecast pre-gate) must not block the production run."""
+    idx = pd.date_range("2025-07-01", periods=380 * 24, freq="1h", tz="UTC")
+    hours = idx.hour.to_numpy()
+    dataset = pd.DataFrame(
+        {
+            "price_eur_mwh": 80 + 30 * np.sin(2 * np.pi * hours / 24),
+            "load_forecast_mw": 55_000 + 8_000 * np.sin(2 * np.pi * hours / 24),
+            "wind_onshore_forecast_mw": 12_000.0,
+            "wind_offshore_forecast_mw": 2_000.0,
+            "solar_forecast_mw": np.where((hours > 5) & (hours < 20), 20_000.0, 0.0),
+        },
+        index=idx,
+    )
+    # production reality: the last 2 hours of the pre-delivery day are unknown
+    dataset = dataset.iloc[:-2]
+    delivery = pd.Timestamp("2026-07-16", tz="UTC")
+    assert idx[-1].normalize() == delivery - pd.Timedelta(days=1)
+
+    delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
+    load = pd.Series(55_000.0, index=delivery_hours)
+    res = pd.Series(30_000.0, index=delivery_hours)
+
+    forecast = lear_forecast(dataset, delivery, load, res)
+    assert list(forecast.index) == list(delivery_hours)
+    assert forecast.notna().all()
 
 
 def _log(days, start="2026-08-01"):

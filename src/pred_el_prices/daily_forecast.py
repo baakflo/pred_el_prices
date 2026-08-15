@@ -108,7 +108,22 @@ def lear_forecast(
             ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
         ].sum(axis=1),
     }
-    hist = pd.DataFrame(cols).dropna()
+    frame_all = pd.DataFrame(cols)
+
+    # The last 1-2 UTC hours of the day before delivery belong to the next
+    # LOCAL day: their auction runs today at 12:00 and their TSO forecasts
+    # publish tonight — neither exists pre-gate. Heal that boundary with
+    # 24h-lag values so the calibration window has a complete last day.
+    last_hours = pd.date_range(delivery - pd.Timedelta(hours=24), periods=24, freq="1h", tz="UTC")
+    frame_all = frame_all.reindex(frame_all.index.union(last_hours))
+    boundary = frame_all.loc[last_hours]
+    n_missing = int(boundary.isna().any(axis=1).sum())
+    if 0 < n_missing <= 4:
+        lagged = frame_all.reindex(last_hours - pd.Timedelta(days=1)).set_axis(last_hours)
+        frame_all.loc[last_hours] = boundary.fillna(lagged)
+        print(f"healed {n_missing} boundary hour(s) of the calibration frame from 24h-lag")
+
+    hist = frame_all.dropna()
     day_sizes = hist.groupby(hist.index.normalize()).size()
     full_days = day_sizes[day_sizes == 24].index.sort_values()
     full_days = full_days[full_days < delivery]
@@ -232,13 +247,22 @@ def run_daily(
 
     load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
-    if load_fc.reindex(delivery_hours).isna().any():
+    load_d = load_fc.reindex(delivery_hours)
+    missing = load_d.isna()
+    if missing.sum() > 4:
         raise RuntimeError(
             f"ENTSO-E load forecast for {delivery:%Y-%m-%d} not yet published; retry later"
         )
+    if missing.any():
+        # ENTSO-E publishes local (CET/CEST) days: the last 1-2 hours of the
+        # UTC delivery block belong to the next local day and do not exist
+        # pre-gate. Fill from 24 h earlier (published, flat night load).
+        lagged = load_fc.reindex(delivery_hours - pd.Timedelta(days=1))
+        load_d = load_d.fillna(pd.Series(lagged.to_numpy(), index=delivery_hours))
+        print(f"filled {int(missing.sum())} boundary hour(s) of load forecast from 24h-lag")
 
     own_res = own_res_forecast(features, dataset, cache_dir, delivery)
-    forecast = lear_forecast(dataset, delivery, load_fc, own_res)
+    forecast = lear_forecast(dataset, delivery, load_d, own_res)
 
     entry = forecast.to_frame()
     entry["generated_utc"] = now.isoformat(timespec="seconds")
