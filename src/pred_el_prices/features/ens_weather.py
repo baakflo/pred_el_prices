@@ -12,8 +12,11 @@ ensemble-mean features for the UTC delivery day D:
 - 3-hourly anchors are linearly interpolated to the 24 delivery hours (the
   downstream model gets hour-of-day features to fix residual diurnal shape).
 
-Cell groups are deliberately coarse (national / north / south / sea): the
-fleet-weighting refinement belongs to a later iteration, not v1.
+v2 cell groups (registered 2026-08-15 after the v1 swap miss): wind gets a
+north/center/south belt split plus separate North Sea and Baltic sea groups;
+ssrd gets an east/west split for morning/evening cloud asymmetry; ensemble
+q10/q90 across members for the headline wind/ssrd groups. True
+capacity-weighting of cells stays a later refinement.
 
 Requires the 6-variable era (100 m wind + ssrd), i.e. runs from 2024-03-19.
 """
@@ -26,12 +29,19 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# cell groups by lower-left cell latitude
+# cell groups by lower-left cell label (1-degree cells, Germany box 47-56N/5-16E)
 NORTH_MIN = 53.0  # coastal/northern Germany, where most onshore wind sits
+CENTER_MIN = 51.0  # central belt between the wind north and the solar south
 SOUTH_MAX = 51.0  # southern Germany, where the solar fleet skews
 SEA_MIN = 54.0  # cells >= 54N are dominated by the North/Baltic Sea
+NORTHSEA_LON_MAX = 8.0  # German Bight clusters sit west of ~9E
+BALTIC_LON_MIN = 10.0  # Baltic clusters east of ~11E; the 9E cell is mostly land
+EAST_LON_MIN = 10.0  # ssrd east/west split for morning/evening cloud asymmetry
+WEST_LON_MAX = 8.0
 
 WIND_VARS = {"u_100m", "v_100m", "u_10m", "v_10m"}
+
+QUANTILES = (0.1, 0.9)
 
 
 def _speed(df: pd.DataFrame, u_var: str, v_var: str) -> pd.DataFrame:
@@ -45,11 +55,25 @@ def _speed(df: pd.DataFrame, u_var: str, v_var: str) -> pd.DataFrame:
     return np.hypot(wide[u_var], wide[v_var]).rename("value").reset_index()
 
 
-def _group_means(values: pd.DataFrame, groups: dict[str, pd.Series]) -> pd.DataFrame:
-    """Ensemble-and-cell mean per valid_time for each named cell mask."""
+def _group_stats(
+    values: pd.DataFrame,
+    groups: dict[str, pd.Series],
+    quantile_names: frozenset[str] = frozenset(),
+) -> pd.DataFrame:
+    """Cell-group means per valid_time; ensemble q10/q90 for selected groups.
+
+    Cells are averaged within each member first, so quantiles are proper
+    across-member statistics (every member has the same cell count, so the
+    mean of member-means equals the plain mean).
+    """
     out = {}
     for name, mask in groups.items():
-        out[name] = values[mask].groupby("valid_time")["value"].mean()
+        member_means = values[mask].groupby(["valid_time", "member"])["value"].mean()
+        by_time = member_means.groupby("valid_time")
+        out[name] = by_time.mean()
+        if name in quantile_names:
+            for q in QUANTILES:
+                out[f"{name}_q{int(q * 100)}"] = by_time.quantile(q)
     return pd.DataFrame(out)
 
 
@@ -76,13 +100,24 @@ def run_features(archive_path: Path) -> pd.DataFrame:
             f"{archive_path.name}: missing variables {sorted(missing)} (pre-6-var era?)"
         )
 
-    def groups_for(values: pd.DataFrame) -> dict[str, pd.Series]:
-        lat = values["cell_lat"]
+    def wind_groups(values: pd.DataFrame) -> dict[str, pd.Series]:
+        lat, lon = values["cell_lat"], values["cell_lon"]
         return {
             "nat": pd.Series(True, index=values.index),
             "north": lat >= NORTH_MIN,
+            "center": (lat >= CENTER_MIN) & (lat < NORTH_MIN),
             "south": lat < SOUTH_MAX,
-            "sea": lat >= SEA_MIN,
+            "northsea": (lat >= SEA_MIN) & (lon <= NORTHSEA_LON_MAX),
+            "baltic": (lat >= SEA_MIN) & (lon >= BALTIC_LON_MIN),
+        }
+
+    def ssrd_groups(values: pd.DataFrame) -> dict[str, pd.Series]:
+        lat, lon = values["cell_lat"], values["cell_lon"]
+        return {
+            "nat": pd.Series(True, index=values.index),
+            "south": lat < SOUTH_MAX,
+            "east": lon >= EAST_LON_MIN,
+            "west": lon <= WEST_LON_MAX,
         }
 
     ws100 = _speed(raw, "u_100m", "v_100m")
@@ -92,12 +127,18 @@ def run_features(archive_path: Path) -> pd.DataFrame:
 
     anchors = pd.concat(
         [
-            _group_means(ws100, groups_for(ws100)).add_prefix("ws100_"),
-            _group_means(ws10, {"nat": pd.Series(True, index=ws10.index)}).add_prefix("ws10_"),
-            _group_means(t2m, {"nat": pd.Series(True, index=t2m.index)}).add_prefix("t2m_"),
-            _group_means(
-                ssrd, {k: v for k, v in groups_for(ssrd).items() if k in ("nat", "south")}
-            ).add_prefix("ssrd_"),
+            _group_stats(
+                ws100, wind_groups(ws100), frozenset({"nat", "northsea", "baltic"})
+            ).add_prefix("ws100_"),
+            _group_stats(ws10, {"nat": pd.Series(True, index=ws10.index)}).add_prefix("ws10_"),
+            _group_stats(
+                t2m,
+                {
+                    "nat": pd.Series(True, index=t2m.index),
+                    "south": t2m["cell_lat"] < SOUTH_MAX,
+                },
+            ).add_prefix("t2m_"),
+            _group_stats(ssrd, ssrd_groups(ssrd), frozenset({"nat"})).add_prefix("ssrd_"),
         ],
         axis=1,
     ).sort_index()
