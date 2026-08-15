@@ -11,6 +11,10 @@ on:
     # Last pre-gate attempt for the ENTSO-E forecast snapshot: gate is
     # 12:00 CET/CEST = 11:00/10:00 UTC, so 09:45 UTC is pre-gate year-round.
     - cron: "45 9 * * *"
+    # Evening slot: the TSO wind/solar day-ahead forecast publishes only at
+    # 18:00 CET/CEST (EEV Par. 3) - it never exists pre-gate, so the snapshot
+    # captures the evening vintage. 18:30 CEST = 16:30 UTC (17:30 in winter).
+    - cron: "30 16 * * *"
   workflow_dispatch:
 
 permissions:

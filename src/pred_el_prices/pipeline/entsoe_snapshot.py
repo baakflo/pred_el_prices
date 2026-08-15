@@ -1,12 +1,14 @@
-"""Daily pre-auction snapshot of ENTSO-E day-ahead forecasts, as published.
+"""Daily snapshot of ENTSO-E day-ahead forecasts, as first published.
 
 The Transparency Platform serves only the latest submitted version of a
-forecast series; TSOs occasionally resubmit, so the vintage that was
-actually visible before the 12:00 CET auction gate is unrecoverable
-later. This archives the day-ahead load and wind/solar forecasts for the
-next delivery day each morning. All three workflow cron slots are
-pre-gate; the snapshot is written only once both series are published,
-and the first complete snapshot per delivery day wins.
+forecast series; TSOs occasionally resubmit, so the first-published
+vintage is unrecoverable later. The wind/solar day-ahead forecast is only
+published at 18:00 CET/CEST D-1 (EEV Par. 3) - six hours AFTER the gate -
+so this is an evening capture of the vintage the backtests use, not a
+pre-gate snapshot (nothing pre-gate exists publicly; see the 2026-08-15
+plan addendum). The snapshot is written only once both series are
+published, and the first complete snapshot per delivery day wins;
+`fetched_at` records the capture time.
 """
 
 from __future__ import annotations
