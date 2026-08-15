@@ -1,0 +1,89 @@
+name: Publish forecast
+
+on:
+  schedule:
+    # Inputs pre-gate: ECMWF ENS 00Z on S3 ~08:00 UTC, ENTSO-E load forecast
+    # by law >= 2 h before gate closure. Gate is 12:00 CET/CEST = 10:00 UTC in
+    # summer, 11:00 in winter — 09:15 with a 09:50 retry is pre-gate year-round.
+    - cron: "15 9 * * *"
+    - cron: "50 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-forecast
+  cancel-in-progress: false
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install ecCodes native library
+        run: sudo apt-get update && sudo apt-get install -y libeccodes-dev
+
+      # The archive repo doubles as the production state store: site-state/
+      # holds the caches, the ENS feature table, and the forecast log (the log
+      # is an unrecoverable pre-gate vintage — losing it breaks the scorecard).
+      - name: Clone state repo
+        run: >
+          git clone --depth 1
+          "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_weather_archive.git"
+          archive_repo
+
+      - name: Install
+        run: uv sync
+
+      # Idempotent: if a pre-gate forecast for tomorrow is already logged, this
+      # only refreshes the site JSON (fills in actuals). If the load forecast
+      # is not yet published, it fails loudly and the 09:50 slot retries.
+      - name: Produce forecast
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+        run: >
+          uv run pep forecast
+          --cache-dir archive_repo/site-state/cache
+          --features archive_repo/site-state/ens_features.parquet
+          --archive-dir archive_repo
+          --out archive_repo/site-state/site
+
+      - name: Push state
+        if: always()
+        run: |
+          cd archive_repo
+          git config user.name "forecast-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no state changes"
+          else
+            git commit -m "Site state $(date -u +%FT%H:%MZ)"
+            git push
+          fi
+
+      - name: Publish to website
+        run: |
+          if [ -z "${{ secrets.WEBSITE_REPO_TOKEN }}" ]; then
+            echo "::error::WEBSITE_REPO_TOKEN not set; forecast NOT published"
+            exit 1
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${{ secrets.WEBSITE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_website.git" \
+            website_repo
+          cp archive_repo/site-state/site/latest.json archive_repo/site-state/site/history.json \
+            website_repo/public/data/
+          cd website_repo
+          git config user.name "forecast-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data
+          if git diff --cached --quiet; then
+            echo "site data unchanged"
+          else
+            git commit -m "Forecast $(date -u +%F)"
+            git push
+          fi

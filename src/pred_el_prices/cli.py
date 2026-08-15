@@ -106,6 +106,26 @@ def main() -> None:
     build.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
     build.add_argument("--out", type=Path, default=Path("data/dataset/hourly.parquet"))
 
+    fc = sub.add_parser(
+        "forecast",
+        help="Produce the daily pre-gate forecast for the next UTC day (site JSON + log)",
+    )
+    fc.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    fc.add_argument("--archive-dir", type=Path, default=Path("data/archive/weather"))
+    fc.add_argument("--features", type=Path, default=Path("data/dataset/ens_features.parquet"))
+    fc.add_argument("--out", type=Path, default=Path("data/site"))
+    fc.add_argument(
+        "--delivery-day",
+        type=date.fromisoformat,
+        default=None,
+        help="Override the delivery day (default: tomorrow UTC); for testing",
+    )
+    fc.add_argument(
+        "--skip-fetch",
+        action="store_true",
+        help="Use existing caches/archive without network refresh; for testing",
+    )
+
     runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
     runx.add_argument("name", help="Experiment name, e.g. lear-de")
     runx.add_argument(
@@ -191,6 +211,17 @@ def main() -> None:
 
         page = build_qa_report(args.cache_dir, args.out)
         print(f"report written: {page}")
+    elif args.command == "forecast":
+        from pred_el_prices.daily_forecast import run_daily
+
+        run_daily(
+            cache_dir=args.cache_dir,
+            archive_dir=args.archive_dir,
+            features_path=args.features,
+            out_dir=args.out,
+            delivery_day=args.delivery_day,
+            skip_fetch=args.skip_fetch,
+        )
     elif args.command == "run":
         import json
 
