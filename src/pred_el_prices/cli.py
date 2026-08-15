@@ -77,6 +77,12 @@ def main() -> None:
     fetch.add_argument("--end", default=None, help="UTC end date (default: now)")
     fetch.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
+    capacity = sub.add_parser(
+        "fetch-capacity",
+        help="Update the monthly installed wind/solar capacity cache (energy-charts.info)",
+    )
+    capacity.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+
     fuels = sub.add_parser(
         "fetch-fuels", help="Update the daily fuel/carbon price cache (Yahoo proxies)"
     )
@@ -155,6 +161,11 @@ def main() -> None:
         end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
         client = EntsoePandasClient(api_key=entsoe_api_key())
         backfill(client, datasets, start, end, args.cache_dir)
+    elif args.command == "fetch-capacity":
+        from pred_el_prices.pipeline.capacity import update_cache
+
+        df = update_cache(args.cache_dir)
+        print(f"installed_power: {len(df)} months through {df.index.max():%Y-%m}")
     elif args.command == "fetch-fuels":
         import pandas as pd
 

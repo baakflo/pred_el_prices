@@ -102,6 +102,7 @@ def rolling_forecast(
     calibration_window: int,
     progress_every: int = 50,
     n_jobs: int = 1,
+    predict_exog: pd.DataFrame | None = None,
 ) -> pd.Series:
     """Daily-recalibrated LEAR forecasts for every day from test_start to the end.
 
@@ -109,6 +110,12 @@ def rolling_forecast(
     day are used (day-ahead forecasts: known pre-auction). Every day's
     recalibration is independent, so n_jobs parallelizes over test days with
     identical results to the serial run (the fit is deterministic).
+
+    `predict_exog` (hourly, columns a subset of exog_cols) replaces the exog of
+    the PREDICTION day only — calibration rows keep the published values, which
+    is production's information set when the official series appears post-gate
+    and a substitute must be used pre-gate. Days without a complete 24-hour
+    override keep the published values.
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
@@ -117,11 +124,25 @@ def rolling_forecast(
     exog_all = np.stack([df[c].to_numpy().reshape(-1, 24) for c in exog_cols], axis=2)
     dow_all = np.array([d.dayofweek for d in daily_index])
 
+    override: dict[pd.Timestamp, np.ndarray] = {}
+    override_cols: list[int] = []
+    if predict_exog is not None:
+        cols = [c for c in exog_cols if c in predict_exog.columns]
+        override_cols = [exog_cols.index(c) for c in cols]
+        clean = predict_exog[cols].dropna()
+        for day, chunk in clean.groupby(clean.index.normalize()):
+            if len(chunk) == 24:
+                override[day] = chunk.to_numpy()
+
     def _one_day(day: pd.Timestamp) -> np.ndarray:
         d = daily_index.get_loc(day)
         lo = max(0, d - calibration_window)
         sl = slice(lo, d + 1)
-        return forecast_day(prices_all[sl], exog_all[sl], dow_all[sl])
+        exog_window = exog_all[sl]
+        if day in override:
+            exog_window = exog_window.copy()
+            exog_window[-1, :, override_cols] = override[day].T
+        return forecast_day(prices_all[sl], exog_window, dow_all[sl])
 
     if n_jobs == 1:
         preds = []

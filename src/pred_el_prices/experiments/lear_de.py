@@ -60,6 +60,7 @@ def run(
     exog: str = "extended",
     n_jobs: int = -1,
     dataset_path: str = "data/dataset/hourly.parquet",
+    predict_exog_path: str | None = None,
 ) -> dict:
     df = _load_dataset(dataset_path)
     start = pd.Timestamp(test_start, tz="UTC")
@@ -78,8 +79,25 @@ def run(
     else:
         raise ValueError(f"unknown exog mode {exog!r}; use 'extended' or 'academic'")
 
+    predict_exog = None
+    if predict_exog_path is not None:
+        # own pre-gate substitute (e.g. res-de predictions.parquet): own_* columns
+        # renamed to the standard names; aggregate for the academic config
+        own = pd.read_parquet(predict_exog_path)
+        predict_exog = own.rename(columns=lambda c: c.removeprefix("own_"))
+        if "res_forecast_mw" not in predict_exog.columns:
+            predict_exog["res_forecast_mw"] = predict_exog[
+                ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
+            ].sum(axis=1)
+
     pred = rolling_forecast(
-        df, PRICE_COL, exog_cols, start, calibration_window=window, n_jobs=n_jobs
+        df,
+        PRICE_COL,
+        exog_cols,
+        start,
+        calibration_window=window,
+        n_jobs=n_jobs,
+        predict_exog=predict_exog,
     )
     actual = df[PRICE_COL].loc[pred.index]
     pred.to_frame().assign(actual=actual).to_parquet(out_dir / "forecast.parquet")
