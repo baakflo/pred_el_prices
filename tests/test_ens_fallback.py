@@ -3,10 +3,12 @@
 from datetime import date
 
 import pandas as pd
+import pytest
+import requests
 
 from pred_el_prices.daily_forecast import update_features
 from pred_el_prices.features.ens_weather import run_features
-from pred_el_prices.pipeline.ecmwf import STEPS, _step_url
+from pred_el_prices.pipeline.ecmwf import STEPS, _step_path
 
 VARIABLES = [
     ("u_100m", 8.0),
@@ -52,9 +54,46 @@ def _run_path(archive_dir, run_day: date, run_hour: int):
     )
 
 
-def test_step_url_encodes_the_run_hour():
-    url = _step_url(date(2026, 8, 15), "ifs/0p25", 33, "grib2", run_hour=12)
-    assert url.endswith("/20260815/12z/ifs/0p25/enfo/20260815120000-33h-enfo-ef.grib2")
+def _resp(status: int) -> requests.Response:
+    r = requests.Response()
+    r.status_code = status
+    return r
+
+
+def test_get_rotates_to_the_second_mirror(monkeypatch):
+    from pred_el_prices.pipeline import ecmwf
+
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        return _resp(503 if "amazonaws" in url else 200)
+
+    monkeypatch.setattr(ecmwf._session, "get", fake_get)
+    monkeypatch.setattr(ecmwf, "REQUEST_PACING_S", 0.0)
+    assert ecmwf._get("some/path").status_code == 200
+    assert len(calls) == 2
+
+
+def test_get_gives_up_immediately_when_absent_on_all_mirrors(monkeypatch):
+    from pred_el_prices.pipeline import ecmwf
+
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        return _resp(404)
+
+    monkeypatch.setattr(ecmwf._session, "get", fake_get)
+    monkeypatch.setattr(ecmwf, "REQUEST_PACING_S", 0.0)
+    with pytest.raises(requests.HTTPError):
+        ecmwf._get("some/path")
+    assert len(calls) == len(ecmwf.MIRRORS)  # no retry sweeps for a missing file
+
+
+def test_step_path_encodes_the_run_hour():
+    path = _step_path(date(2026, 8, 15), "ifs/0p25", 33, "grib2", run_hour=12)
+    assert path == "20260815/12z/ifs/0p25/enfo/20260815120000-33h-enfo-ef.grib2"
     assert list(STEPS[12]) == list(range(33, 61, 3))
     assert list(STEPS[0]) == list(range(21, 49, 3))
 

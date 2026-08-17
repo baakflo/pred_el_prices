@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import tempfile
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -32,11 +33,19 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, wait_random
 
 from pred_el_prices.pipeline.dwd import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN, aggregate_members
 
-BASE_URL = "https://ecmwf-forecasts.s3.amazonaws.com"
+# Identical files are published to several channels; a throttled attempt
+# moves on to the next mirror instead of re-queueing behind the same one.
+# AWS keeps the full archive (2023->); data.ecmwf.int holds only the last
+# few days (fine for production pulls; historical dates 404 there and the
+# all-mirrors-404 rule below keeps backfill semantics intact). The Azure
+# mirror rejects public access (409, checked 2026-08-17) — not listed.
+MIRRORS = [
+    "https://ecmwf-forecasts.s3.amazonaws.com",
+    "https://data.ecmwf.int/forecasts",
+]
 
 # Bucket layout changed twice; earliest layout first tried last.
 MODEL_PATHS = ["ifs/0p25", "0p25", "0p4-beta"]
@@ -59,34 +68,51 @@ VARIABLES = {
 STEPS = {0: range(21, 49, 3), 12: range(33, 61, 3)}
 
 
-# S3 throttles bursts of range requests with 503 Slow Down; keep one session,
-# pace the requests, and back off patiently when throttled anyway. The herd
-# pulling a freshly published run can keep the bucket throttled for many
+# The buckets throttle bursts of range requests with 503 Slow Down; keep one
+# session, pace the requests, and rotate mirrors when throttled. The herd
+# pulling a freshly published run can keep a bucket throttled for many
 # minutes (observed 2026-08-15..17: three runs exhausted an ~6-minute retry
-# budget), so each request rides it out for up to ~15 minutes with jitter.
-# Time-boxed callers (the pre-gate 09:50 slot, which must give up quickly
-# and use the 12Z fallback instead) shrink the budget via env var.
+# budget), so a request rides it out for up to ~15 minutes across mirrors,
+# with jittered exponential backoff between mirror sweeps. Time-boxed
+# callers (the pre-gate 09:50 slot, which must give up quickly and use the
+# 12Z fallback instead) shrink the budget via env var.
 _session = requests.Session()
 REQUEST_PACING_S = 0.5
 RETRY_BUDGET_S = int(os.environ.get("PEP_ENS_RETRY_BUDGET_S", "900"))
 
 
-@retry(
-    stop=stop_after_attempt(12) | stop_after_delay(RETRY_BUDGET_S),
-    wait=wait_exponential(multiplier=5, max=180) + wait_random(0, 20),
-    reraise=True,
-)
-def _get(url: str, headers: dict | None = None) -> requests.Response:
-    time.sleep(REQUEST_PACING_S)
-    resp = _session.get(url, headers=headers, timeout=180)
-    resp.raise_for_status()  # 503 Slow Down from S3 lands here and is retried
-    return resp
+def _get(path: str, headers: dict | None = None) -> requests.Response:
+    deadline = time.monotonic() + RETRY_BUDGET_S
+    backoff = 5.0
+    last: requests.Response | requests.RequestException | None = None
+    while True:
+        codes = []
+        for base in MIRRORS:
+            time.sleep(REQUEST_PACING_S)
+            try:
+                resp = _session.get(f"{base}/{path}", headers=headers, timeout=180)
+            except requests.RequestException as e:
+                last = e
+                continue
+            if resp.ok:
+                return resp
+            codes.append(resp.status_code)
+            last = resp
+        if codes and all(c == 404 for c in codes):
+            last.raise_for_status()  # absent on every mirror: no point retrying
+        if time.monotonic() + backoff >= deadline:
+            break
+        time.sleep(backoff + random.uniform(0, 20))
+        backoff = min(backoff * 2, 180)
+    if isinstance(last, requests.Response):
+        last.raise_for_status()
+    raise last
 
 
-def _step_url(run_date: date, model_path: str, step: int, suffix: str, run_hour: int = 0) -> str:
+def _step_path(run_date: date, model_path: str, step: int, suffix: str, run_hour: int = 0) -> str:
     stamp = f"{run_date:%Y%m%d}"
     return (
-        f"{BASE_URL}/{stamp}/{run_hour:02d}z/{model_path}/enfo/"
+        f"{stamp}/{run_hour:02d}z/{model_path}/enfo/"
         f"{stamp}{run_hour:02d}0000-{step}h-enfo-ef.{suffix}"
     )
 
@@ -94,10 +120,13 @@ def _step_url(run_date: date, model_path: str, step: int, suffix: str, run_hour:
 def _discover_model_path(run_date: date, run_hour: int = 0) -> str:
     first_step = STEPS[run_hour][0]
     for candidate in MODEL_PATHS:
-        url = _step_url(run_date, candidate, first_step, "index", run_hour)
-        resp = requests.head(url, timeout=60)
-        if resp.ok:
+        try:
+            _get(_step_path(run_date, candidate, first_step, "index", run_hour))
             return candidate
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                continue
+            raise
     raise FileNotFoundError(f"no {run_hour:02d}Z ENS index found for {run_date} in {MODEL_PATHS}")
 
 
@@ -120,10 +149,10 @@ def _wanted_ranges(index_text: str) -> list[list[int]]:
 
 
 def _fetch_step(run_date: date, model_path: str, step: int, run_hour: int = 0) -> bytes:
-    index = _get(_step_url(run_date, model_path, step, "index", run_hour)).text
-    grib_url = _step_url(run_date, model_path, step, "grib2", run_hour)
+    index = _get(_step_path(run_date, model_path, step, "index", run_hour)).text
+    grib_path = _step_path(run_date, model_path, step, "grib2", run_hour)
     chunks = [
-        _get(grib_url, headers={"Range": f"bytes={start}-{end - 1}"}).content
+        _get(grib_path, headers={"Range": f"bytes={start}-{end - 1}"}).content
         for start, end in _wanted_ranges(index)
     ]
     return b"".join(chunks)
