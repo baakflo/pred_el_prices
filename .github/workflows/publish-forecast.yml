@@ -60,6 +60,8 @@ jobs:
           --out archive_repo/site-state/site
           ${{ github.event.schedule != '15 9 * * *' && '--allow-ens-fallback' || '' }}
 
+      # Other workflows (and manual pre-seeds) push to the same repo; a
+      # non-fast-forward rejection must merge-and-retry, not drop the state.
       - name: Push state
         if: always()
         run: |
@@ -69,10 +71,15 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "no state changes"
-          else
-            git commit -m "Site state $(date -u +%FT%H:%MZ)"
-            git push
+            exit 0
           fi
+          git commit -m "Site state $(date -u +%FT%H:%MZ)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::state push failed after 3 merge retries"
+          exit 1
 
       - name: Publish to website
         run: |
@@ -91,7 +98,12 @@ jobs:
           git add public/data
           if git diff --cached --quiet; then
             echo "site data unchanged"
-          else
-            git commit -m "Forecast $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "Forecast $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::website push failed after 3 merge retries"
+          exit 1

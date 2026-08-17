@@ -84,6 +84,8 @@ jobs:
           fi
           uv run python -m pred_el_prices.cli archive-entsoe-forecasts --archive-dir archive_repo
 
+      # publish-forecast and archive-ens-12z push to the same repo; a
+      # non-fast-forward rejection must merge-and-retry, not drop the data.
       - name: Push new data
         run: |
           cd archive_repo
@@ -92,10 +94,15 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "nothing new to commit"
-          else
-            git commit -m "Archive $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "Archive $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::archive push failed after 3 merge retries"
+          exit 1
 
       # Silent gaps are unrecoverable (DWD deletes files after ~24h), so a
       # missing past day must become a loud signal, not a log line.

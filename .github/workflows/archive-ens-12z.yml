@@ -53,6 +53,8 @@ jobs:
           --start "$(date -u -d '-3 day' +%F)" --archive-dir archive_repo
           || echo "::warning::00Z gap healing incomplete"
 
+      # Same-repo pushes race with archive-weather/publish-forecast; a
+      # non-fast-forward rejection must merge-and-retry, not drop the data.
       - name: Push new data
         run: |
           cd archive_repo
@@ -61,7 +63,12 @@ jobs:
           git add -A
           if git diff --cached --quiet; then
             echo "nothing new to commit"
-          else
-            git commit -m "ENS 12Z fallback $(date -u +%F)"
-            git push
+            exit 0
           fi
+          git commit -m "ENS 12Z fallback $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::12Z push failed after 3 merge retries"
+          exit 1
