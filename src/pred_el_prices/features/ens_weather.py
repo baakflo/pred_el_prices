@@ -1,9 +1,10 @@
 """Hourly RES-forecast features from the archived ECMWF ENS per-date Parquets.
 
-Each archive file holds one 00Z run of D-1 as (cell_lat, cell_lon, member,
-variable, valid_time) rows: per-member means over 1-degree cells covering
-Germany, 3-hourly steps +21h..+48h. This module distills a run into hourly
-ensemble-mean features for the UTC delivery day D:
+Each archive file holds one run as (cell_lat, cell_lon, member, variable,
+valid_time) rows: per-member means over 1-degree cells covering Germany,
+3-hourly steps spanning the delivery day (00Z run of D-1, steps +21h..+48h;
+or the 12Z fallback run of D-2, steps +33h..+60h). This module distills a
+run into hourly ensemble-mean features for the UTC delivery day D:
 
 - wind speed is computed per member/cell BEFORE averaging (the mean wind
   vector underestimates speed when directions disagree);
@@ -93,7 +94,9 @@ def run_features(archive_path: Path) -> pd.DataFrame:
     """Hourly feature rows for the UTC delivery day covered by one archived run."""
     raw = pd.read_parquet(archive_path)
     run_time = raw["run_time"].iloc[0]
-    delivery = (run_time + pd.Timedelta(days=1)).normalize()
+    # +36h lands mid-delivery-day for both vintages: 00Z of D-1 and the
+    # evening-before fallback 12Z of D-2 (steps +33..+60) both target day D.
+    delivery = (run_time + pd.Timedelta(hours=36)).normalize()
     missing = WIND_VARS.union({"ssrd"}) - set(raw["variable"].unique())
     if missing:
         raise ValueError(

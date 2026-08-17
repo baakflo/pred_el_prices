@@ -1,7 +1,9 @@
 """Daily pre-gate production forecast for the public site.
 
 Runs on D-1 before the 12:00 CET/CEST auction gate: refreshes the input
-caches, archives today's 00Z ECMWF ENS run, generates the own pre-gate RES
+caches, archives today's 00Z ECMWF ENS run (falling back, when allowed, to
+yesterday's 12Z run pre-archived by the evening cron — a stale-but-present
+weather vintage beats a missed day), generates the own pre-gate RES
 forecast for the next UTC day (no public wind/solar forecast exists
 pre-gate — see the 2026-08-15 plan addendum), feeds it to LEAR(364,
 academic exog) via the predict-day-only substitution, and emits the site
@@ -45,22 +47,52 @@ WINDOW = 364
 LAG_BURN_IN_DAYS = 7
 
 
-def update_features(features_path: Path, archive_dir: Path, through_run_date) -> pd.DataFrame:
-    """Append hourly ENS features for archived runs missing from the table."""
+def update_features(
+    features_path: Path,
+    archive_dir: Path,
+    through_run_date,
+    allow_fallback: bool = False,
+) -> pd.DataFrame:
+    """Append hourly ENS features for delivery days missing from the table.
+
+    Bookkeeping is per delivery day: the 00Z run of D-1 is the primary
+    vintage; when its archive file is absent and `allow_fallback` is set,
+    the 12Z run of D-2 (on S3 since the previous evening) fills the day in.
+    Fallback rows are replaced by primary rows once the 00Z file gets
+    backfilled, so the table converges to the vintage the backtests used.
+    """
     features = pd.read_parquet(features_path)
-    have = set(pd.to_datetime(features["run_date"]).dt.date)
-    day = max(have) + timedelta(days=1)
-    frames = [features]
-    while day <= through_run_date:
-        path = archive_dir / "ecmwf-ens" / f"{day:%Y}" / f"ecmwf-ens_{day:%Y%m%d}00.parquet"
-        if path.exists():
-            frames.append(run_features(path))
-            print(f"features appended for run {day}")
+
+    def archive_path(run_day, run_hour: int) -> Path:
+        stem = f"ecmwf-ens_{run_day:%Y%m%d}{run_hour:02d}.parquet"
+        return archive_dir / "ecmwf-ens" / f"{run_day:%Y}" / stem
+
+    day_of = features.index.normalize().date
+    run_of = pd.to_datetime(features["run_date"]).dt.date.to_numpy()
+    primary_days = {d for d, r in zip(day_of, run_of, strict=True) if r == d - timedelta(days=1)}
+
+    changed = False
+    day = max(primary_days) + timedelta(days=1)
+    while day <= through_run_date + timedelta(days=1):
+        primary = archive_path(day - timedelta(days=1), 0)
+        fallback = archive_path(day - timedelta(days=2), 12)
+        if primary.exists():
+            rows = run_features(primary)
+            features = pd.concat([features[features.index.normalize().date != day], rows])
+            changed = True
+            print(f"features appended for delivery {day} (00Z run)")
+        elif (day_of == day).any():
+            print(f"keeping 12Z fallback features for delivery {day} (00Z still missing)")
+        elif allow_fallback and fallback.exists():
+            features = pd.concat([features, run_features(fallback)])
+            changed = True
+            print(f"features appended for delivery {day} (12Z FALLBACK run)")
         else:
-            print(f"no ECMWF archive for run {day}")
+            print(f"no ECMWF archive for delivery {day}")
         day += timedelta(days=1)
-    if len(frames) > 1:
-        features = pd.concat(frames)
+
+    if changed:
+        features = features.sort_index()
         features.to_parquet(features_path)
     return features
 
@@ -206,6 +238,7 @@ def run_daily(
     out_dir: Path,
     delivery_day=None,
     skip_fetch: bool = False,
+    allow_ens_fallback: bool = False,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day."""
     now = datetime.now(UTC)
@@ -218,6 +251,7 @@ def run_daily(
     log_path = out_dir / "forecast_log.parquet"
 
     if not skip_fetch:
+        import requests
         from entsoe import EntsoePandasClient
 
         from pred_el_prices.config import entsoe_api_key
@@ -234,9 +268,17 @@ def run_daily(
             cache_dir,
         )
         update_cache(cache_dir)
-        archive_run(run_date, archive_dir)
+        # Best-effort over the last three 00Z runs: heals archive gaps from
+        # throttled/late mornings (the AWS bucket keeps history), and a
+        # failure here must not kill the run — the 12Z fallback may cover it.
+        for lag in (2, 1, 0):
+            attempt = run_date - timedelta(days=lag)
+            try:
+                archive_run(attempt, archive_dir)
+            except (FileNotFoundError, requests.RequestException) as e:
+                print(f"WARN: 00Z ENS run {attempt} unavailable: {e}")
 
-    features = update_features(features_path, archive_dir, run_date)
+    features = update_features(features_path, archive_dir, run_date, allow_ens_fallback)
     dataset, _ = build_dataset(cache_dir)
     prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
 

@@ -13,9 +13,10 @@ ssrd (accumulated J/m^2 since forecast start; de-accumulate downstream) and
 dates yield wind/temp spread only.
 
 The 00Z run is published ~7-8 h after synoptic time, well before the 12:00
-CET day-ahead auction on D-1 (the 06Z run is not — do not use it). Output
-mirrors the ICON archiver (dwd.py): per-member means over 1-degree cells
-covering Germany, one Parquet per run.
+CET day-ahead auction on D-1 (the 06Z run is not — do not use it). The 12Z
+run (published ~20:00 UTC) serves as the evening-before fallback vintage.
+Output mirrors the ICON archiver (dwd.py): per-member means over 1-degree
+cells covering Germany, one Parquet per run.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import numpy as np
 import pandas as pd
 import requests
 import xarray as xr
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, stop_after_delay, wait_exponential, wait_random
 
 from pred_el_prices.pipeline.dwd import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN, aggregate_members
 
@@ -50,18 +51,27 @@ VARIABLES = {
     "100v": "v_100m",
 }
 
-# ENS steps are 3-hourly; +21h..+48h from the 00Z run of D-1 covers the
-# delivery day D fully in UTC and in CET/CEST.
-STEPS = range(21, 49, 3)
+# ENS steps are 3-hourly. +21h..+48h from the 00Z run of D-1 covers the
+# delivery day D fully in UTC and in CET/CEST; +33h..+60h from the 12Z run
+# of D-2 covers the same window (production fallback when the morning 00Z
+# download fails — the 12Z is on S3 the previous evening, ~20:00 UTC).
+STEPS = {0: range(21, 49, 3), 12: range(33, 61, 3)}
 
 
 # S3 throttles bursts of range requests with 503 Slow Down; keep one session,
-# pace the requests, and back off patiently when throttled anyway.
+# pace the requests, and back off patiently when throttled anyway. The herd
+# pulling a freshly published run can keep the bucket throttled for many
+# minutes (observed 2026-08-15..17: three runs exhausted an ~6-minute retry
+# budget), so each request rides it out for up to ~15 minutes with jitter.
 _session = requests.Session()
-REQUEST_PACING_S = 0.15
+REQUEST_PACING_S = 0.5
 
 
-@retry(stop=stop_after_attempt(8), wait=wait_exponential(multiplier=5, max=120), reraise=True)
+@retry(
+    stop=stop_after_attempt(12) | stop_after_delay(900),
+    wait=wait_exponential(multiplier=5, max=180) + wait_random(0, 20),
+    reraise=True,
+)
 def _get(url: str, headers: dict | None = None) -> requests.Response:
     time.sleep(REQUEST_PACING_S)
     resp = _session.get(url, headers=headers, timeout=180)
@@ -69,17 +79,22 @@ def _get(url: str, headers: dict | None = None) -> requests.Response:
     return resp
 
 
-def _step_url(run_date: date, model_path: str, step: int, suffix: str) -> str:
+def _step_url(run_date: date, model_path: str, step: int, suffix: str, run_hour: int = 0) -> str:
     stamp = f"{run_date:%Y%m%d}"
-    return f"{BASE_URL}/{stamp}/00z/{model_path}/enfo/{stamp}000000-{step}h-enfo-ef.{suffix}"
+    return (
+        f"{BASE_URL}/{stamp}/{run_hour:02d}z/{model_path}/enfo/"
+        f"{stamp}{run_hour:02d}0000-{step}h-enfo-ef.{suffix}"
+    )
 
 
-def _discover_model_path(run_date: date) -> str:
+def _discover_model_path(run_date: date, run_hour: int = 0) -> str:
+    first_step = STEPS[run_hour][0]
     for candidate in MODEL_PATHS:
-        resp = requests.head(_step_url(run_date, candidate, STEPS[0], "index"), timeout=60)
+        url = _step_url(run_date, candidate, first_step, "index", run_hour)
+        resp = requests.head(url, timeout=60)
         if resp.ok:
             return candidate
-    raise FileNotFoundError(f"no ENS index found for {run_date} in {MODEL_PATHS}")
+    raise FileNotFoundError(f"no {run_hour:02d}Z ENS index found for {run_date} in {MODEL_PATHS}")
 
 
 def _wanted_ranges(index_text: str) -> list[list[int]]:
@@ -100,9 +115,9 @@ def _wanted_ranges(index_text: str) -> list[list[int]]:
     return ranges
 
 
-def _fetch_step(run_date: date, model_path: str, step: int) -> bytes:
-    index = _get(_step_url(run_date, model_path, step, "index")).text
-    grib_url = _step_url(run_date, model_path, step, "grib2")
+def _fetch_step(run_date: date, model_path: str, step: int, run_hour: int = 0) -> bytes:
+    index = _get(_step_url(run_date, model_path, step, "index", run_hour)).text
+    grib_url = _step_url(run_date, model_path, step, "grib2", run_hour)
     chunks = [
         _get(grib_url, headers={"Range": f"bytes={start}-{end - 1}"}).content
         for start, end in _wanted_ranges(index)
@@ -158,20 +173,25 @@ def _aggregate_step(raw_grib: bytes, tmp_dir: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
-def archive_run(run_date: date, archive_dir: Path) -> Path:
-    """Download and aggregate one 00Z ENS run from the AWS archive. Idempotent."""
-    out = archive_dir / "ecmwf-ens" / f"{run_date:%Y}" / f"ecmwf-ens_{run_date:%Y%m%d}00.parquet"
+def archive_run(run_date: date, archive_dir: Path, run_hour: int = 0) -> Path:
+    """Download and aggregate one ENS run from the AWS archive. Idempotent."""
+    out = (
+        archive_dir
+        / "ecmwf-ens"
+        / f"{run_date:%Y}"
+        / f"ecmwf-ens_{run_date:%Y%m%d}{run_hour:02d}.parquet"
+    )
     if out.exists():
         print(f"already archived: {out}")
         return out
 
-    model_path = _discover_model_path(run_date)
-    run_time = datetime(run_date.year, run_date.month, run_date.day, tzinfo=UTC)
+    model_path = _discover_model_path(run_date, run_hour)
+    run_time = datetime(run_date.year, run_date.month, run_date.day, run_hour, tzinfo=UTC)
     frames = []
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        for step in STEPS:
-            df = _aggregate_step(_fetch_step(run_date, model_path, step), tmp_dir)
+        for step in STEPS[run_hour]:
+            df = _aggregate_step(_fetch_step(run_date, model_path, step, run_hour), tmp_dir)
             df["valid_time"] = run_time + timedelta(hours=step)
             frames.append(df)
             print(f"step +{step}h done ({df['variable'].nunique()} vars)", flush=True)
@@ -184,12 +204,12 @@ def archive_run(run_date: date, archive_dir: Path) -> Path:
     return out
 
 
-def backfill(start: date, end: date, archive_dir: Path) -> None:
+def backfill(start: date, end: date, archive_dir: Path, run_hour: int = 0) -> None:
     """Archive every run date in [start, end]; log and continue on missing dates."""
     day = start
     while day <= end:
         try:
-            archive_run(day, archive_dir)
+            archive_run(day, archive_dir, run_hour)
         except FileNotFoundError as e:
             print(f"SKIP {day}: {e}", flush=True)
         day += timedelta(days=1)

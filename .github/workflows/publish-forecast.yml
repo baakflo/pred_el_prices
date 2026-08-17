@@ -42,6 +42,10 @@ jobs:
       # Idempotent: if a pre-gate forecast for tomorrow is already logged, this
       # only refreshes the site JSON (fills in actuals). If the load forecast
       # is not yet published, it fails loudly and the 09:50 slot retries.
+      # The 09:15 slot is strict about the 00Z ENS run (a late file should
+      # wait for the retry, not lock in stale weather); the 09:50 slot and
+      # manual dispatches may fall back to yesterday's pre-archived 12Z run
+      # so a throttled/missing 00Z costs accuracy, not the day.
       - name: Produce forecast
         env:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
@@ -51,6 +55,7 @@ jobs:
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
           --out archive_repo/site-state/site
+          ${{ github.event.schedule != '15 9 * * *' && '--allow-ens-fallback' || '' }}
 
       - name: Push state
         if: always()

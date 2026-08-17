@@ -1,0 +1,59 @@
+name: Archive ENS 12Z fallback
+
+on:
+  schedule:
+    # The 12Z ENS run is on the open-data S3 bucket ~19:30-20:30 UTC. It is
+    # the evening-before fallback vintage for the next morning's forecast
+    # (steps +33h..+60h cover the delivery day): if the morning 00Z download
+    # fails or is late, the publish workflow's retry slot uses this file
+    # instead of missing the day. Two attempts; the archiver is idempotent.
+    - cron: "35 20 * * *"
+    - cron: "35 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archive-ens-12z
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      - name: Install ecCodes native library
+        run: sudo apt-get update && sudo apt-get install -y libeccodes-dev
+
+      - name: Clone data repo
+        run: >
+          git clone --depth 1
+          "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_weather_archive.git"
+          archive_repo
+
+      - name: Install
+        run: uv sync
+
+      # Fails loudly if the 12Z run is not on S3 yet; the later slot retries.
+      - name: Archive today's 12Z ENS run
+        run: >
+          uv run python -c "from datetime import UTC, datetime; from pathlib import Path;
+          from pred_el_prices.pipeline.ecmwf import archive_run;
+          archive_run(datetime.now(UTC).date(), Path('archive_repo'), run_hour=12)"
+
+      - name: Push new data
+        run: |
+          cd archive_repo
+          git config user.name "archive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+          else
+            git commit -m "ENS 12Z fallback $(date -u +%F)"
+            git push
+          fi

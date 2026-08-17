@@ -62,6 +62,13 @@ def main() -> None:
     ecmwf.add_argument(
         "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
     )
+    ecmwf.add_argument(
+        "--run-hour",
+        type=int,
+        choices=[0, 12],
+        default=0,
+        help="Synoptic run hour: 0 (primary) or 12 (evening-before fallback vintage)",
+    )
 
     fetch = sub.add_parser(
         "fetch-entsoe",
@@ -125,6 +132,12 @@ def main() -> None:
         action="store_true",
         help="Use existing caches/archive without network refresh; for testing",
     )
+    fc.add_argument(
+        "--allow-ens-fallback",
+        action="store_true",
+        help="If the 00Z ENS run is unavailable, use the pre-archived 12Z run "
+        "of the previous day (staler weather; for late retry slots)",
+    )
 
     runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
     runx.add_argument("name", help="Experiment name, e.g. lear-de")
@@ -165,7 +178,7 @@ def main() -> None:
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 
-        backfill(args.start, args.end, args.archive_dir)
+        backfill(args.start, args.end, args.archive_dir, args.run_hour)
     elif args.command == "fetch-entsoe":
         import pandas as pd
         from entsoe import EntsoePandasClient
@@ -221,6 +234,7 @@ def main() -> None:
             out_dir=args.out,
             delivery_day=args.delivery_day,
             skip_fetch=args.skip_fetch,
+            allow_ens_fallback=args.allow_ens_fallback,
         )
     elif args.command == "run":
         import json
