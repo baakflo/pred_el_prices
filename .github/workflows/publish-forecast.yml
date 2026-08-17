@@ -45,10 +45,13 @@ jobs:
       # The 09:15 slot is strict about the 00Z ENS run (a late file should
       # wait for the retry, not lock in stale weather); the 09:50 slot and
       # manual dispatches may fall back to yesterday's pre-archived 12Z run
-      # so a throttled/missing 00Z costs accuracy, not the day.
+      # so a throttled/missing 00Z costs accuracy, not the day. The 09:50
+      # slot also shrinks the per-request S3 retry budget: its job is to
+      # reach the fallback before the gate, not to out-wait the throttle.
       - name: Produce forecast
         env:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+          PEP_ENS_RETRY_BUDGET_S: ${{ github.event.schedule == '50 9 * * *' && '120' || '900' }}
         run: >
           uv run pep forecast
           --cache-dir archive_repo/site-state/cache

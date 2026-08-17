@@ -268,15 +268,13 @@ def run_daily(
             cache_dir,
         )
         update_cache(cache_dir)
-        # Best-effort over the last three 00Z runs: heals archive gaps from
-        # throttled/late mornings (the AWS bucket keeps history), and a
-        # failure here must not kill the run — the 12Z fallback may cover it.
-        for lag in (2, 1, 0):
-            attempt = run_date - timedelta(days=lag)
-            try:
-                archive_run(attempt, archive_dir)
-            except (FileNotFoundError, requests.RequestException) as e:
-                print(f"WARN: 00Z ENS run {attempt} unavailable: {e}")
+        # Best-effort: a failure must not kill the run — the 12Z fallback
+        # may cover the day. Gap healing of older 00Z runs happens in the
+        # evening archive-ens-12z workflow, outside the morning S3 herd.
+        try:
+            archive_run(run_date, archive_dir)
+        except (FileNotFoundError, requests.RequestException) as e:
+            print(f"WARN: 00Z ENS run {run_date} unavailable: {e}")
 
     features = update_features(features_path, archive_dir, run_date, allow_ens_fallback)
     dataset, _ = build_dataset(cache_dir)

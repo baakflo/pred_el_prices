@@ -22,6 +22,7 @@ cells covering Germany, one Parquet per run.
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 from datetime import UTC, date, datetime, timedelta
@@ -63,12 +64,15 @@ STEPS = {0: range(21, 49, 3), 12: range(33, 61, 3)}
 # pulling a freshly published run can keep the bucket throttled for many
 # minutes (observed 2026-08-15..17: three runs exhausted an ~6-minute retry
 # budget), so each request rides it out for up to ~15 minutes with jitter.
+# Time-boxed callers (the pre-gate 09:50 slot, which must give up quickly
+# and use the 12Z fallback instead) shrink the budget via env var.
 _session = requests.Session()
 REQUEST_PACING_S = 0.5
+RETRY_BUDGET_S = int(os.environ.get("PEP_ENS_RETRY_BUDGET_S", "900"))
 
 
 @retry(
-    stop=stop_after_attempt(12) | stop_after_delay(900),
+    stop=stop_after_attempt(12) | stop_after_delay(RETRY_BUDGET_S),
     wait=wait_exponential(multiplier=5, max=180) + wait_random(0, 20),
     reraise=True,
 )

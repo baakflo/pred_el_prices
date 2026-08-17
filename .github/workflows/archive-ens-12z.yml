@@ -45,6 +45,14 @@ jobs:
           from pred_el_prices.pipeline.ecmwf import archive_run;
           archive_run(datetime.now(UTC).date(), Path('archive_repo'), run_hour=12)"
 
+      # Heal 00Z gaps left by throttled mornings (the bucket keeps history
+      # and the evening is off-peak). Best-effort: never fails the job.
+      - name: Backfill missing recent 00Z runs
+        run: >
+          uv run python -m pred_el_prices.cli backfill-ecmwf
+          --start "$(date -u -d '-3 day' +%F)" --archive-dir archive_repo
+          || echo "::warning::00Z gap healing incomplete"
+
       - name: Push new data
         run: |
           cd archive_repo
