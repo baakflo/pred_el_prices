@@ -45,17 +45,14 @@ jobs:
           from pred_el_prices.pipeline.ecmwf import archive_run;
           archive_run(datetime.now(UTC).date(), Path('archive_repo'), run_hour=12)"
 
-      # Heal 00Z gaps left by throttled mornings (the bucket keeps history
-      # and the evening is off-peak). Best-effort: never fails the job.
-      - name: Backfill missing recent 00Z runs
-        run: >
-          uv run python -m pred_el_prices.cli backfill-ecmwf
-          --start "$(date -u -d '-3 day' +%F)" --archive-dir archive_repo
-          || echo "::warning::00Z gap healing incomplete"
-
+      # Push the fallback vintage IMMEDIATELY after archiving it: on
+      # 2026-08-17 both slots archived the 12Z fine, then the healing step
+      # below out-waited the S3 throttle until the 45-min job timeout
+      # cancelled the run — and the push (then last) was skipped, losing the
+      # file with the runner.
       # Same-repo pushes race with archive-weather/publish-forecast; a
       # non-fast-forward rejection must merge-and-retry, not drop the data.
-      - name: Push new data
+      - name: Push 12Z fallback
         run: |
           cd archive_repo
           git config user.name "archive-bot"
@@ -71,4 +68,34 @@ jobs:
             git pull --no-rebase --no-edit
           done
           echo "::error::12Z push failed after 3 merge retries"
+          exit 1
+
+      # Heal 00Z gaps left by throttled mornings (the bucket keeps history
+      # and the evening is off-peak). Best-effort and capped so it can never
+      # starve the job again: fast-fail per request instead of out-waiting
+      # the throttle; a missed heal simply retries tomorrow evening.
+      - name: Backfill missing recent 00Z runs
+        timeout-minutes: 20
+        continue-on-error: true
+        env:
+          PEP_ENS_RETRY_BUDGET_S: "180"
+        run: >
+          uv run python -m pred_el_prices.cli backfill-ecmwf
+          --start "$(date -u -d '-3 day' +%F)" --archive-dir archive_repo
+          || echo "::warning::00Z gap healing incomplete"
+
+      - name: Push healed 00Z data
+        run: |
+          cd archive_repo
+          git add -A
+          if git diff --cached --quiet; then
+            echo "nothing new to commit"
+            exit 0
+          fi
+          git commit -m "00Z gap healing $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::healing push failed after 3 merge retries"
           exit 1
