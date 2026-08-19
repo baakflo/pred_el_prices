@@ -31,8 +31,8 @@ try {
             $pulled++
         }
     }
-    Add-Content $log "$stamp OK remote=$($remote.Count) pulled=$pulled"
+    Add-Content $log "$stamp $SshHost OK remote=$($remote.Count) pulled=$pulled"
 } catch {
-    Add-Content $log "$stamp ERROR $($_.Exception.Message)"
+    Add-Content $log "$stamp $SshHost ERROR $($_.Exception.Message)"
     exit 1
 }
