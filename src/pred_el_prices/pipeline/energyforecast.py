@@ -11,6 +11,13 @@ The raw JSON responses are stored verbatim plus fetch metadata: the API is
 third-party and its schema may drift, so parsing is deferred to read time.
 With fixed_cost_cent=0 and vat=0 the prices are raw market prices in ct/kWh
 (x10 = EUR/MWh).
+
+Two snapshots per day make the benchmark honest: the early one (~06:00 UTC)
+may predate their morning weather refresh, so a second `_late` snapshot is
+taken as close to the auction gate as the workflow crons allow (09:45 UTC
+slot). The late snapshot hard-refuses to write past the 12:00 Europe/Berlin
+gate — a drifted cron must not sneak a post-auction curve into a "pre-gate"
+benchmark file.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -41,16 +49,28 @@ def _fetch(token: str, resolution: str) -> dict:
     return resp.json()
 
 
-def archive_snapshot(archive_dir: Path, token: str, now: datetime | None = None) -> Path | None:
+def archive_snapshot(
+    archive_dir: Path, token: str, now: datetime | None = None, late: bool = False
+) -> Path | None:
     """Write today's snapshot (both resolutions, one JSON); skip if it exists.
 
     Returns the path written, or None if today's file was already there, so
-    the workflow's best-effort retry crons stay idempotent.
+    the workflow's best-effort retry crons stay idempotent. With `late=True`
+    the file gets a `_late` suffix and is refused at/after the day-ahead
+    auction gate (12:00 Europe/Berlin).
     """
     now = now or datetime.now(UTC)
-    dest = archive_dir / f"energyforecast/{now:%Y}/energyforecast_{now:%Y%m%d}.json"
+    suffix = "_late" if late else ""
+    dest = archive_dir / f"energyforecast/{now:%Y}/energyforecast_{now:%Y%m%d}{suffix}.json"
     if dest.exists():
         return None
+    if late:
+        gate = now.astimezone(ZoneInfo("Europe/Berlin")).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
+        if now >= gate:
+            print(f"WARN late snapshot refused: {now:%H:%M} UTC is at/past the auction gate")
+            return None
     payload = {
         "fetched_utc": now.isoformat(timespec="seconds"),
         "source": BASE_URL,

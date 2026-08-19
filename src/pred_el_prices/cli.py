@@ -39,6 +39,11 @@ def main() -> None:
     efc.add_argument(
         "--archive-dir", type=Path, default=Path("data/archive/benchmarks"), help="Output directory"
     )
+    efc.add_argument(
+        "--late",
+        action="store_true",
+        help="Write a separate _late snapshot (last pre-gate vintage); refused past the gate",
+    )
 
     esnap = sub.add_parser(
         "archive-entsoe-forecasts",
@@ -164,7 +169,7 @@ def main() -> None:
         from pred_el_prices.config import energyforecast_token
         from pred_el_prices.pipeline.energyforecast import archive_snapshot
 
-        written = archive_snapshot(args.archive_dir, energyforecast_token())
+        written = archive_snapshot(args.archive_dir, energyforecast_token(), late=args.late)
         print(f"energyforecast: {written if written else 'already archived today'}")
     elif args.command == "archive-entsoe-forecasts":
         from entsoe import EntsoePandasClient

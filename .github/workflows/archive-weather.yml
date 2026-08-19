@@ -60,7 +60,10 @@ jobs:
       # pre-auction (gate 12:00 CET), so any retry still captures a clean
       # snapshot; skipped snapshots are unrecoverable. Guarded so a missing
       # token doesn't block the weather/pegel push (secrets can't be used in
-      # step-level `if`).
+      # step-level `if`). The 09:45 slot additionally takes a `_late`
+      # snapshot — their last pre-gate vintage, since the early snapshot may
+      # predate their morning weather refresh; the archiver itself refuses
+      # the late file at/past the gate, so cron drift cannot contaminate it.
       - name: Archive energyforecast.de benchmark
         env:
           ENERGYFORECAST_TOKEN: ${{ secrets.ENERGYFORECAST_TOKEN }}
@@ -70,6 +73,9 @@ jobs:
             exit 0
           fi
           uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo
+          if [ "${{ github.event.schedule }}" = "45 9 * * *" ]; then
+            uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo --late
+          fi
 
       # ENTSO-E serves only the latest submitted forecast version, so the
       # pre-auction vintage must be snapshotted daily. Written only once
