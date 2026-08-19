@@ -12,7 +12,8 @@ RUN_HOUR=${3:-12}
 cd "$(dirname "$0")/../.."
 mkdir -p logs
 
-mapfile -t ALL < <(grep -v '^\s*$' "$LIST")
+# tr strips CRs from Windows-authored shard lists
+mapfile -t ALL < <(tr -d '\r' < "$LIST" | grep -v '^\s*$')
 
 for ((k = 0; k < WORKERS; k++)); do
   (
