@@ -1,0 +1,610 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gradient boosting &amp; LightGBM — trees doing gradient descent</title>
+<script>
+  MathJax = { tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["$$", "$$"]] } };
+</script>
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1060px;margin:2rem auto;padding:0 1rem;color:#222}
+  h1{font-size:1.5rem} h2{font-size:1.15rem;margin-top:2.2rem}
+  canvas{border:1px solid #ddd;border-radius:4px;max-width:100%;height:auto;display:block}
+  .controls{display:flex;gap:1.4rem;flex-wrap:wrap;margin:0.8rem 0;align-items:center}
+  .controls label{font-size:0.9rem}
+  .controls input[type=range]{width:180px;vertical-align:middle}
+  button{font-size:0.9rem;padding:0.25rem 0.7rem;border:1px solid #bbb;border-radius:4px;background:#f6f8fa;cursor:pointer}
+  button:hover{background:#eef2f6}
+  .note{background:#f6f8fa;border-left:4px solid #90caf9;padding:0.7rem 1rem;font-size:0.92rem}
+  .legend{font-size:0.85rem;color:#555}
+  .stats{font-family:ui-monospace,monospace;font-size:0.9rem;margin:0.4rem 0}
+  .panels{display:flex;gap:1rem;flex-wrap:wrap}
+  .panel{flex:1;min-width:300px}
+  .panel h3{font-size:0.95rem;margin:0.3rem 0}
+  table{border-collapse:collapse;font-size:0.9rem;margin:0.8rem 0}
+  td,th{border:1px solid #ddd;padding:0.35rem 0.7rem;text-align:left}
+  th{background:#f6f8fa}
+</style>
+</head>
+<body>
+<h1>Gradient boosting &amp; LightGBM — trees doing gradient descent</h1>
+
+<div class="note" style="border-left-color:#ce93d8">
+<p><b>The one idea:</b> in a neural net you do gradient descent on the <i>weights</i>; in boosting you do
+gradient descent on the <i>function itself</i>. Start from a constant prediction, compute the gradient of the
+loss at every training point, fit a small tree to that gradient, and take a step:</p>
+<p>$$F_m(x) \;=\; F_{m-1}(x)\;+\;\eta\, h_m(x)
+\qquad\text{where}\qquad
+h_m \;\approx\; -\frac{\partial \mathcal{L}\big(y,\,F_{m-1}\big)}{\partial F_{m-1}}$$</p>
+<p style="font-size:0.9rem;color:#555">Each tree is one gradient step; \(\eta\) is the learning rate.
+For squared error the negative gradient is just the residual \(y - F(x)\) — "fit a tree to what's left of
+the error, add it, repeat." The final model is a sum of hundreds of small trees.</p>
+</div>
+
+<h2>1&nbsp;· Watch the ensemble assemble (squared loss)</h2>
+<p class="legend">Grey dots: noisy hourly prices over the day (evening spike, midday solar dip). Dashed grey:
+the true curve. <b>Red: the current ensemble \(F_m(x)\)</b>. Green steps (bottom): the latest tree's
+contribution \(\eta\,h_m(x)\) — the "gradient step" just taken, drawn around its own zero line.</p>
+
+<div class="controls">
+  <button id="b1step">+1 tree</button>
+  <button id="b10step">+10 trees</button>
+  <button id="b50step">+50 trees</button>
+  <button id="bReset">reset</button>
+  <label>learning rate η: <input type="range" id="lr1" min="0.05" max="1" step="0.05" value="0.3">
+    <span id="lr1v"></span></label>
+  <label>leaves per tree: <input type="range" id="lv1" min="2" max="10" step="1" value="4">
+    <span id="lv1v"></span></label>
+</div>
+<div class="stats" id="stats1"></div>
+<canvas id="c1" width="960" height="400"></canvas>
+<p class="legend">Train vs held-out test MSE by iteration — the deep-learning loss-curve picture, exactly:</p>
+<canvas id="c1loss" width="960" height="200"></canvas>
+
+<h2>What to try</h2>
+<ul style="font-size:0.93rem">
+  <li><b>Step one tree at a time</b> at η = 0.3: the first trees grab the biggest structure (evening spike),
+      later trees make ever-smaller corrections — the green steps shrink toward zero as the gradient vanishes.</li>
+  <li><b>η = 1.0, 4 leaves:</b> fast fit, jagged model. <b>η = 0.05:</b> takes ~10× more trees for the same
+      train loss but the curve is smoother — small-lr-long-schedule, same intuition as in deep learning.</li>
+  <li><b>10 leaves + η = 1.0 + 100 trees:</b> watch the test curve lift off the train curve. That gap is why
+      <code>num_leaves</code> is LightGBM's main capacity knob and why you always early-stop on a validation set.</li>
+  <li>Sliders apply to <i>future</i> trees — you can anneal η mid-run by hand.</li>
+</ul>
+
+<h2>2&nbsp;· Swap the loss: pinball → quantile forecasts</h2>
+<div class="note">
+<p>The machinery above never used "squared error" specifically — only its gradient. Swap in the
+<b>pinball loss</b> at level \(\tau\):</p>
+<p>$$\mathcal{L}_\tau(y, f) \;=\;
+\begin{cases}
+\tau\,(y-f) & y \ge f\\[2pt]
+(1-\tau)\,(f-y) & y &lt; f
+\end{cases}
+\qquad\Longrightarrow\qquad
+-\frac{\partial \mathcal{L}_\tau}{\partial f} \;=\;
+\begin{cases}
+\tau & y \ge f\\[2pt]
+\tau - 1 & y &lt; f
+\end{cases}$$</p>
+<p style="font-size:0.9rem;color:#555">Asymmetric penalty: at \(\tau=0.9\), under-predicting costs 9× more
+than over-predicting, so the minimizer is the 90th percentile. Same trees, different gradient — and the model
+now traces a <i>conditional quantile</i> instead of the conditional mean. Train several \(\tau\)'s and you
+have a predictive distribution.</p>
+</div>
+
+<p class="legend">Toy market: x = wind forecast, y = price. Low wind → high, volatile, spike-prone prices;
+high wind → low, occasionally negative prices (the noise is <i>heteroscedastic</i>, so the quantile band
+should widen and narrow). Blue/black/red: boosted q10/q50/q90. <b>Orange dashed: your τ — drag the slider.</b></p>
+
+<div class="controls">
+  <label>your quantile τ: <input type="range" id="tau" min="0.05" max="0.95" step="0.05" value="0.75">
+    <span id="tauv"></span></label>
+</div>
+<div class="stats" id="stats2"></div>
+<canvas id="c2" width="960" height="420"></canvas>
+
+<h2>What to try</h2>
+<ul style="font-size:0.93rem">
+  <li><b>Check the coverage readout:</b> a q90 model is calibrated iff ~90% of the dots sit below its curve.
+      That's the same "empirical coverage" number the Phase-2 harness will score for real.</li>
+  <li><b>Slide τ from 0.05 to 0.95:</b> the curve sweeps through the point cloud. Notice the q10–q90 band is
+      wide at low wind (spiky regime) and narrow at high wind — the model learned heteroscedasticity with no
+      explicit variance head, just two asymmetric losses.</li>
+  <li><b>τ = 0.5</b> is median regression — already more robust to the price spikes than the squared-loss
+      fit of panel 1 would be.</li>
+</ul>
+
+<h2>3&nbsp;· What makes LightGBM "Light": leaf-wise growth</h2>
+<div class="note" style="border-left-color:#a5d6a7">
+<p>Classic implementations (XGBoost's original mode) grow trees <b>level-wise</b>: split every leaf, then
+every leaf of the next depth — balanced trees. LightGBM grows <b>leaf-wise</b>: always split whichever leaf,
+anywhere in the tree, gives the largest loss reduction — greedy steepest descent over splits. Same leaf
+budget, deeper structure where the function actually bends. (The other speed tricks: <b>histogram binning</b>
+— quantize each feature to ≤255 bins and scan bins, not thresholds; <b>GOSS</b> — keep all large-gradient
+rows, subsample the easy ones, i.e. importance-sample the batch by loss.)</p>
+</div>
+
+<p class="legend">A merit-order toy surface: price as a function of residual load (x) and hour (y). Price
+climbs gently, then kinks steeply when expensive plants set the margin; an evening-peak premium only applies
+at high residual load (an <i>interaction</i>); negative prices when RES floods the market. Both trees get the
+same leaf budget on the same noisy sample of this surface.</p>
+
+<div class="controls">
+  <button id="b3p1">+1 leaf</button>
+  <button id="b3p5">+5 leaves</button>
+  <button id="b3reset">reset</button>
+  <span class="stats" id="stats3"></span>
+</div>
+<div class="panels">
+  <div class="panel"><h3>ground truth</h3><canvas id="c3t" width="320" height="290"></canvas></div>
+  <div class="panel"><h3>leaf-wise (LightGBM) — <span id="sseL" class="stats"></span></h3><canvas id="c3l" width="320" height="290"></canvas></div>
+  <div class="panel"><h3>level-wise (classic) — <span id="sseV" class="stats"></span></h3><canvas id="c3v" width="320" height="290"></canvas></div>
+</div>
+
+<h2>What to try</h2>
+<ul style="font-size:0.93rem">
+  <li><b>Step to ~8 leaves:</b> leaf-wise has already carved out the steep merit-order knee and is working on
+      the evening-premium corner; level-wise is still spending its budget splitting flat regions evenly.
+      Compare the SSE numbers.</li>
+  <li><b>Note every boundary is axis-aligned.</b> Thresholds and interactions ("residual load &gt; 45 GW
+      <i>and</i> evening hour") are native to trees — LEAR needs those as hand-made columns.
+      This is the structural bet of the Phase-2 LightGBM rung.</li>
+  <li><b>Also note what trees can't do:</b> each cell is constant. Outside the training range the prediction
+      just extends the edge cell — no extrapolation. That's exactly why res-de forecasts capacity
+      <i>factors</i>, not raw GW, on a growing fleet.</li>
+</ul>
+
+<h2>The ANN ↔ LightGBM dictionary</h2>
+<table>
+<tr><th>ANN concept</th><th>LightGBM equivalent</th></tr>
+<tr><td>gradient descent step</td><td>one fitted tree</td></tr>
+<tr><td>learning rate</td><td><code>learning_rate</code> (shrinkage per tree, ~0.03–0.1)</td></tr>
+<tr><td>number of steps / epochs</td><td><code>n_estimators</code> + early stopping on validation loss</td></tr>
+<tr><td>model capacity</td><td><code>num_leaves</code>, <code>max_depth</code>, <code>min_child_samples</code></td></tr>
+<tr><td>dropout-ish stochasticity</td><td>row subsampling (<code>bagging_fraction</code>), feature subsampling per tree</td></tr>
+<tr><td>weight decay</td><td>L1/L2 penalties on leaf values</td></tr>
+<tr><td>importance-sampled minibatch</td><td>GOSS (keep high-gradient rows)</td></tr>
+<tr><td>activation quantization</td><td>histogram binning (≤255 bins per feature)</td></tr>
+</table>
+
+<p class="note">
+<b>Where this sits in the project:</b> LEAR(364, academic) is the linear point floor at rMAE 0.407.
+LightGBM-with-pinball is the Phase-2 probe for "how much do nonlinearity and interactions buy, before paying
+the neural complexity tax" — scored with CRPS/pinball against LEAR-quantile under the same rolling harness.
+And you've already shipped one of these: res-de's <code>HistGradientBoostingRegressor</code> is sklearn's
+LightGBM-style implementation (histogram binning included) — the offshore fix was gradient boosting chewing
+on capacity factors.
+</p>
+
+<script>
+"use strict";
+// ---------- shared utilities ----------
+function mulberry32(seed){
+  return function(){
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function gaussMaker(rng){
+  let spare = null;
+  return function(){
+    if (spare !== null){ const v = spare; spare = null; return v; }
+    let u, v, s;
+    do { u = 2*rng()-1; v = 2*rng()-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+    const m = Math.sqrt(-2*Math.log(s)/s);
+    spare = v*m;
+    return u*m;
+  };
+}
+function quantileOf(arr, tau){
+  const a = [...arr].sort((x,y)=>x-y);
+  const idx = Math.min(a.length-1, Math.max(0, Math.floor(tau*a.length)));
+  return a[idx];
+}
+
+// 1D regression tree on globally-sorted data. xs ascending, vs = values to fit
+// (the gradient); optional leafValue(a,b) overrides the leaf output (else mean of vs).
+function fitTree1D(xs, vs, maxLeaves, leafValue){
+  const n = xs.length;
+  const ps = [0], pss = [0];
+  for (let i=0;i<n;i++){ ps.push(ps[i]+vs[i]); pss.push(pss[i]+vs[i]*vs[i]); }
+  function sse(a,b){ const s = ps[b]-ps[a], m = b-a; return (pss[b]-pss[a]) - s*s/m; }
+  function bestSplit(a,b){
+    let best = null;
+    for (let i=a+1;i<b;i++){
+      if (xs[i] === xs[i-1]) continue;
+      const gain = sse(a,b) - sse(a,i) - sse(i,b);
+      if (gain > 1e-12 && (!best || gain > best.gain)) best = {i, gain};
+    }
+    return best;
+  }
+  let leaves = [{a:0, b:n, split: bestSplit(0,n)}];
+  while (leaves.length < maxLeaves){
+    let bi = -1, bg = 0;
+    leaves.forEach((L,k)=>{ if (L.split && L.split.gain > bg){ bg = L.split.gain; bi = k; } });
+    if (bi < 0) break;
+    const L = leaves[bi], i = L.split.i;
+    leaves.splice(bi, 1,
+      {a:L.a, b:i, split: bestSplit(L.a, i)},
+      {a:i, b:L.b, split: bestSplit(i, L.b)});
+  }
+  leaves.sort((p,q)=>p.a-q.a);
+  return leaves.map(L=>({
+    xlo: L.a === 0 ? -Infinity : (xs[L.a-1]+xs[L.a])/2,
+    xhi: L.b === n ?  Infinity : (xs[L.b-1]+xs[L.b])/2,
+    val: leafValue ? leafValue(L.a, L.b) : (ps[L.b]-ps[L.a])/(L.b-L.a)
+  }));
+}
+function segAt(segs, x){
+  for (const s of segs) if (x < s.xhi) return s.val;
+  return segs[segs.length-1].val;
+}
+
+// canvas coordinate helper
+function mapper(cv, x0, x1, y0, y1, pad){
+  const p = pad || 34;
+  const W = cv.width, H = cv.height;
+  return {
+    x: v => p + (v-x0)/(x1-x0)*(W-2*p),
+    y: v => H-p - (v-y0)/(y1-y0)*(H-2*p),
+    p, W, H, x0, x1, y0, y1
+  };
+}
+function drawFrame(ctx, m, xlab, ylab){
+  ctx.strokeStyle = "#ccc"; ctx.lineWidth = 1;
+  ctx.strokeRect(m.p, m.p, m.W-2*m.p, m.H-2*m.p);
+  ctx.fillStyle = "#777"; ctx.font = "11px system-ui";
+  ctx.fillText(xlab, m.W/2-30, m.H-8);
+  ctx.save(); ctx.translate(11, m.H/2+30); ctx.rotate(-Math.PI/2); ctx.fillText(ylab, 0, 0); ctx.restore();
+}
+
+// ================= PANEL 1: squared-loss boosting =================
+const P1 = {};
+(function initP1data(){
+  const rng = mulberry32(42), gauss = gaussMaker(rng);
+  function truth(h){
+    return 60 + 25*Math.exp(-((h-19.5)**2)/2.2)
+              + 12*Math.exp(-((h-8)**2)/3)
+              - 30*Math.exp(-((h-13)**2)/7);
+  }
+  P1.truth = truth;
+  const nTr = 130, nTe = 70;
+  const tr = [], te = [];
+  for (let i=0;i<nTr;i++){ const x = rng()*24; tr.push({x, y: truth(x) + 8*gauss()}); }
+  for (let i=0;i<nTe;i++){ const x = rng()*24; te.push({x, y: truth(x) + 8*gauss()}); }
+  tr.sort((a,b)=>a.x-b.x);
+  P1.trX = tr.map(p=>p.x); P1.trY = tr.map(p=>p.y);
+  P1.teX = te.map(p=>p.x); P1.teY = te.map(p=>p.y);
+})();
+function p1Reset(){
+  const mean = P1.trY.reduce((s,v)=>s+v,0)/P1.trY.length;
+  P1.F0 = mean;
+  P1.trees = [];          // {segs, lr}
+  P1.predTr = P1.trX.map(()=>mean);
+  P1.predTe = P1.teX.map(()=>mean);
+  P1.hist = [];           // {tr, te} MSE
+  p1RecordLoss();
+}
+function p1RecordLoss(){
+  const mse = (pred, ys) => pred.reduce((s,p,i)=>s+(ys[i]-p)**2, 0)/ys.length;
+  P1.hist.push({tr: mse(P1.predTr, P1.trY), te: mse(P1.predTe, P1.teY)});
+}
+function p1Step(k){
+  const lr = parseFloat(document.getElementById("lr1").value);
+  const leaves = parseInt(document.getElementById("lv1").value);
+  for (let s=0;s<k;s++){
+    const resid = P1.trY.map((y,i)=>y-P1.predTr[i]);
+    const segs = fitTree1D(P1.trX, resid, leaves);
+    P1.trees.push({segs, lr});
+    for (let i=0;i<P1.trX.length;i++) P1.predTr[i] += lr*segAt(segs, P1.trX[i]);
+    for (let i=0;i<P1.teX.length;i++) P1.predTe[i] += lr*segAt(segs, P1.teX[i]);
+    p1RecordLoss();
+  }
+  p1Draw();
+}
+function p1Predict(x){
+  let f = P1.F0;
+  for (const t of P1.trees) f += t.lr*segAt(t.segs, x);
+  return f;
+}
+function p1Draw(){
+  const cv = document.getElementById("c1"), ctx = cv.getContext("2d");
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const m = mapper(cv, 0, 24, 0, 130);
+  drawFrame(ctx, m, "hour of day", "price EUR/MWh");
+  // train scatter
+  ctx.fillStyle = "rgba(120,120,120,0.55)";
+  for (let i=0;i<P1.trX.length;i++){
+    ctx.beginPath(); ctx.arc(m.x(P1.trX[i]), m.y(P1.trY[i]), 2.4, 0, 7); ctx.fill();
+  }
+  // truth
+  ctx.strokeStyle = "#999"; ctx.setLineDash([5,4]); ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  for (let px=0;px<=240;px++){ const x = px/10; const y = P1.truth(x);
+    px===0 ? ctx.moveTo(m.x(x), m.y(y)) : ctx.lineTo(m.x(x), m.y(y)); }
+  ctx.stroke(); ctx.setLineDash([]);
+  // ensemble
+  ctx.strokeStyle = "#c62828"; ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  for (let px=0;px<=480;px++){ const x = px/20; const y = p1Predict(x);
+    px===0 ? ctx.moveTo(m.x(x), m.y(y)) : ctx.lineTo(m.x(x), m.y(y)); }
+  ctx.stroke();
+  // latest tree contribution around a zero baseline near the bottom
+  if (P1.trees.length){
+    const t = P1.trees[P1.trees.length-1];
+    const base = 14, scaleY = m.y(0) - m.y(1); // pixels per EUR
+    const y0 = m.y(base);
+    ctx.strokeStyle = "#bbb"; ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(m.p, y0); ctx.lineTo(m.W-m.p, y0); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = "#2e7d32"; ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    for (let px=0;px<=480;px++){ const x = px/20; const v = t.lr*segAt(t.segs, x);
+      const yy = y0 - v*scaleY;
+      px===0 ? ctx.moveTo(m.x(x), yy) : ctx.lineTo(m.x(x), yy); }
+    ctx.stroke();
+    ctx.fillStyle = "#2e7d32"; ctx.font = "11px system-ui";
+    ctx.fillText("latest tree × η (zero line dashed)", m.p+6, y0-32);
+  }
+  // stats
+  const h = P1.hist[P1.hist.length-1];
+  document.getElementById("stats1").textContent =
+    `trees: ${P1.trees.length}   train MSE: ${h.tr.toFixed(1)}   test MSE: ${h.te.toFixed(1)}`;
+  // loss chart
+  const lc = document.getElementById("c1loss"), lctx = lc.getContext("2d");
+  lctx.clearRect(0,0,lc.width,lc.height);
+  const maxIt = Math.max(20, P1.hist.length-1);
+  const maxL = Math.max(...P1.hist.map(v=>Math.max(v.tr,v.te)));
+  const lm = mapper(lc, 0, maxIt, 0, maxL*1.05, 30);
+  drawFrame(lctx, lm, "trees added", "MSE");
+  [["tr","#c62828","train"],["te","#1565c0","test"]].forEach(([k,col,lab],j)=>{
+    lctx.strokeStyle = col; lctx.lineWidth = 1.8;
+    lctx.beginPath();
+    P1.hist.forEach((v,i)=> i===0 ? lctx.moveTo(lm.x(i), lm.y(v[k])) : lctx.lineTo(lm.x(i), lm.y(v[k])));
+    lctx.stroke();
+    lctx.fillStyle = col; lctx.font = "11px system-ui";
+    lctx.fillText(lab, lc.width-90, 22+j*14);
+  });
+}
+document.getElementById("b1step").onclick = ()=>p1Step(1);
+document.getElementById("b10step").onclick = ()=>p1Step(10);
+document.getElementById("b50step").onclick = ()=>p1Step(50);
+document.getElementById("bReset").onclick = ()=>{ p1Reset(); p1Draw(); };
+["lr1","lv1"].forEach(id=>{
+  const el = document.getElementById(id);
+  const show = ()=>document.getElementById(id+"v").textContent = el.value;
+  el.oninput = show; show();
+});
+p1Reset(); p1Draw();
+
+// ================= PANEL 2: quantile boosting =================
+const P2 = {};
+(function initP2data(){
+  const rng = mulberry32(7), gauss = gaussMaker(rng);
+  const n = 260, pts = [];
+  for (let i=0;i<n;i++){
+    const w = rng()*50;
+    const mid = 95 - 2.2*w;
+    const spread = 6 + 26*Math.exp(-w/14);
+    let p = mid + spread*0.6*gauss();
+    if (w < 18 && rng() < 0.07) p += 40 + 60*rng();   // scarcity spikes
+    pts.push({w, p});
+  }
+  pts.sort((a,b)=>a.w-b.w);
+  P2.xs = pts.map(q=>q.w); P2.ys = pts.map(q=>q.p);
+})();
+function trainQuantile(tau){
+  const xs = P2.xs, ys = P2.ys, n = xs.length;
+  const rounds = 140, lr = 0.12, leaves = 5;
+  const F0 = quantileOf(ys, tau);
+  const F = new Array(n).fill(F0);
+  const trees = [];
+  for (let r=0;r<rounds;r++){
+    const grad = ys.map((y,i)=> y >= F[i] ? tau : tau-1);
+    const segs = fitTree1D(xs, grad, leaves, (a,b)=>{
+      const res = [];
+      for (let i=a;i<b;i++) res.push(ys[i]-F[i]);
+      return quantileOf(res, tau);
+    });
+    trees.push(segs);
+    for (let i=0;i<n;i++) F[i] += lr*segAt(segs, xs[i]);
+  }
+  return {F0, trees, lr, F};
+}
+function predictQ(mod, x){
+  let f = mod.F0;
+  for (const t of mod.trees) f += mod.lr*segAt(t, x);
+  return f;
+}
+function coverage(mod){
+  let c = 0;
+  for (let i=0;i<P2.xs.length;i++) if (P2.ys[i] <= mod.F[i]) c++;
+  return c/P2.xs.length;
+}
+P2.q10 = trainQuantile(0.10);
+P2.q50 = trainQuantile(0.50);
+P2.q90 = trainQuantile(0.90);
+P2.custom = null;
+function p2Draw(){
+  const cv = document.getElementById("c2"), ctx = cv.getContext("2d");
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const m = mapper(cv, 0, 50, -40, 200);
+  drawFrame(ctx, m, "wind forecast GW", "price EUR/MWh");
+  // zero-price line
+  ctx.strokeStyle = "#e0e0e0";
+  ctx.beginPath(); ctx.moveTo(m.p, m.y(0)); ctx.lineTo(m.W-m.p, m.y(0)); ctx.stroke();
+  // q10-q90 band
+  const grid = []; for (let px=0;px<=200;px++) grid.push(px/4);
+  ctx.fillStyle = "rgba(21,101,192,0.10)";
+  ctx.beginPath();
+  grid.forEach((x,i)=> i===0 ? ctx.moveTo(m.x(x), m.y(predictQ(P2.q90,x))) : ctx.lineTo(m.x(x), m.y(predictQ(P2.q90,x))));
+  [...grid].reverse().forEach(x=> ctx.lineTo(m.x(x), m.y(predictQ(P2.q10,x))));
+  ctx.closePath(); ctx.fill();
+  // scatter
+  ctx.fillStyle = "rgba(120,120,120,0.5)";
+  for (let i=0;i<P2.xs.length;i++){
+    ctx.beginPath(); ctx.arc(m.x(P2.xs[i]), m.y(P2.ys[i]), 2.2, 0, 7); ctx.fill();
+  }
+  // curves
+  const draw = (mod, col, w, dash)=>{
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash||[]);
+    ctx.beginPath();
+    grid.forEach((x,i)=> i===0 ? ctx.moveTo(m.x(x), m.y(predictQ(mod,x))) : ctx.lineTo(m.x(x), m.y(predictQ(mod,x))));
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  draw(P2.q10, "#1565c0", 1.8);
+  draw(P2.q50, "#222", 1.8);
+  draw(P2.q90, "#c62828", 1.8);
+  if (P2.custom) draw(P2.custom.mod, "#ef6c00", 2.4, [7,4]);
+  ctx.font = "11px system-ui";
+  ctx.fillStyle = "#1565c0"; ctx.fillText("q10", m.W-58, m.y(predictQ(P2.q10, 49)));
+  ctx.fillStyle = "#222";    ctx.fillText("q50", m.W-58, m.y(predictQ(P2.q50, 49)));
+  ctx.fillStyle = "#c62828"; ctx.fillText("q90", m.W-58, m.y(predictQ(P2.q90, 49)));
+  const parts = [
+    `coverage — q10: ${(coverage(P2.q10)*100).toFixed(1)}%`,
+    `q50: ${(coverage(P2.q50)*100).toFixed(1)}%`,
+    `q90: ${(coverage(P2.q90)*100).toFixed(1)}%`
+  ];
+  if (P2.custom) parts.push(`τ=${P2.custom.tau.toFixed(2)}: ${(coverage(P2.custom.mod)*100).toFixed(1)}% (target ${(P2.custom.tau*100).toFixed(0)}%)`);
+  document.getElementById("stats2").textContent = parts.join("   ");
+}
+const tauEl = document.getElementById("tau");
+function p2Retrain(){
+  const tau = parseFloat(tauEl.value);
+  document.getElementById("tauv").textContent = tau.toFixed(2);
+  P2.custom = {tau, mod: trainQuantile(tau)};
+  p2Draw();
+}
+tauEl.oninput = p2Retrain;
+p2Retrain();
+
+// ================= PANEL 3: leaf-wise vs level-wise 2D trees =================
+const P3 = {};
+(function initP3data(){
+  const rng = mulberry32(99), gauss = gaussMaker(rng);
+  function truth(rl, h){
+    let p;
+    if (rl < 8)       p = -20 + 4*rl;
+    else if (rl < 45) p = 12 + 1.5*(rl-8);
+    else              p = 12 + 1.5*37 + 6*(rl-45);
+    if (h >= 17 && h <= 21 && rl > 35) p += 18;
+    return p;
+  }
+  P3.truth = truth;
+  const n = 600, pts = [];
+  for (let i=0;i<n;i++){
+    const rl = rng()*70, h = rng()*24;
+    pts.push({f:[rl,h], y: truth(rl,h) + 6*gauss()});
+  }
+  P3.pts = pts;
+})();
+function fitTree2D(maxLeaves, mode){
+  const pts = P3.pts;
+  function stats(idx){
+    let s=0, q=0;
+    for (const i of idx){ s += pts[i].y; q += pts[i].y*pts[i].y; }
+    return {mean: s/idx.length, sse: q - s*s/idx.length};
+  }
+  function bestSplit(idx){
+    if (idx.length < 8) return null;
+    let best = null;
+    for (const dim of [0,1]){
+      const sorted = [...idx].sort((a,b)=>pts[a].f[dim]-pts[b].f[dim]);
+      const ps=[0], pss=[0];
+      sorted.forEach((i,k)=>{ ps.push(ps[k]+pts[i].y); pss.push(pss[k]+pts[i].y*pts[i].y); });
+      const n = sorted.length;
+      const tot = pss[n] - ps[n]*ps[n]/n;
+      for (let k=4;k<=n-4;k++){
+        const a = pts[sorted[k-1]].f[dim], b = pts[sorted[k]].f[dim];
+        if (a === b) continue;
+        const l = pss[k] - ps[k]*ps[k]/k;
+        const r = (pss[n]-pss[k]) - (ps[n]-ps[k])**2/(n-k);
+        const gain = tot - l - r;
+        if (gain > 1e-9 && (!best || gain > best.gain))
+          best = {gain, dim, thr: (a+b)/2, left: sorted.slice(0,k), right: sorted.slice(k)};
+      }
+    }
+    return best;
+  }
+  const rootIdx = P3.pts.map((_,i)=>i);
+  const root = {idx: rootIdx, box: [0,70,0,24], depth: 0, split: bestSplit(rootIdx), ...stats(rootIdx)};
+  const leaves = [root];
+  const fifo = [root];
+  while (leaves.length < maxLeaves){
+    let leaf = null;
+    if (mode === "leaf"){
+      let bg = 0;
+      for (const L of leaves) if (L.split && L.split.gain > bg){ bg = L.split.gain; leaf = L; }
+    } else {
+      while (fifo.length && (!fifo[0].split || leaves.indexOf(fifo[0]) < 0)) fifo.shift();
+      leaf = fifo[0];
+    }
+    if (!leaf || !leaf.split) break;
+    const sp = leaf.split;
+    const mk = (idx, side)=>{
+      const box = [...leaf.box];
+      if (sp.dim === 0){ if (side === "l") box[1] = sp.thr; else box[0] = sp.thr; }
+      else             { if (side === "l") box[3] = sp.thr; else box[2] = sp.thr; }
+      return {idx, box, depth: leaf.depth+1, split: bestSplit(idx), ...stats(idx)};
+    };
+    const l = mk(sp.left, "l"), r = mk(sp.right, "r");
+    leaves.splice(leaves.indexOf(leaf), 1, l, r);
+    if (mode !== "leaf"){ fifo.shift(); fifo.push(l, r); }
+  }
+  return leaves;
+}
+function cmap(v){
+  const t = Math.max(0, Math.min(1, (v - (-25)) / (195 - (-25))));
+  const stops = [[33,102,172],[247,247,247],[178,24,43]];
+  const seg = t < 0.5 ? 0 : 1, u = (t - seg*0.5)*2;
+  const c0 = stops[seg], c1 = stops[seg+1];
+  const c = c0.map((a,i)=>Math.round(a + (c1[i]-a)*u));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function p3DrawTruth(){
+  const cv = document.getElementById("c3t"), ctx = cv.getContext("2d");
+  const m = mapper(cv, 0, 70, 0, 24, 26);
+  for (let px=0;px<70;px++) for (let py=0;py<24;py++){
+    const rl = px+0.5, h = py+0.5;
+    ctx.fillStyle = cmap(P3.truth(rl,h));
+    const x0 = m.x(px), x1 = m.x(px+1), y0 = m.y(py+1), y1 = m.y(py);
+    ctx.fillRect(x0, y0, x1-x0+0.5, y1-y0+0.5);
+  }
+  drawFrame(ctx, m, "residual load GW", "hour");
+}
+function p3DrawTree(cvId, leaves){
+  const cv = document.getElementById(cvId), ctx = cv.getContext("2d");
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const m = mapper(cv, 0, 70, 0, 24, 26);
+  let sse = 0;
+  for (const L of leaves){
+    sse += L.sse;
+    const x0 = m.x(L.box[0]), x1 = m.x(L.box[1]);
+    const y0 = m.y(L.box[3]), y1 = m.y(L.box[2]);
+    ctx.fillStyle = cmap(L.mean);
+    ctx.fillRect(x0, y0, x1-x0, y1-y0);
+    ctx.strokeStyle = "rgba(0,0,0,0.35)"; ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y0, x1-x0, y1-y0);
+  }
+  drawFrame(ctx, m, "residual load GW", "hour");
+  return sse;
+}
+function p3Draw(){
+  const sl = p3DrawTree("c3l", fitTree2D(P3.leaves, "leaf"));
+  const sv = p3DrawTree("c3v", fitTree2D(P3.leaves, "level"));
+  document.getElementById("stats3").textContent = `leaves: ${P3.leaves}`;
+  document.getElementById("sseL").textContent = `SSE ${Math.round(sl).toLocaleString()}`;
+  document.getElementById("sseV").textContent = `SSE ${Math.round(sv).toLocaleString()}`;
+}
+P3.leaves = 1;
+document.getElementById("b3p1").onclick = ()=>{ P3.leaves += 1; p3Draw(); };
+document.getElementById("b3p5").onclick = ()=>{ P3.leaves += 5; p3Draw(); };
+document.getElementById("b3reset").onclick = ()=>{ P3.leaves = 1; p3Draw(); };
+p3DrawTruth(); p3Draw();
+</script>
+</body>
+</html>
