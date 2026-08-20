@@ -85,7 +85,10 @@ number per day, the way reality hands them to you, no repeats, no histogram. You
 (1-\tau)\,(f-y) & y &lt; f \quad\text{— you were high: pay } 1-\tau \text{ per EUR of miss}
 \end{cases}$$</p>
 <p>Think tug-of-war: every point above your prediction pulls it <b>up with force τ</b>, every point below
-pulls it <b>down with force 1−τ</b>. Set the total bill's slope to zero:</p>
+pulls it <b>down with force 1−τ</b>. "Pull" is nothing mystical — raise \(f\) by 1 EUR and each point
+above you charges τ <i>less</i> (its miss shrank by 1), while each point below charges 1−τ <i>more</i>
+(its miss grew by 1). A pull is just each point's vote on which direction makes your bill cheaper.
+Set the total bill's slope to zero:</p>
 <p>$$\frac{d}{df}\sum_i \mathcal{L}_\tau(y_i, f)
 \;=\; (1-\tau)\,n_{\text{below}} \;-\; \tau\,n_{\text{above}}
 \;=\; 0
