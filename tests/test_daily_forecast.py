@@ -64,6 +64,29 @@ def test_write_site_json_contract(tmp_path):
     assert all(d["mae"] == 5.0 for d in history["days"])
 
 
+def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
+    """Scored days already published must survive a forecast-log reseed;
+    freshly scored days win over previously published values."""
+    (tmp_path / "history.json").write_text(
+        json.dumps(
+            {"days": [{"day": "2026-07-28", "mae": 11.7}, {"day": "2026-08-16", "mae": 99.0}]}
+        ),
+        encoding="utf-8",
+    )
+    log = _log(days=1, start="2026-08-16")  # reseeded log: no pre-Aug-16 rows
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+    prices = log["forecast"] - 2.0
+
+    write_site_json(tmp_path, log_path, prices)
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert history["days"] == [
+        {"day": "2026-07-28", "mae": 11.7},
+        {"day": "2026-08-16", "mae": 2.0},
+    ]
+
+
 def test_write_site_json_fills_actuals_once_known(tmp_path):
     log = _log(days=1)
     log_path = tmp_path / "forecast_log.parquet"
