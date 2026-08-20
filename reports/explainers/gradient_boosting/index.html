@@ -74,25 +74,76 @@ contribution \(\eta\,h_m(x)\) — the "gradient step" just taken, drawn around i
   <li>Sliders apply to <i>future</i> trees — you can anneal η mid-run by hand.</li>
 </ul>
 
-<h2>2&nbsp;· Swap the loss: pinball → quantile forecasts</h2>
-<div class="note">
-<p>The machinery above never used "squared error" specifically — only its gradient. Swap in the
-<b>pinball loss</b> at level \(\tau\):</p>
+<h2>2&nbsp;· The pinball loss, up close — why asymmetry finds a quantile</h2>
+<div class="note" style="border-left-color:#ffcc80">
+<p><b>Forget features and models for a minute.</b> Below are 48 price draws for one delivery hour — one
+number per day, the way reality hands them to you, no repeats, no histogram. You publish a single prediction
+\(f\), and each realized price charges you an asymmetric fee:</p>
 <p>$$\mathcal{L}_\tau(y, f) \;=\;
 \begin{cases}
-\tau\,(y-f) & y \ge f\\[2pt]
-(1-\tau)\,(f-y) & y &lt; f
-\end{cases}
+\tau\,(y-f) & y \ge f \quad\text{— you were low: pay } \tau \text{ per EUR of miss}\\[2pt]
+(1-\tau)\,(f-y) & y &lt; f \quad\text{— you were high: pay } 1-\tau \text{ per EUR of miss}
+\end{cases}$$</p>
+<p>Think tug-of-war: every point above your prediction pulls it <b>up with force τ</b>, every point below
+pulls it <b>down with force 1−τ</b>. Set the total bill's slope to zero:</p>
+<p>$$\frac{d}{df}\sum_i \mathcal{L}_\tau(y_i, f)
+\;=\; (1-\tau)\,n_{\text{below}} \;-\; \tau\,n_{\text{above}}
+\;=\; 0
 \qquad\Longrightarrow\qquad
--\frac{\partial \mathcal{L}_\tau}{\partial f} \;=\;
+\frac{n_{\text{below}}}{N} \;=\; \tau$$</p>
+<p style="font-size:0.9rem;color:#555">The equilibrium depends only on <i>how many</i> points sit on each
+side — not where they are, not what distribution they came from. So the cheapest \(f\) is the value with a
+fraction τ of the data below it: the τ-quantile, by definition. Single draws are enough supervision for a
+whole distribution — the asymmetry does the counting.</p>
+</div>
+<p class="legend">Dots: the 48 observed prices. Bars: each point's current charge —
+<span style="color:#c62828"><b>red</b></span> where the price landed above your f (you were low, fee τ/EUR),
+<span style="color:#1565c0"><b>blue</b></span> where below (you were high, fee (1−τ)/EUR).
+<b>Drag the orange line</b> and try to make the total bill small, then press <i>gradient-descend</i> and
+watch f settle where the pulls balance.</p>
+
+<div class="controls">
+  <label>τ: <input type="range" id="tauP" min="0.05" max="0.95" step="0.05" value="0.8">
+    <span id="tauPv"></span></label>
+  <label>your prediction f: <input type="range" id="fP" min="-25" max="195" step="0.5" value="100"></label>
+  <button id="bDescend">gradient-descend f</button>
+</div>
+<div class="stats" id="statsPL"></div>
+<canvas id="cpl1" width="960" height="300" style="touch-action:none;cursor:ew-resize"></canvas>
+<p class="legend">The total bill \(\sum_i \mathcal{L}_\tau(y_i, f)\) as a function of where you put f.
+Black ▼: the minimum. Dashed blue: the empirical τ-quantile of the sample. They coincide at every τ —
+that's the theorem, drawn.</p>
+<canvas id="cpl2" width="960" height="240"></canvas>
+
+<h2>What to try</h2>
+<ul style="font-size:0.93rem">
+  <li><b>τ = 0.5:</b> both fees are 0.5/EUR and the optimum is the median. Drag f a few EUR off-optimum:
+      the bill barely moves as long as the <i>counts</i> don't change — the slope only knows headcounts.</li>
+  <li><b>τ = 0.9, drag f from low to high:</b> while more than 10% of the points are above f, the red
+      up-pull (τ each) beats the blue down-pull (0.1 each), so the bill keeps falling as you raise f. It
+      bottoms out when ~5 of 48 points remain above. Push τ to 0.95 and watch the optimum jump into the
+      spike cluster.</li>
+  <li><b>Press gradient-descend from far away:</b> the step direction only ever depends on the count
+      imbalance — this ±τ / ±(1−τ) push is exactly the gradient the boosted trees of panel 3 are fitted to,
+      computed per leaf instead of globally.</li>
+  <li><b>The tail-data problem, live:</b> at τ = 0.95 the optimum is held in place by just 2–3 points.
+      Nudge τ and it lurches — that's why extreme-quantile heads are noisy, and why the parametric
+      (Johnson's SU) rival is interesting in the tails.</li>
+</ul>
+
+<h2>3&nbsp;· Swap the loss: pinball → quantile forecasts</h2>
+<div class="note">
+<p>Now combine panels 1 and 2: the boosting machinery never used "squared error" specifically — only its
+gradient. And the pinball gradient is exactly the tug-of-war force from above:</p>
+<p>$$-\frac{\partial \mathcal{L}_\tau}{\partial f} \;=\;
 \begin{cases}
 \tau & y \ge f\\[2pt]
 \tau - 1 & y &lt; f
 \end{cases}$$</p>
-<p style="font-size:0.9rem;color:#555">Asymmetric penalty: at \(\tau=0.9\), under-predicting costs 9× more
-than over-predicting, so the minimizer is the 90th percentile. Same trees, different gradient — and the model
-now traces a <i>conditional quantile</i> instead of the conditional mean. Train several \(\tau\)'s and you
-have a predictive distribution.</p>
+<p style="font-size:0.9rem;color:#555">Fit each tree to that ±force instead of the residual, and every leaf
+replays panel 2's equilibrium <i>locally, conditioned on features</i>: the model settles where a fraction
+\(\tau\) of the training points sit below it in each region of feature space — a <b>conditional</b> quantile.
+Train several \(\tau\)'s and you have a predictive distribution.</p>
 </div>
 
 <p class="legend">Toy market: x = wind forecast, y = price. Low wind → high, volatile, spike-prone prices;
@@ -117,7 +168,7 @@ should widen and narrow). Blue/black/red: boosted q10/q50/q90. <b>Orange dashed:
       fit of panel 1 would be.</li>
 </ul>
 
-<h2>3&nbsp;· What makes LightGBM "Light": leaf-wise growth</h2>
+<h2>4&nbsp;· What makes LightGBM "Light": leaf-wise growth</h2>
 <div class="note" style="border-left-color:#a5d6a7">
 <p>Classic implementations (XGBoost's original mode) grow trees <b>level-wise</b>: split every leaf, then
 every leaf of the next depth — balanced trees. LightGBM grows <b>leaf-wise</b>: always split whichever leaf,
@@ -381,7 +432,131 @@ document.getElementById("bReset").onclick = ()=>{ p1Reset(); p1Draw(); };
 });
 p1Reset(); p1Draw();
 
-// ================= PANEL 2: quantile boosting =================
+// ================= PANEL 2: pinball loss up close =================
+const PL = {};
+(function initPL(){
+  const rng = mulberry32(11), gauss = gaussMaker(rng);
+  const ys = [];
+  for (let i=0;i<48;i++){
+    let p = 70 + 18*gauss();
+    const u = rng();
+    if (u < 0.12) p += 55 + 60*rng();        // scarcity spikes -> right skew
+    else if (u < 0.20) p = -12 + 20*rng();   // a few negative-price days
+    ys.push(p);
+  }
+  ys.sort((a,b)=>a-b);
+  PL.ys = ys; PL.f = 100; PL.lo = -25; PL.hi = 195;
+})();
+function plPointLoss(y, f, tau){ return y >= f ? tau*(y-f) : (1-tau)*(f-y); }
+function plLoss(f, tau){ return PL.ys.reduce((s,y)=>s+plPointLoss(y, f, tau), 0); }
+function plSlope(f, tau){
+  let below = 0, above = 0;
+  for (const y of PL.ys) (y < f ? below++ : above++);
+  return {slope: (1-tau)*below - tau*above, below, above};
+}
+function plTau(){ return parseFloat(document.getElementById("tauP").value); }
+function plDescendSteps(k){
+  const tau = plTau();
+  for (let t=0;t<k;t++){
+    PL.f -= (60/(1+t/10)) * plSlope(PL.f, tau).slope / PL.ys.length;
+  }
+}
+function plDraw(){
+  const tau = plTau();
+  const cv = document.getElementById("cpl1"), ctx = cv.getContext("2d");
+  const pad = 34, W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  const X = v => pad + (v - PL.lo)/(PL.hi - PL.lo)*(W - 2*pad);
+  const baseY = H - 44;
+  ctx.font = "11px system-ui";
+  ctx.strokeStyle = "#ccc";
+  ctx.beginPath(); ctx.moveTo(pad, baseY); ctx.lineTo(W-pad, baseY); ctx.stroke();
+  ctx.fillStyle = "#777";
+  for (const t of [0, 50, 100, 150]){
+    ctx.strokeStyle = "#bbb";
+    ctx.beginPath(); ctx.moveTo(X(t), baseY); ctx.lineTo(X(t), baseY+4); ctx.stroke();
+    ctx.fillText(t, X(t)-8, baseY+30);
+  }
+  ctx.fillStyle = "#777"; ctx.fillText("price EUR/MWh", W/2-34, H-4);
+  for (const y of PL.ys){
+    ctx.fillStyle = y >= PL.f ? "rgba(198,40,40,0.75)" : "rgba(21,101,192,0.75)";
+    const h = Math.min(plPointLoss(y, PL.f, tau)*1.05, baseY-18);
+    ctx.fillRect(X(y)-1.5, baseY-4-h, 3, h);
+    ctx.beginPath(); ctx.arc(X(y), baseY+11, 3, 0, 7); ctx.fill();
+  }
+  const {slope, below, above} = plSlope(PL.f, tau);
+  ctx.strokeStyle = "#ef6c00"; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(X(PL.f), 12); ctx.lineTo(X(PL.f), baseY+18); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.fillStyle = "#ef6c00"; ctx.fillText("your f (drag me)", Math.min(X(PL.f)+6, W-120), 20);
+  ctx.fillStyle = "#c62828";
+  ctx.fillText(`${above} above × τ = pull up ${(tau*above).toFixed(1)}`, W-pad-190, 44);
+  ctx.fillStyle = "#1565c0";
+  ctx.fillText(`${below} below × (1−τ) = pull down ${((1-tau)*below).toFixed(1)}`, pad+4, 44);
+  document.getElementById("statsPL").textContent =
+    `f = ${PL.f.toFixed(1)}   total bill = ${plLoss(PL.f, tau).toFixed(0)}   ` +
+    `below f: ${below}/${PL.ys.length} (${(100*below/PL.ys.length).toFixed(0)}% — target τ = ${(tau*100).toFixed(0)}%)   ` +
+    `slope = (1−τ)·${below} − τ·${above} = ${slope >= 0 ? "+" : ""}${slope.toFixed(1)}` +
+    (Math.abs(slope) <= 1 ? "  → equilibrium" : slope > 0 ? "  → move f down" : "  → move f up");
+  // total-bill curve
+  const cv2 = document.getElementById("cpl2"), c2 = cv2.getContext("2d");
+  c2.clearRect(0,0,cv2.width,cv2.height);
+  const grid = [], Ls = [];
+  for (let i=0;i<=320;i++){ const f = PL.lo + i/320*(PL.hi-PL.lo); grid.push(f); Ls.push(plLoss(f, tau)); }
+  const m2 = mapper(cv2, PL.lo, PL.hi, 0, Math.max(...Ls)*1.06, 34);
+  drawFrame(c2, m2, "prediction f", "total bill");
+  c2.font = "11px system-ui";
+  c2.strokeStyle = "#222"; c2.lineWidth = 1.8;
+  c2.beginPath();
+  grid.forEach((f,i)=> i===0 ? c2.moveTo(m2.x(f), m2.y(Ls[i])) : c2.lineTo(m2.x(f), m2.y(Ls[i])));
+  c2.stroke(); c2.lineWidth = 1;
+  const q = quantileOf(PL.ys, tau);
+  c2.strokeStyle = "#1565c0"; c2.setLineDash([5,4]);
+  c2.beginPath(); c2.moveTo(m2.x(q), m2.p); c2.lineTo(m2.x(q), cv2.height-m2.p); c2.stroke();
+  c2.setLineDash([]);
+  c2.fillStyle = "#1565c0";
+  c2.fillText(`empirical q${Math.round(tau*100)} = ${q.toFixed(1)}`, Math.min(m2.x(q)+6, cv2.width-150), m2.p+14);
+  let bi = 0; Ls.forEach((L,i)=>{ if (L < Ls[bi]) bi = i; });
+  const fx = m2.x(grid[bi]), fy = m2.y(Ls[bi]);
+  c2.fillStyle = "#222";
+  c2.beginPath(); c2.moveTo(fx, fy-3); c2.lineTo(fx-6, fy-13); c2.lineTo(fx+6, fy-13); c2.closePath(); c2.fill();
+  c2.strokeStyle = "#ef6c00"; c2.lineWidth = 2;
+  c2.beginPath(); c2.moveTo(m2.x(PL.f), m2.p); c2.lineTo(m2.x(PL.f), cv2.height-m2.p); c2.stroke();
+  c2.lineWidth = 1;
+}
+(function wirePL(){
+  const tauPEl = document.getElementById("tauP"), fPEl = document.getElementById("fP");
+  const showTau = ()=>{ document.getElementById("tauPv").textContent = parseFloat(tauPEl.value).toFixed(2); };
+  tauPEl.oninput = ()=>{ showTau(); plDraw(); };
+  fPEl.oninput = ()=>{ PL.f = parseFloat(fPEl.value); plDraw(); };
+  showTau();
+  const cv = document.getElementById("cpl1");
+  let dragging = false;
+  function setF(e){
+    const r = cv.getBoundingClientRect();
+    const px = (e.clientX - r.left) * (cv.width / r.width);
+    PL.f = Math.max(PL.lo, Math.min(PL.hi, PL.lo + (px - 34)/(cv.width - 68)*(PL.hi - PL.lo)));
+    fPEl.value = PL.f.toFixed(1);
+    plDraw();
+  }
+  cv.addEventListener("pointerdown", e=>{ dragging = true; try{ cv.setPointerCapture(e.pointerId); }catch(_){} setF(e); });
+  cv.addEventListener("pointermove", e=>{ if (dragging) setF(e); });
+  cv.addEventListener("pointerup", ()=>{ dragging = false; });
+  let anim = null;
+  document.getElementById("bDescend").onclick = ()=>{
+    if (anim) clearInterval(anim);
+    let t = 0;
+    anim = setInterval(()=>{
+      PL.f -= (60/(1+t/10)) * plSlope(PL.f, plTau()).slope / PL.ys.length;
+      fPEl.value = PL.f.toFixed(1);
+      plDraw();
+      if (++t >= 70){ clearInterval(anim); anim = null; }
+    }, 30);
+  };
+})();
+plDraw();
+
+// ================= PANEL 3: quantile boosting =================
 const P2 = {};
 (function initP2data(){
   const rng = mulberry32(7), gauss = gaussMaker(rng);
@@ -482,7 +657,7 @@ function p2Retrain(){
 tauEl.oninput = p2Retrain;
 p2Retrain();
 
-// ================= PANEL 3: leaf-wise vs level-wise 2D trees =================
+// ================= PANEL 4: leaf-wise vs level-wise 2D trees =================
 const P3 = {};
 (function initP3data(){
   const rng = mulberry32(99), gauss = gaussMaker(rng);
