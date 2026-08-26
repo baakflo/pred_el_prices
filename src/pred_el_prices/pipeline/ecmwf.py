@@ -85,7 +85,7 @@ _session = requests.Session()
 # (observed 2026-08-26 from both residential and cloud IPs; curl/wget-class
 # UAs pass). Identify as curl — same anonymous GETs, same pacing/backoff.
 _session.headers["User-Agent"] = "curl/8.5.0"
-REQUEST_PACING_S = 0.5
+REQUEST_PACING_S = float(os.environ.get("PEP_ENS_PACING_S", "0.5"))
 RETRY_BUDGET_S = int(os.environ.get("PEP_ENS_RETRY_BUDGET_S", "900"))
 
 
