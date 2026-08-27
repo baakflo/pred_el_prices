@@ -287,6 +287,7 @@ def run_daily(
     delivery_day=None,
     skip_fetch: bool = False,
     allow_ens_fallback: bool = False,
+    refresh_only: bool = False,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day."""
     now = datetime.now(UTC)
@@ -297,6 +298,34 @@ def run_daily(
     )
     run_date = (delivery - pd.Timedelta(days=1)).date()
     log_path = out_dir / "forecast_log.parquet"
+
+    if refresh_only:
+        # Post-auction slot: auction results publish ~12:45 CET/CEST, so a
+        # price refresh now fills the actuals next to the morning forecast
+        # and scores newly completed days. Never forecasts — a "forecast"
+        # generated after the results are public would be worthless even
+        # flagged, so a missed morning run stays an honest gap.
+        if not log_path.exists():
+            print("refresh-only: no forecast log; nothing to refresh")
+            return None
+        if not skip_fetch:
+            from entsoe import EntsoePandasClient
+
+            from pred_el_prices.config import entsoe_api_key
+            from pred_el_prices.pipeline.entsoe import backfill
+
+            client = EntsoePandasClient(api_key=entsoe_api_key())
+            backfill(
+                client,
+                ["day_ahead_prices"],
+                pd.Timestamp("2015-01-01", tz="UTC"),
+                delivery + pd.Timedelta(days=1),
+                cache_dir,
+            )
+        prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
+        write_site_json(out_dir, log_path, prices)
+        print("refresh-only: site JSON rewritten with current prices")
+        return out_dir / "latest.json"
 
     if not skip_fetch:
         import requests

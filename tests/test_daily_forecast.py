@@ -5,7 +5,8 @@ import json
 import numpy as np
 import pandas as pd
 
-from pred_el_prices.daily_forecast import lear_forecast, write_site_json
+from pred_el_prices.daily_forecast import lear_forecast, run_daily, write_site_json
+from pred_el_prices.pipeline import cache
 
 
 def test_lear_forecast_heals_the_local_day_boundary():
@@ -131,3 +132,41 @@ def test_write_site_json_fills_actuals_once_known(tmp_path):
     history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
     assert [(d["day"], d["mae"]) for d in history["days"]] == [("2026-08-01", 2.0)]
     assert len(history["days"][0]["hours"]) == 24
+
+
+def test_run_daily_refresh_only_fills_actuals_without_forecasting(tmp_path):
+    """The post-auction slot rewrites the site JSON from fresh prices but
+    must never generate a forecast, even when today's run is missing."""
+    out_dir = tmp_path / "site"
+    out_dir.mkdir()
+    log = _log(days=1)  # delivery 2026-08-01 only; "tomorrow" never logged
+    log.to_parquet(out_dir / "forecast_log.parquet")
+    prices = (log["forecast"] - 2.0).to_frame("price_eur_mwh")
+    cache.upsert(tmp_path / "cache", "entsoe/day_ahead_prices", prices)
+
+    result = run_daily(
+        cache_dir=tmp_path / "cache",
+        archive_dir=tmp_path,
+        features_path=tmp_path / "features.parquet",
+        out_dir=out_dir,
+        skip_fetch=True,
+        refresh_only=True,
+    )
+
+    assert result == out_dir / "latest.json"
+    latest = json.loads((out_dir / "latest.json").read_text(encoding="utf-8"))
+    assert latest["delivery_day"] == "2026-08-01"  # no new forecast appeared
+    assert all(h["actual"] is not None for h in latest["hours"])
+
+
+def test_run_daily_refresh_only_without_log_is_a_noop(tmp_path):
+    result = run_daily(
+        cache_dir=tmp_path / "cache",
+        archive_dir=tmp_path,
+        features_path=tmp_path / "features.parquet",
+        out_dir=tmp_path / "site",
+        skip_fetch=True,
+        refresh_only=True,
+    )
+    assert result is None
+    assert not (tmp_path / "site" / "latest.json").exists()

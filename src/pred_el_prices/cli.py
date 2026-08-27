@@ -143,6 +143,12 @@ def main() -> None:
         help="If the 00Z ENS run is unavailable, use the pre-archived 12Z run "
         "of the previous day (staler weather; for late retry slots)",
     )
+    fc.add_argument(
+        "--refresh-only",
+        action="store_true",
+        help="Refresh prices and rewrite the site JSON (fill actuals, score "
+        "completed days) without ever generating a forecast; for post-auction slots",
+    )
 
     runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
     runx.add_argument("name", help="Experiment name, e.g. lear-de")
@@ -240,6 +246,7 @@ def main() -> None:
             delivery_day=args.delivery_day,
             skip_fetch=args.skip_fetch,
             allow_ens_fallback=args.allow_ens_fallback,
+            refresh_only=args.refresh_only,
         )
     elif args.command == "run":
         import json
