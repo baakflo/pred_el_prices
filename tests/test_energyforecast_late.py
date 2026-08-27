@@ -1,4 +1,4 @@
-"""The _late benchmark snapshot must never contain a post-gate curve."""
+"""No benchmark snapshot (early or _late) may contain a post-gate curve."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +22,15 @@ def test_late_snapshot_refused_at_gate(tmp_path: Path, monkeypatch):
     _patch_fetch(monkeypatch)
     now = datetime(2026, 8, 19, 10, 0, tzinfo=UTC)  # exactly the CEST gate
     assert energyforecast.archive_snapshot(tmp_path, "tok", now=now, late=True) is None
+    assert not list(tmp_path.rglob("*.json"))
+
+
+def test_regular_snapshot_refused_at_gate(tmp_path: Path, monkeypatch):
+    # Evening retry slots run post-auction, when the API serves actual
+    # clearing prices labeled as forecasts — must not be archived.
+    _patch_fetch(monkeypatch)
+    now = datetime(2026, 8, 27, 18, 18, tzinfo=UTC)
+    assert energyforecast.archive_snapshot(tmp_path, "tok", now=now) is None
     assert not list(tmp_path.rglob("*.json"))
 
 

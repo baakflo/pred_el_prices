@@ -15,9 +15,9 @@ With fixed_cost_cent=0 and vat=0 the prices are raw market prices in ct/kWh
 Two snapshots per day make the benchmark honest: the early one (~06:00 UTC)
 may predate their morning weather refresh, so a second `_late` snapshot is
 taken as close to the auction gate as the workflow crons allow (09:45 UTC
-slot). The late snapshot hard-refuses to write past the 12:00 Europe/Berlin
-gate — a drifted cron must not sneak a post-auction curve into a "pre-gate"
-benchmark file.
+slot). Every snapshot hard-refuses to write at/past the 12:00 Europe/Berlin
+gate — a drifted cron or evening retry slot must not sneak the post-auction
+actuals the API serves after ~12:45 CET into a "pre-gate" benchmark file.
 """
 
 from __future__ import annotations
@@ -56,21 +56,21 @@ def archive_snapshot(
 
     Returns the path written, or None if today's file was already there, so
     the workflow's best-effort retry crons stay idempotent. With `late=True`
-    the file gets a `_late` suffix and is refused at/after the day-ahead
-    auction gate (12:00 Europe/Berlin).
+    the file gets a `_late` suffix. Any snapshot is refused at/after the
+    day-ahead auction gate (12:00 Europe/Berlin): past ~12:45 CET the API
+    serves the real clearing prices, not a forecast.
     """
     now = now or datetime.now(UTC)
     suffix = "_late" if late else ""
     dest = archive_dir / f"energyforecast/{now:%Y}/energyforecast_{now:%Y%m%d}{suffix}.json"
     if dest.exists():
         return None
-    if late:
-        gate = now.astimezone(ZoneInfo("Europe/Berlin")).replace(
-            hour=12, minute=0, second=0, microsecond=0
-        )
-        if now >= gate:
-            print(f"WARN late snapshot refused: {now:%H:%M} UTC is at/past the auction gate")
-            return None
+    gate = now.astimezone(ZoneInfo("Europe/Berlin")).replace(
+        hour=12, minute=0, second=0, microsecond=0
+    )
+    if now >= gate:
+        print(f"WARN snapshot refused: {now:%H:%M} UTC is at/past the auction gate")
+        return None
     payload = {
         "fetched_utc": now.isoformat(timespec="seconds"),
         "source": BASE_URL,

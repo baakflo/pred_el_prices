@@ -56,9 +56,10 @@ jobs:
       - name: Archive Pegel Kaub
         run: uv run python -m pred_el_prices.cli archive-pegel --archive-dir archive_repo
 
-      # Benchmark forecast for the public site. All three cron slots are
-      # pre-auction (gate 12:00 CET), so any retry still captures a clean
-      # snapshot; skipped snapshots are unrecoverable. Guarded so a missing
+      # Benchmark forecast for the public site. The archiver refuses to
+      # write at/past the auction gate (post-gate the API serves actuals,
+      # not forecasts), so the evening slot is a no-op for this step;
+      # skipped snapshots are unrecoverable. Guarded so a missing
       # token doesn't block the weather/pegel push (secrets can't be used in
       # step-level `if`). The 09:45 slot additionally takes a `_late`
       # snapshot — their last pre-gate vintage, since the early snapshot may
@@ -92,7 +93,11 @@ jobs:
 
       # publish-forecast and archive-ens-12z push to the same repo; a
       # non-fast-forward rejection must merge-and-retry, not drop the data.
+      # always(): a crash in a later archive step (e.g. a transient ENTSO-E
+      # 400) must not discard weather data already downloaded — DWD deletes
+      # its files after ~24h, so a dropped push can be unrecoverable.
       - name: Push new data
+        if: always()
         run: |
           cd archive_repo
           git config user.name "archive-bot"
