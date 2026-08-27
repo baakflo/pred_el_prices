@@ -243,14 +243,36 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     daily = err.groupby(err.index.normalize()).agg(["mean", "count"])
     scored = daily[(daily["count"] == 24) & daily["mean"].notna()]
     days = {f"{day:%Y-%m-%d}": round(float(row["mean"]), 2) for day, row in scored.iterrows()}
+    # Scored days keep their full hourly curve so the site can show any past
+    # day's forecast against the real prices, not just the MAE number.
+    log_actuals = prices.reindex(log.index)
+    curves = {}
+    for day in days:
+        mask = log.index.normalize() == pd.Timestamp(day, tz="UTC")
+        hrs = log.loc[mask]
+        if len(hrs) != 24:
+            continue
+        curves[day] = [
+            {"t": t.isoformat(), "forecast": round(float(f), 2), "actual": round(float(a), 2)}
+            for t, f, a in zip(hrs.index, hrs["forecast"], log_actuals[mask], strict=True)
+        ]
     # Merge with the published history: the log is per-run state, but scored
     # days must survive a log reseed (as on 2026-08-15, which wiped the site
-    # scorecard). Freshly scored days win over previously published ones.
+    # scorecard). Freshly scored days win over previously published ones;
+    # days scored before curves were published stay MAE-only.
     history_path = out_dir / "history.json"
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
-            days.setdefault(entry["day"], entry["mae"])
-    history = {"days": [{"day": d, "mae": m} for d, m in sorted(days.items())[-60:]]}
+            if entry["day"] not in days:
+                days[entry["day"]] = entry["mae"]
+                if "hours" in entry:
+                    curves[entry["day"]] = entry["hours"]
+    history = {
+        "days": [
+            {"day": d, "mae": m, **({"hours": curves[d]} if d in curves else {})}
+            for d, m in sorted(days.items())[-60:]
+        ]
+    }
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "latest.json").write_text(json.dumps(latest, indent=1), encoding="utf-8")

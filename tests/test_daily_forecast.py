@@ -67,6 +67,10 @@ def test_write_site_json_contract(tmp_path):
     history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
     assert [d["day"] for d in history["days"]] == ["2026-08-01", "2026-08-02"]
     assert all(d["mae"] == 5.0 for d in history["days"])
+    # scored days carry their full hourly curve, forecast and actual
+    for d in history["days"]:
+        assert len(d["hours"]) == 24
+        assert all(round(h["actual"] - h["forecast"], 2) == 5.0 for h in d["hours"])
 
 
 def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
@@ -86,10 +90,14 @@ def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
     write_site_json(tmp_path, log_path, prices)
 
     history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
-    assert history["days"] == [
-        {"day": "2026-07-28", "mae": 11.7},
-        {"day": "2026-08-16", "mae": 2.0},
+    # the pre-reseed day survives MAE-only (no curve recoverable); the
+    # freshly scored day wins over the stale published value and gains hours
+    assert [(d["day"], d["mae"]) for d in history["days"]] == [
+        ("2026-07-28", 11.7),
+        ("2026-08-16", 2.0),
     ]
+    assert "hours" not in history["days"][0]
+    assert len(history["days"][1]["hours"]) == 24
 
 
 def test_write_site_json_flags_post_gate_and_fallback_vintage(tmp_path):
@@ -121,4 +129,5 @@ def test_write_site_json_fills_actuals_once_known(tmp_path):
     latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
     assert all(h["actual"] is not None for h in latest["hours"])
     history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
-    assert history["days"] == [{"day": "2026-08-01", "mae": 2.0}]
+    assert [(d["day"], d["mae"]) for d in history["days"]] == [("2026-08-01", 2.0)]
+    assert len(history["days"][0]["hours"]) == 24
