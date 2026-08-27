@@ -157,7 +157,7 @@ def run_features(archive_path: Path) -> pd.DataFrame:
     return features
 
 
-def build_features(archive_dir: Path, start: date, end: date) -> pd.DataFrame:
+def build_features(archive_dir: Path, start: date, end: date, run_hour: int = 0) -> pd.DataFrame:
     """Concatenated hourly features for all archived runs in [start, end].
 
     Missing archive dates (the documented upstream holes) are skipped with a
@@ -166,7 +166,9 @@ def build_features(archive_dir: Path, start: date, end: date) -> pd.DataFrame:
     frames = []
     day = start
     while day <= end:
-        path = archive_dir / "ecmwf-ens" / f"{day:%Y}" / f"ecmwf-ens_{day:%Y%m%d}00.parquet"
+        path = (
+            archive_dir / "ecmwf-ens" / f"{day:%Y}" / f"ecmwf-ens_{day:%Y%m%d}{run_hour:02d}.parquet"
+        )
         if path.exists():
             frames.append(run_features(path))
         else:
