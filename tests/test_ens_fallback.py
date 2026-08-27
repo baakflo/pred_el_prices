@@ -67,7 +67,7 @@ def test_get_rotates_to_the_second_mirror(monkeypatch):
 
     def fake_get(url, headers=None, timeout=None):
         calls.append(url)
-        return _resp(503 if "googleapis" in url else 200)
+        return _resp(503 if "amazonaws" in url else 200)
 
     monkeypatch.setattr(ecmwf._session, "get", fake_get)
     monkeypatch.setattr(ecmwf, "REQUEST_PACING_S", 0.0)
