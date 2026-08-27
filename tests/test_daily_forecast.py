@@ -37,15 +37,17 @@ def test_lear_forecast_heals_the_local_day_boundary():
     assert forecast.notna().all()
 
 
-def _log(days, start="2026-08-01"):
+def _log(days, start="2026-08-01", generated="2026-07-31T09:00:00+00:00"):
     idx = pd.date_range(start, periods=days * 24, freq="1h", tz="UTC")
     df = pd.DataFrame({"forecast": np.linspace(50, 150, len(idx))}, index=idx)
-    df["generated_utc"] = "2026-08-15T09:00:00+00:00"
+    df["generated_utc"] = generated
     return df
 
 
 def test_write_site_json_contract(tmp_path):
-    log = _log(days=3)
+    # generated 2026-08-02T09:00Z for delivery 2026-08-03: before the gate
+    # (12:00 CEST on D-1 = 10:00 UTC), no vintage column (legacy log = 00Z)
+    log = _log(days=3, generated="2026-08-02T09:00:00+00:00")
     log_path = tmp_path / "forecast_log.parquet"
     log.to_parquet(log_path)
     # actual prices known for the first two days only (third is tomorrow)
@@ -57,7 +59,10 @@ def test_write_site_json_contract(tmp_path):
     assert latest["delivery_day"] == "2026-08-03"
     assert len(latest["hours"]) == 24
     assert all(h["actual"] is None for h in latest["hours"])
-    assert latest["generated_utc"] == "2026-08-15T09:00:00+00:00"
+    assert latest["generated_utc"] == "2026-08-02T09:00:00+00:00"
+    assert latest["pre_gate"] is True
+    assert latest["weather_vintage"] == "00Z"
+    assert latest["note"].startswith("Generated before")
 
     history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
     assert [d["day"] for d in history["days"]] == ["2026-08-01", "2026-08-02"]
@@ -85,6 +90,24 @@ def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
         {"day": "2026-07-28", "mae": 11.7},
         {"day": "2026-08-16", "mae": 2.0},
     ]
+
+
+def test_write_site_json_flags_post_gate_and_fallback_vintage(tmp_path):
+    """A run that missed the gate or used the 12Z weather fallback must say
+    so in latest.json instead of repeating the pre-gate/00Z claim."""
+    # gate for delivery 2026-08-01 is 2026-07-31 12:00 CEST = 10:00 UTC
+    log = _log(days=1, generated="2026-07-31T10:01:12+00:00")
+    log["weather_vintage"] = "12Z"
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+
+    write_site_json(tmp_path, log_path, log["forecast"] - 2.0)
+
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert latest["pre_gate"] is False
+    assert latest["weather_vintage"] == "12Z"
+    assert "AFTER" in latest["note"]
+    assert "12Z" in latest["note"]
 
 
 def test_write_site_json_fills_actuals_once_known(tmp_path):

@@ -33,11 +33,22 @@ from pred_el_prices.pipeline.capacity import hourly_capacity
 from pred_el_prices.pipeline.entsoe import resample_hourly
 
 MODEL_LABEL = "LEAR(364, academic exog) + own-RES v2"
-NOTE = (
-    "Generated before the 12:00 CET/CEST auction gate. Renewables input is our "
-    "own forecast from the ECMWF ENS 00Z run (the official TSO forecast is only "
-    "published at 18:00, after the auction)."
+NOTE_GATE_OK = "Generated before the 12:00 CET/CEST auction gate."
+NOTE_GATE_MISSED = (
+    "Generated AFTER the 12:00 CET/CEST auction gate closed — flagged for "
+    "honesty; not comparable to pre-gate days."
 )
+NOTE_RES = {
+    "00Z": (
+        "Renewables input is our own forecast from the ECMWF ENS 00Z run (the "
+        "official TSO forecast is only published at 18:00, after the auction)."
+    ),
+    "12Z": (
+        "Renewables input is our own forecast from the previous evening's ECMWF "
+        "ENS 12Z run — the morning 00Z run was unavailable (measured fallback "
+        "cost: ~+0.1 EUR/MWh MAE)."
+    ),
+}
 RES_TARGETS = {
     "wind_onshore_forecast_mw": "wind_onshore_capacity_mw",
     "wind_offshore_forecast_mw": "wind_offshore_capacity_mw",
@@ -201,11 +212,23 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     latest_day = log.index.normalize().max()
     hours = log.loc[log.index.normalize() == latest_day]
     actuals = prices.reindex(hours.index)
+
+    # Honesty flags derived per run, not hardcoded: which weather vintage fed
+    # the RES forecast, and whether generation actually beat the auction gate
+    # (12:00 Europe/Berlin on D-1). Rows logged before 2026-08-27 lack the
+    # vintage column — those were all primary-vintage mornings.
+    vintage = hours["weather_vintage"].iloc[0] if "weather_vintage" in hours.columns else "00Z"
+    if not isinstance(vintage, str):
+        vintage = "00Z"
+    gate = pd.Timestamp(f"{latest_day - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
+    pre_gate = pd.Timestamp(hours["generated_utc"].iloc[0]) <= gate
     latest = {
         "generated_utc": hours["generated_utc"].iloc[0],
         "delivery_day": f"{latest_day:%Y-%m-%d}",
         "model": MODEL_LABEL,
-        "note": NOTE,
+        "pre_gate": bool(pre_gate),
+        "weather_vintage": vintage,
+        "note": f"{NOTE_GATE_OK if pre_gate else NOTE_GATE_MISSED} {NOTE_RES[vintage]}",
         "hours": [
             {
                 "t": t.isoformat(),
@@ -307,8 +330,10 @@ def run_daily(
     own_res = own_res_forecast(features, dataset, cache_dir, delivery)
     forecast = lear_forecast(dataset, delivery, load_d, own_res)
 
+    day_runs = pd.to_datetime(features.loc[delivery_hours, "run_date"]).dt.date
     entry = forecast.to_frame()
     entry["generated_utc"] = now.isoformat(timespec="seconds")
+    entry["weather_vintage"] = "00Z" if (day_runs == run_date).all() else "12Z"
     if log_path.exists():
         entry = pd.concat([pd.read_parquet(log_path), entry])
     out_dir.mkdir(parents=True, exist_ok=True)
