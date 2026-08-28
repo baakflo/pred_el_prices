@@ -72,7 +72,13 @@ jobs:
       # snapshot — their last pre-gate vintage, since the early snapshot may
       # predate their morning weather refresh; the archiver itself refuses
       # the late file at/past the gate, so cron drift cannot contaminate it.
-      - name: Archive energyforecast.de benchmark
+      #
+      # Snapshots land in the PRIVATE benchmarks repo, not archive_repo:
+      # energyforecast.de responses are third-party commercial data we may
+      # not redistribute, and the archive repo is public. Cloned, written
+      # and pushed within this one step so the benchmark flow can never
+      # block the weather/pegel push.
+      - name: Archive energyforecast.de benchmark (private repo)
         env:
           ENERGYFORECAST_TOKEN: ${{ secrets.ENERGYFORECAST_TOKEN }}
         run: |
@@ -80,10 +86,28 @@ jobs:
             echo "::warning::ENERGYFORECAST_TOKEN not set; benchmark forecast NOT archived"
             exit 0
           fi
-          uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo
+          git clone --depth 1 \
+            "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_benchmarks.git" \
+            benchmarks_repo
+          uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir benchmarks_repo
           if [ "$SLOT" = "0945" ]; then
-            uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir archive_repo --late
+            uv run python -m pred_el_prices.cli archive-energyforecast --archive-dir benchmarks_repo --late
           fi
+          cd benchmarks_repo
+          git config user.name "archive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no new benchmark snapshot"
+            exit 0
+          fi
+          git commit -m "Benchmark $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::benchmark push failed after 3 merge retries"
+          exit 1
 
       # ENTSO-E serves only the latest submitted forecast version, so the
       # pre-auction vintage must be snapshotted daily. Written only once
