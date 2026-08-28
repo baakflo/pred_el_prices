@@ -150,6 +150,21 @@ def main() -> None:
         "completed days) without ever generating a forecast; for post-auction slots",
     )
 
+    bf = sub.add_parser(
+        "backfill-history",
+        help="Fill curve-less site history days from backtest runs (flagged post_gate)",
+    )
+    bf.add_argument(
+        "--runs",
+        type=Path,
+        nargs="+",
+        required=True,
+        help="Backtest run directories; the first that covers a day wins",
+    )
+    bf.add_argument("--out", type=Path, default=Path("data/site"), help="Site JSON directory")
+    bf.add_argument("--start", required=True, help="First delivery day (UTC, YYYY-MM-DD)")
+    bf.add_argument("--end", required=True, help="Last delivery day (UTC, YYYY-MM-DD)")
+
     runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
     runx.add_argument("name", help="Experiment name, e.g. lear-de")
     runx.add_argument(
@@ -248,6 +263,10 @@ def main() -> None:
             allow_ens_fallback=args.allow_ens_fallback,
             refresh_only=args.refresh_only,
         )
+    elif args.command == "backfill-history":
+        from pred_el_prices.daily_forecast import backfill_history
+
+        backfill_history(args.out, args.runs, args.start, args.end)
     elif args.command == "run":
         import json
 

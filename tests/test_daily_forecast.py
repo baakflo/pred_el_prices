@@ -5,7 +5,12 @@ import json
 import numpy as np
 import pandas as pd
 
-from pred_el_prices.daily_forecast import lear_forecast, run_daily, write_site_json
+from pred_el_prices.daily_forecast import (
+    backfill_history,
+    lear_forecast,
+    run_daily,
+    write_site_json,
+)
 from pred_el_prices.pipeline import cache
 
 
@@ -99,6 +104,83 @@ def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
     ]
     assert "hours" not in history["days"][0]
     assert len(history["days"][1]["hours"]) == 24
+
+
+def test_write_site_json_preserves_the_post_gate_flag(tmp_path):
+    """Backfilled reconstructions exist only in the published file; a
+    rewrite must keep their post_gate flag or the site would present them
+    as pre-gate forecasts."""
+    (tmp_path / "history.json").write_text(
+        json.dumps(
+            {
+                "days": [
+                    {
+                        "day": "2026-07-28",
+                        "mae": 11.7,
+                        "post_gate": True,
+                        "hours": [{"t": "2026-07-28T00:00:00+00:00", "forecast": 1.0, "actual": 2.0}],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    log = _log(days=1, start="2026-08-16")
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+
+    write_site_json(tmp_path, log_path, log["forecast"] - 2.0)
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    recovered, fresh = history["days"]
+    assert recovered["post_gate"] is True
+    assert len(recovered["hours"]) == 1
+    assert "post_gate" not in fresh  # the live day stays unflagged
+
+
+def _run_dir(tmp_path, name, start, days, err=3.0):
+    idx = pd.date_range(start, periods=days * 24, freq="1h", tz="UTC")
+    run = tmp_path / name
+    run.mkdir()
+    forecast = pd.Series(np.linspace(40, 160, len(idx)), index=idx, name="lear_forecast")
+    forecast.to_frame().assign(actual=forecast + err).to_parquet(run / "forecast.parquet")
+    return run
+
+
+def test_backfill_history_fills_curveless_days_from_backtest_runs(tmp_path):
+    """MAE-only and absent days gain a post_gate curve with a consistent
+    recomputed MAE; days that already carry a live curve stay untouched."""
+    live_hours = [
+        {"t": f"2026-08-03T{h:02d}:00:00+00:00", "forecast": 50.0, "actual": 51.0}
+        for h in range(24)
+    ]
+    (tmp_path / "history.json").write_text(
+        json.dumps(
+            {
+                "days": [
+                    {"day": "2026-08-01", "mae": 9.99},  # seeded MAE, curve lost
+                    {"day": "2026-08-03", "mae": 1.0, "hours": live_hours},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    run = _run_dir(tmp_path, "run-a", "2026-08-01", days=2)  # covers 08-01 + 08-02
+
+    filled = backfill_history(tmp_path, [run], "2026-08-01", "2026-08-04")
+
+    assert filled == 2  # 08-01 recovered, 08-02 added; 08-03 live, 08-04 uncovered
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert [(d["day"], d.get("post_gate")) for d in history["days"]] == [
+        ("2026-08-01", True),
+        ("2026-08-02", True),
+        ("2026-08-03", None),
+    ]
+    recovered = history["days"][0]
+    assert recovered["mae"] == 3.0  # recomputed from the curve, seed replaced
+    assert len(recovered["hours"]) == 24
+    assert all(round(h["actual"] - h["forecast"], 2) == 3.0 for h in recovered["hours"])
+    assert history["days"][2]["hours"] == live_hours
 
 
 def test_write_site_json_publishes_the_current_day_as_provisional(tmp_path):

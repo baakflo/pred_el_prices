@@ -275,7 +275,10 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     # Merge with the published history: the log is per-run state, but scored
     # days must survive a log reseed (as on 2026-08-15, which wiped the site
     # scorecard). Freshly scored days win over previously published ones;
-    # days scored before curves were published stay MAE-only.
+    # days scored before curves were published stay MAE-only. Post-gate
+    # reconstructions (backfill_history) exist only in the published file —
+    # their flag must ride along or the site would show them as pre-gate.
+    post_gate: set[str] = set()
     history_path = out_dir / "history.json"
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
@@ -285,12 +288,15 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
                     partial[entry["day"]] = entry["partial"]
                 if "hours" in entry:
                     curves[entry["day"]] = entry["hours"]
+                if entry.get("post_gate"):
+                    post_gate.add(entry["day"])
     history = {
         "days": [
             {
                 "day": d,
                 "mae": m,
                 **({"partial": partial[d]} if d in partial else {}),
+                **({"post_gate": True} if d in post_gate else {}),
                 **({"hours": curves[d]} if d in curves else {}),
             }
             for d, m in sorted(days.items())[-60:]
@@ -300,6 +306,53 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "latest.json").write_text(json.dumps(latest, indent=1), encoding="utf-8")
     (out_dir / "history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
+
+
+def backfill_history(out_dir: Path, run_dirs: list[Path], start: str, end: str) -> int:
+    """Fill curve-less history days from backtest forecasts, flagged post-gate.
+
+    One-off recovery for days the live workflow never forecast, or whose
+    curves were lost to a log reseed (the seeded MAEs themselves came from a
+    backtest run, so scoring the same reconstruction is consistent with the
+    published numbers). Each missing day takes its 24 forecast/actual hours
+    from the first run in `run_dirs` that covers it fully, gets its MAE
+    recomputed from that curve, and is published flagged `post_gate` — these
+    are computed after the auction, not pre-gate forecasts. Days already
+    carrying a curve are left untouched.
+    """
+    history_path = out_dir / "history.json"
+    entries = {e["day"]: e for e in json.loads(history_path.read_text(encoding="utf-8"))["days"]}
+    frames = [pd.read_parquet(d / "forecast.parquet") for d in run_dirs]
+    filled = 0
+    for day in pd.date_range(start, end, tz="UTC"):
+        key = f"{day:%Y-%m-%d}"
+        if "hours" in entries.get(key, {}):
+            continue
+        for frame in frames:
+            rows = frame[frame.index.normalize() == day]
+            if len(rows) == 24 and rows["actual"].notna().all():
+                break
+        else:
+            print(f"{key}: no run covers the day; left as is")
+            continue
+        mae = round(float((rows["lear_forecast"] - rows["actual"]).abs().mean()), 2)
+        old = entries.get(key)
+        if old is not None and old["mae"] != mae:
+            print(f"{key}: published MAE {old['mae']} replaced by recomputed {mae}")
+        entries[key] = {
+            "day": key,
+            "mae": mae,
+            "post_gate": True,
+            "hours": [
+                {"t": t.isoformat(), "forecast": round(float(f), 2), "actual": round(float(a), 2)}
+                for t, f, a in zip(rows.index, rows["lear_forecast"], rows["actual"], strict=True)
+            ],
+        }
+        filled += 1
+    history = {"days": [entries[d] for d in sorted(entries)][-60:]}
+    history_path.write_text(json.dumps(history, indent=1), encoding="utf-8")
+    print(f"backfilled {filled} day(s); history holds {len(history['days'])}")
+    return filled
 
 
 def run_daily(
