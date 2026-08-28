@@ -14,7 +14,16 @@ on:
     # (13:15 CET) and doubles as a summer retry.
     - cron: "15 11 * * *"
     - cron: "15 12 * * *"
+  # External cron services (cron-job.org) dispatch with the slot they mirror,
+  # since GitHub's own schedule events are best-effort and get skipped/drifted.
+  # A dispatch without a slot = generic manual run (fallback allowed, full
+  # budget, not refresh-only) — the pre-existing manual-dispatch behavior.
   workflow_dispatch:
+    inputs:
+      slot:
+        description: "Cron slot this dispatch mirrors (UTC, e.g. 0915)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -27,6 +36,10 @@ jobs:
   forecast:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Slot-dependent behavior keys off SLOT, never github.event.schedule,
+      # so external dispatches and GitHub crons act identically.
+      SLOT: ${{ inputs.slot || (github.event.schedule == '15 9 * * *' && '0915') || (github.event.schedule == '50 9 * * *' && '0950') || (github.event.schedule == '15 11 * * *' && '1115') || (github.event.schedule == '15 12 * * *' && '1215') || '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -58,15 +71,15 @@ jobs:
       - name: Produce forecast
         env:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
-          PEP_ENS_RETRY_BUDGET_S: ${{ github.event.schedule == '50 9 * * *' && '120' || '900' }}
+          PEP_ENS_RETRY_BUDGET_S: ${{ env.SLOT == '0950' && '120' || '900' }}
         run: >
           uv run pep forecast
           --cache-dir archive_repo/site-state/cache
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
           --out archive_repo/site-state/site
-          ${{ github.event.schedule != '15 9 * * *' && '--allow-ens-fallback' || '' }}
-          ${{ (github.event.schedule == '15 11 * * *' || github.event.schedule == '15 12 * * *') && '--refresh-only' || '' }}
+          ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}
+          ${{ (env.SLOT == '1115' || env.SLOT == '1215') && '--refresh-only' || '' }}
 
       # Other workflows (and manual pre-seeds) push to the same repo; a
       # non-fast-forward rejection must merge-and-retry, not drop the state.
