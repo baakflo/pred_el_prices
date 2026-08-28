@@ -101,8 +101,7 @@ every result is reproducible from source instead:
 | Yahoo Finance | TTF gas / coal / EUA daily proxies | **not redistributable** — never committed anywhere; rebuild locally with `pep fetch-fuels` |
 
 The public archive repo carries per-dataset attribution for everything it
-redistributes; commercial benchmark data (energyforecast.de) is collected
-into a private repo and never published.
+redistributes.
 
 ## Layout
 
