@@ -1,7 +1,8 @@
-# Claude conventions (see CLAUDE.md)
+# Local agent tooling and scratch conventions — not project content
 .trash/
 _scratch/
-.claude/settings.local.json
+CLAUDE.md
+.claude/
 
 # Data cache and archives are local-only (Parquet cache, weather archive)
 data/
