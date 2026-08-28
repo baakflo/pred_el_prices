@@ -101,6 +101,35 @@ def test_write_site_json_preserves_history_across_log_reseed(tmp_path):
     assert len(history["days"][1]["hours"]) == 24
 
 
+def test_write_site_json_publishes_the_current_day_as_provisional(tmp_path):
+    """Under UTC delivery blocks the current day's last 1-2 hours clear only
+    in today's auction, so the morning run must publish it flagged as
+    provisional (partial actuals) instead of leaving a hole between
+    yesterday's score and tomorrow's forecast."""
+    log = _log(days=2)  # delivery 2026-08-01 (today) + 2026-08-02 (tomorrow)
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+    # today's last 2 UTC hours belong to tomorrow's local day: unauctioned
+    prices = (log["forecast"] + 4.0).iloc[:22]
+
+    write_site_json(tmp_path, log_path, prices)
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert [(d["day"], d.get("partial")) for d in history["days"]] == [("2026-08-01", 22)]
+    day = history["days"][0]
+    assert day["mae"] == 4.0
+    assert len(day["hours"]) == 24
+    assert sum(h["actual"] is None for h in day["hours"]) == 2
+
+    # the post-auction refresh sees all 24 prices and finalizes the day
+    write_site_json(tmp_path, log_path, log["forecast"].iloc[:24] + 4.0)
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    day = history["days"][0]
+    assert (day["day"], day["mae"]) == ("2026-08-01", 4.0)
+    assert "partial" not in day
+    assert all(h["actual"] is not None for h in day["hours"])
+
+
 def test_write_site_json_flags_post_gate_and_fallback_vintage(tmp_path):
     """A run that missed the gate or used the 12Z weather fallback must say
     so in latest.json instead of repeating the pre-gate/00Z claim."""

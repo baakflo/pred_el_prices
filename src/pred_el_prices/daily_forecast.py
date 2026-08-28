@@ -243,6 +243,18 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     daily = err.groupby(err.index.normalize()).agg(["mean", "count"])
     scored = daily[(daily["count"] == 24) & daily["mean"].notna()]
     days = {f"{day:%Y-%m-%d}": round(float(row["mean"]), 2) for day, row in scored.iterrows()}
+    # UTC delivery blocks end 22-23h local, so a day's last 1-2 hours clear
+    # only in the NEXT day's auction — "today" is stuck at 22/24 scored
+    # hours all morning. Publish it anyway, flagged provisional with its
+    # scored-hour count; the post-auction refresh replaces it with the full
+    # score. The latest delivery day stays out of history: it lives in
+    # latest.json until the next forecast supersedes it.
+    partial: dict[str, int] = {}
+    logged = log.groupby(log.index.normalize()).size()
+    for day, row in daily[(daily["count"] > 0) & (daily["count"] < 24)].iterrows():
+        if day < latest_day and logged.get(day, 0) == 24:
+            days[f"{day:%Y-%m-%d}"] = round(float(row["mean"]), 2)
+            partial[f"{day:%Y-%m-%d}"] = int(row["count"])
     # Scored days keep their full hourly curve so the site can show any past
     # day's forecast against the real prices, not just the MAE number.
     log_actuals = prices.reindex(log.index)
@@ -253,7 +265,11 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
         if len(hrs) != 24:
             continue
         curves[day] = [
-            {"t": t.isoformat(), "forecast": round(float(f), 2), "actual": round(float(a), 2)}
+            {
+                "t": t.isoformat(),
+                "forecast": round(float(f), 2),
+                "actual": None if pd.isna(a) else round(float(a), 2),
+            }
             for t, f, a in zip(hrs.index, hrs["forecast"], log_actuals[mask], strict=True)
         ]
     # Merge with the published history: the log is per-run state, but scored
@@ -265,11 +281,18 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
             if entry["day"] not in days:
                 days[entry["day"]] = entry["mae"]
+                if "partial" in entry:
+                    partial[entry["day"]] = entry["partial"]
                 if "hours" in entry:
                     curves[entry["day"]] = entry["hours"]
     history = {
         "days": [
-            {"day": d, "mae": m, **({"hours": curves[d]} if d in curves else {})}
+            {
+                "day": d,
+                "mae": m,
+                **({"partial": partial[d]} if d in partial else {}),
+                **({"hours": curves[d]} if d in curves else {}),
+            }
             for d, m in sorted(days.items())[-60:]
         ]
     }
