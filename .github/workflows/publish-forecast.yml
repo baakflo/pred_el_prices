@@ -1,23 +1,20 @@
 name: Publish forecast
 
 on:
-  schedule:
-    # Inputs pre-gate: ECMWF ENS 00Z on S3 ~08:00 UTC, ENTSO-E load forecast
-    # by law >= 2 h before gate closure. Gate is 12:00 CET/CEST = 10:00 UTC in
-    # summer, 11:00 in winter — 09:15 with a 09:50 retry is pre-gate year-round.
-    - cron: "15 9 * * *"
-    - cron: "50 9 * * *"
-    # Post-auction refresh slots (--refresh-only, never forecast): results
-    # publish ~12:45 CET/CEST, so refreshing prices then puts the actual
-    # curve next to the morning forecast the same day and scores completed
-    # days. 11:15 UTC covers summer (13:15 CEST); 12:15 UTC covers winter
-    # (13:15 CET) and doubles as a summer retry.
-    - cron: "15 11 * * *"
-    - cron: "15 12 * * *"
-  # External cron services (cron-job.org) dispatch with the slot they mirror,
-  # since GitHub's own schedule events are best-effort and get skipped/drifted.
+  # All timing comes from cron-job.org dispatching with the slot it mirrors
+  # (GitHub's own schedule events are best-effort and were skipped/drifted
+  # for days in late Aug 2026; the duplicate runs also burned the minutes
+  # quota). Slots, daily at UTC times:
+  #   0915/0950 - forecast, pre-gate year-round: inputs are ready (ECMWF ENS
+  #     00Z on S3 ~08:00 UTC, ENTSO-E load forecast by law >= 2 h before
+  #     gate closure) and the gate is 12:00 CET/CEST = 10:00/11:00 UTC.
+  #   1115/1215 - post-auction refresh (--refresh-only, never forecast):
+  #     results publish ~12:45 CET/CEST, so refreshing then puts the actual
+  #     curve next to the morning forecast the same day and scores completed
+  #     days. 11:15 UTC covers summer (13:15 CEST); 12:15 UTC covers winter
+  #     (13:15 CET) and doubles as a summer retry.
   # A dispatch without a slot = generic manual run (fallback allowed, full
-  # budget, not refresh-only) — the pre-existing manual-dispatch behavior.
+  # budget, not refresh-only).
   workflow_dispatch:
     inputs:
       slot:
@@ -37,9 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      # Slot-dependent behavior keys off SLOT, never github.event.schedule,
-      # so external dispatches and GitHub crons act identically.
-      SLOT: ${{ inputs.slot || (github.event.schedule == '15 9 * * *' && '0915') || (github.event.schedule == '50 9 * * *' && '0950') || (github.event.schedule == '15 11 * * *' && '1115') || (github.event.schedule == '15 12 * * *' && '1215') || '' }}
+      SLOT: ${{ inputs.slot }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0

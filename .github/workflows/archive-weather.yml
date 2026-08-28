@@ -1,22 +1,19 @@
 name: Archive weather
 
 on:
-  schedule:
-    # Three best-effort attempts (GitHub cron can be delayed or skipped);
-    # the archiver is idempotent and exits fast once the day's file exists.
-    # 00Z ICON-EU-EPS files are complete on DWD's server by ~05:30 UTC.
-    - cron: "45 5 * * *"
-    - cron: "0 7 * * *"
-    - cron: "0 9 * * *"
-    # Last pre-gate attempt for the ENTSO-E forecast snapshot: gate is
-    # 12:00 CET/CEST = 11:00/10:00 UTC, so 09:45 UTC is pre-gate year-round.
-    - cron: "45 9 * * *"
-    # Evening slot: the TSO wind/solar day-ahead forecast publishes only at
-    # 18:00 CET/CEST (EEV Par. 3) - it never exists pre-gate, so the snapshot
-    # captures the evening vintage. 18:30 CEST = 16:30 UTC (17:30 in winter).
-    - cron: "30 16 * * *"
-  # External cron services (cron-job.org) dispatch with the slot they mirror,
-  # since GitHub's own schedule events are best-effort and get skipped/drifted.
+  # All timing comes from cron-job.org dispatching with the slot it mirrors
+  # (GitHub's own schedule events are best-effort and were skipped/drifted
+  # for days in late Aug 2026; the duplicate runs also burned the minutes
+  # quota). Slots, daily at UTC times:
+  #   0545/0700/0900 - three best-effort attempts; the archiver is
+  #     idempotent and exits fast once the day's file exists. 00Z
+  #     ICON-EU-EPS files are complete on DWD's server by ~05:30 UTC.
+  #   0945 - last pre-gate attempt for the ENTSO-E forecast snapshot: gate
+  #     is 12:00 CET/CEST = 11:00/10:00 UTC, so 09:45 UTC is pre-gate
+  #     year-round. Also takes the _late benchmark snapshot.
+  #   1630 - evening slot: the TSO wind/solar day-ahead forecast publishes
+  #     only at 18:00 CET/CEST (EEV Par. 3) - it never exists pre-gate, so
+  #     the snapshot captures the evening vintage. 18:30 CEST = 16:30 UTC.
   # A dispatch without a slot behaves like a generic manual run (no _late).
   workflow_dispatch:
     inputs:
@@ -38,9 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      # Slot-dependent behavior keys off SLOT, never github.event.schedule,
-      # so external dispatches and GitHub crons act identically.
-      SLOT: ${{ inputs.slot || (github.event.schedule == '45 5 * * *' && '0545') || (github.event.schedule == '0 7 * * *' && '0700') || (github.event.schedule == '0 9 * * *' && '0900') || (github.event.schedule == '45 9 * * *' && '0945') || (github.event.schedule == '30 16 * * *' && '1630') || '' }}
+      SLOT: ${{ inputs.slot }}
     steps:
       - uses: actions/checkout@v7
       # setup-uv publishes no major-version alias tags; pin the full version

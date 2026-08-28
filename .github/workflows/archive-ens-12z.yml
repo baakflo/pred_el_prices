@@ -1,14 +1,14 @@
 name: Archive ENS 12Z fallback
 
 on:
-  schedule:
-    # The 12Z ENS run is on the open-data S3 bucket ~19:30-20:30 UTC. It is
-    # the evening-before fallback vintage for the next morning's forecast
-    # (steps +33h..+60h cover the delivery day): if the morning 00Z download
-    # fails or is late, the publish workflow's retry slot uses this file
-    # instead of missing the day. Two attempts; the archiver is idempotent.
-    - cron: "35 20 * * *"
-    - cron: "35 21 * * *"
+  # Timing comes from cron-job.org (daily 20:35 and 21:35 UTC dispatches;
+  # GitHub's own schedule events are best-effort and were skipped/drifted
+  # for days in late Aug 2026). The 12Z ENS run is on the open-data S3
+  # bucket ~19:30-20:30 UTC. It is the evening-before fallback vintage for
+  # the next morning's forecast (steps +33h..+60h cover the delivery day):
+  # if the morning 00Z download fails or is late, the publish workflow's
+  # retry slot uses this file instead of missing the day. Two attempts;
+  # the archiver is idempotent.
   workflow_dispatch:
 
 permissions:
