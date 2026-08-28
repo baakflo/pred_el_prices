@@ -106,17 +106,12 @@ jobs:
           git clone --depth 1 \
             "https://x-access-token:${{ secrets.WEBSITE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_website.git" \
             website_repo
-          # public/data feeds local builds; dist/data is the LIVE payload —
-          # Cloudflare serves the committed dist/ as-is (no build on push),
-          # so a copy that misses dist/ never reaches the deployed site.
           cp archive_repo/site-state/site/latest.json archive_repo/site-state/site/history.json \
             website_repo/public/data/
-          cp archive_repo/site-state/site/latest.json archive_repo/site-state/site/history.json \
-            website_repo/dist/data/
           cd website_repo
           git config user.name "forecast-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public/data dist/data
+          git add public/data
           if git diff --cached --quiet; then
             echo "site data unchanged"
             exit 0
