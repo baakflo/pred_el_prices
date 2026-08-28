@@ -39,11 +39,16 @@ jobs:
         run: uv sync
 
       # Fails loudly if the 12Z run is not on S3 yet; the later slot retries.
-      - name: Archive today's 12Z ENS run
+      # Target date is now-12h, not today: GitHub can delay the evening
+      # crons past midnight UTC (2026-08-28: fired 04:26, asked for a 12Z
+      # run that wouldn't exist for 15 hours). Any firing between 12:00 UTC
+      # and 11:59 UTC next day maps to the run the slot was scheduled for,
+      # and a morning workflow_dispatch heals yesterday's gap.
+      - name: Archive the 12Z ENS run
         run: >
-          uv run python -c "from datetime import UTC, datetime; from pathlib import Path;
+          uv run python -c "from datetime import UTC, datetime, timedelta; from pathlib import Path;
           from pred_el_prices.pipeline.ecmwf import archive_run;
-          archive_run(datetime.now(UTC).date(), Path('archive_repo'), run_hour=12)"
+          archive_run((datetime.now(UTC) - timedelta(hours=12)).date(), Path('archive_repo'), run_hour=12)"
 
       # Push the fallback vintage IMMEDIATELY after archiving it: on
       # 2026-08-17 both slots archived the 12Z fine, then the healing step
