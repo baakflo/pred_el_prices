@@ -105,6 +105,40 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
+## Status addendum (2026-08-29): registered observation — the missing kink at zero
+
+**The linear model mis-shapes negative prices: frequency roughly right, depth
+and duration wrong.** Checked 2026-08-29 against the seed backtest
+(`lear-de-20260811-074202`, 66,408 h 2019–2026) and the live pre-gate log
+(310 h since 2026-08-16). The model calls *fewer* negative hours than clear
+(3.2% vs 3.7% backtest; 2.3% vs 5.5% live) but its negatives are far too
+deep: median forecast negative **−15.0 €/MWh** (backtest) / **−20.3** (live)
+against actual medians **−2.9** / **−1.2** — 5× / 17× too deep. The market's
+negatives pin just below zero in long shallow spells (live: every actual
+negative hour sat in [−5, −0.4], mean spell 5.7 h); the model either stays
+positive or dives. Sign recall 60% backtest / 41% live at 70% / 100%
+precision — live it has yet to produce a single false negative-hour call,
+it just calls them an order of magnitude too deep.
+
+**Reading: the market has a behavioral floor just under zero that a linear
+response cannot represent.** Must-run units bid small negatives rather than
+cycle off, and §51 EEG cuts the market premium during negative-price
+stretches, so curtailment bids from subsidized RES cluster at small negative
+prices and pin the clearing price there. LEAR extrapolates the
+residual-load→price slope straight through zero, and the Invariant/asinh
+transform is symmetric around the *median* price (far above zero) — no kink
+anywhere. Verified: no code inhibits negative price predictions; the only
+clip in the chain is the own-RES capacity factor (≥ 0, physical).
+
+**Registered implication for phase 2 (written before any nonlinear model is
+built):** a model that can represent the zero regime should (a) lift sign
+recall on negative hours well above 60%/41%, and (b) shrink the depth error
+on jointly-negative hours from 5–17× toward 1×, without giving back MAE on
+positive hours. Cheapest falsification first: a **hinge feature at low
+residual load inside plain LEAR**. If that alone captures most of the
+effect, "this needs a neural net" is overstated and gets recorded as such —
+the same bar every other improvement here has had to clear.
+
 ## Status addendum (2026-08-27): 12Z backfill COMPLETE; open-data access tightened
 
 **12Z vintage archive complete: 890/890 dates (2024-03-19..2026-08-25), QA
