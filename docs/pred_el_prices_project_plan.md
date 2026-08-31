@@ -163,6 +163,21 @@ copy's 3–5%, and E2 comes in at or under the 12Z scale — load's LEAR
 coefficients matter, but less than RES post-2021. The risk case is holiday
 clusters, which is why E1 gets a holiday slice.
 
+**RUN (2026-08-31, laptop, runs load-de-20260831-072618 +
+lear-de-20260831-{073835,075144}): both endpoints decided, middle band.**
+E1: surrogate nMAE **2.58%** vs D−7 copy 3.56% (16,653 h / 694 days); on the
+holiday-touched slice **3.79% vs 7.63%** — the copy's error doubles on
+exactly the days the tree was built for. Tree beats copy → copy refuted as
+the shipping method. E2 (arm A reran locally at rMAE 0.409, matching the
+pod reference exactly): surrogate-load arm rMAE **0.418** — cost
+**+0.0090 rMAE / +0.31 EUR/MWh**, concentrated in Q4-2024 (+1.0 MAE);
+2025 barely notices (+0.09). The advance guess ("at or under the 12Z
+scale") was too optimistic by ~2× — recorded as such. Per the
+pre-committed wiring rule, +0.005 < 0.0090 ≤ +0.015 → **the surrogate
+ships as an automatic fallback that publishes with its own flag and stays
+OUT of the headline 30-day mean** (post-gate-style exclusion, unlike the
+counted 12Z weather days). Production wiring is the follow-up step.
+
 ## Status addendum (2026-08-29): registered observation — the missing kink at zero
 
 **The linear model mis-shapes negative prices: frequency roughly right, depth
