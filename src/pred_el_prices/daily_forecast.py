@@ -440,6 +440,38 @@ def backfill_history(out_dir: Path, run_dirs: list[Path], start: str, end: str) 
     return filled
 
 
+def site_prices(cache_dir: Path) -> pd.Series:
+    """Auction clearing prices for scoring and calibration.
+
+    ENTSO-E is the primary source; SMARD (the Bundesnetzagentur outlet for
+    the same EPEX auction results, keyless) fills whatever hours the
+    platform has not delivered — during the 2026-08-30+ outage it was the
+    only reachable publisher. Where both have a value, ENTSO-E wins.
+    """
+    entsoe = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))[
+        "price_eur_mwh"
+    ].dropna()
+    smard = cache.load(cache_dir, "smard_day_ahead_prices")
+    if smard.empty or "price_eur_mwh" not in smard.columns:
+        return entsoe
+    merged = entsoe.combine_first(smard["price_eur_mwh"].dropna())
+    if len(merged) > len(entsoe):
+        print(f"INFO: {len(merged) - len(entsoe)} price hours filled from SMARD")
+    return merged
+
+
+def _refresh_smard_prices(cache_dir: Path, end: pd.Timestamp) -> None:
+    """Best-effort SMARD price update (resumes from the cache tail)."""
+    import requests
+
+    from pred_el_prices.pipeline.smard import update_cache as update_smard_cache
+
+    try:
+        update_smard_cache(cache_dir, "smard_day_ahead_prices", pd.Timestamp("2015-01-01", tz="UTC"), end)
+    except requests.RequestException as e:
+        print(f"WARN: SMARD price refresh failed ({e})")
+
+
 def run_daily(
     cache_dir: Path,
     archive_dir: Path,
@@ -481,6 +513,7 @@ def run_daily(
         # and scores newly completed days. Never forecasts — a "forecast"
         # generated after the results are public would be worthless even
         # flagged, so a missed morning run stays an honest gap.
+        end = delivery + pd.Timedelta(days=1)
         if not log_path.exists():
             print("refresh-only: no forecast log; nothing to refresh")
             return None
@@ -500,13 +533,13 @@ def run_daily(
                     client,
                     ["day_ahead_prices"],
                     pd.Timestamp("2015-01-01", tz="UTC"),
-                    delivery + pd.Timedelta(days=1),
+                    end,
                     cache_dir,
                 )
             except requests.RequestException as e:
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
-        prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
-        write_site_json(out_dir, log_path, prices)
+            _refresh_smard_prices(cache_dir, end)
+        write_site_json(out_dir, log_path, site_prices(cache_dir))
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
 
@@ -534,6 +567,7 @@ def run_daily(
             )
         except requests.RequestException as e:
             print(f"WARN: ENTSO-E refresh failed ({e}); proceeding on cached data")
+        _refresh_smard_prices(cache_dir, delivery + pd.Timedelta(days=1))
         update_cache(cache_dir)
         # Best-effort: a failure must not kill the run — the 12Z fallback
         # may cover the day. Gap healing of older 00Z runs happens in the
@@ -545,7 +579,7 @@ def run_daily(
 
     features = update_features(features_path, archive_dir, run_date, allow_ens_fallback)
     dataset, _ = build_dataset(cache_dir)
-    prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
+    prices = site_prices(cache_dir)
 
     if log_path.exists():
         logged = pd.read_parquet(log_path)

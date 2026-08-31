@@ -9,9 +9,38 @@ from pred_el_prices.daily_forecast import (
     backfill_history,
     lear_forecast,
     run_daily,
+    site_prices,
     write_site_json,
 )
 from pred_el_prices.pipeline import cache
+
+
+def test_site_prices_patch_from_smard_where_entsoe_is_dark(tmp_path):
+    """Platform outage: SMARD carries the same clearing prices. ENTSO-E wins
+    on overlap; SMARD only fills the hours ENTSO-E never delivered."""
+    e_idx = pd.date_range("2026-08-29", periods=48, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "entsoe/day_ahead_prices", pd.DataFrame({"price_eur_mwh": 50.0}, index=e_idx)
+    )
+    # SMARD overlaps the last ENTSO-E day (with a divergent value that must
+    # lose) and extends one day past it
+    s_idx = pd.date_range("2026-08-30", periods=48, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "smard_day_ahead_prices", pd.DataFrame({"price_eur_mwh": 60.0}, index=s_idx)
+    )
+
+    prices = site_prices(tmp_path)
+    assert len(prices) == 72
+    assert (prices.loc["2026-08-30"] == 50.0).all()
+    assert (prices.loc["2026-08-31"] == 60.0).all()
+
+
+def test_site_prices_without_a_smard_cache(tmp_path):
+    e_idx = pd.date_range("2026-08-29", periods=24, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "entsoe/day_ahead_prices", pd.DataFrame({"price_eur_mwh": 50.0}, index=e_idx)
+    )
+    assert len(site_prices(tmp_path)) == 24
 
 
 def test_lear_forecast_heals_the_local_day_boundary():
