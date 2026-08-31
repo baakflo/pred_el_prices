@@ -342,7 +342,10 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     # Fallback provenance per day, from the standing (deduped) log rows: a
     # day whose standing forecast was the evening edition or surrogate-built
     # is flagged so the site can exclude it from the headline mean (middle
-    # band of the load-de wiring rule, plan addendum 2026-08-31).
+    # band of the load-de wiring rule, plan addendum 2026-08-31). A day
+    # generated past its own gate self-flags post_gate — recovery runs after
+    # an outage must not pass as pre-gate days in history.
+    post_gate: set[str] = set()
     day_flags: dict[str, dict] = {}
     for day, rows in log.groupby(log.index.normalize()):
         flags = {
@@ -351,8 +354,9 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
         }
         if flags:
             day_flags[f"{day:%Y-%m-%d}"] = flags
-
-    post_gate: set[str] = set()
+        day_gate = pd.Timestamp(f"{day - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
+        if pd.Timestamp(rows["generated_utc"].iloc[0]) > day_gate:
+            post_gate.add(f"{day:%Y-%m-%d}")
     history_path = out_dir / "history.json"
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:

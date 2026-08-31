@@ -322,6 +322,26 @@ def test_write_site_json_flags_the_standing_evening_day_in_history(tmp_path):
     assert kept["evening"] is True and kept["load_surrogate"] is True
 
 
+def test_write_site_json_flags_post_gate_days_in_history(tmp_path):
+    """A recovery run generated past its own gate must carry post_gate into
+    history (not just latest.json) so the site holds it out of the mean."""
+    # gate for delivery 2026-08-01 is 2026-07-31 10:00 UTC; generated 12:30
+    log = _log(days=1, generated="2026-07-31T12:30:00+00:00")
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+
+    write_site_json(tmp_path, log_path, log["forecast"] - 2.0)
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert history["days"][0]["post_gate"] is True
+    # a pre-gate day stays unflagged
+    log2 = _log(days=1, generated="2026-07-31T09:00:00+00:00")
+    log2.to_parquet(log_path)
+    write_site_json(tmp_path, log_path, log2["forecast"] - 2.0)
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert "post_gate" not in history["days"][0]
+
+
 def test_run_daily_refresh_only_fills_actuals_without_forecasting(tmp_path):
     """The post-auction slot rewrites the site JSON from fresh prices but
     must never generate a forecast, even when today's run is missing."""
