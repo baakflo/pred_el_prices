@@ -85,10 +85,11 @@ def run(
         # renamed to the standard names; aggregate for the academic config
         own = pd.read_parquet(predict_exog_path)
         predict_exog = own.rename(columns=lambda c: c.removeprefix("own_"))
-        if "res_forecast_mw" not in predict_exog.columns:
-            predict_exog["res_forecast_mw"] = predict_exog[
-                ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
-            ].sum(axis=1)
+        res_parts = ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
+        if "res_forecast_mw" not in predict_exog.columns and all(
+            c in predict_exog.columns for c in res_parts
+        ):
+            predict_exog["res_forecast_mw"] = predict_exog[res_parts].sum(axis=1)
 
     pred = rolling_forecast(
         df,
