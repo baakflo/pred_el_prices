@@ -178,6 +178,21 @@ ships as an automatic fallback that publishes with its own flag and stays
 OUT of the headline 30-day mean** (post-gate-style exclusion, unlike the
 counted 12Z weather days). Production wiring is the follow-up step.
 
+**Ship decision (2026-08-31, same day, supersedes the plain-fallback
+wiring): the surrogate enables the evening vintage** — the parked
+first-post-launch experiment becomes the shipping shape. Flow: on D−2
+evening, once the 12Z ENS vintage is archived (~20:35 UTC), publish a
+first forecast for delivery day D from 12Z weather + surrogate load (the
+TSO load forecast for D does not exist yet in the evening — the surrogate
+is the enabler). The normal D−1 morning run then replaces it pre-gate:
+true TSO load + 00Z weather when ENTSO-E delivers, surrogate load + 00Z
+weather when it does not. The evening forecast carries its own flag; a day
+whose *standing* forecast is evening-vintage or surrogate-built stays out
+of the headline mean; a day replaced by a true-data morning run is a
+normal day. Registered arm C (before running): **12Z weather + surrogate
+load — the exact evening product.** Guess in advance: costs are roughly
+additive, ≈ rMAE 0.421–0.423 against the 0.409 true/true anchor.
+
 ## Status addendum (2026-08-29): registered observation — the missing kink at zero
 
 **The linear model mis-shapes negative prices: frequency roughly right, depth
