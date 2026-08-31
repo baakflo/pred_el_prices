@@ -485,19 +485,26 @@ def run_daily(
             print("refresh-only: no forecast log; nothing to refresh")
             return None
         if not skip_fetch:
+            import requests
             from entsoe import EntsoePandasClient
 
             from pred_el_prices.config import entsoe_api_key
             from pred_el_prices.pipeline.entsoe import backfill
 
             client = EntsoePandasClient(api_key=entsoe_api_key())
-            backfill(
-                client,
-                ["day_ahead_prices"],
-                pd.Timestamp("2015-01-01", tz="UTC"),
-                delivery + pd.Timedelta(days=1),
-                cache_dir,
-            )
+            # Best-effort like the forecast path: during a platform outage
+            # there are no new prices to fetch, so rewriting the site JSON
+            # from cache is the correct (idempotent) outcome, not a failure.
+            try:
+                backfill(
+                    client,
+                    ["day_ahead_prices"],
+                    pd.Timestamp("2015-01-01", tz="UTC"),
+                    delivery + pd.Timedelta(days=1),
+                    cache_dir,
+                )
+            except requests.RequestException as e:
+                print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
         prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
         write_site_json(out_dir, log_path, prices)
         print("refresh-only: site JSON rewritten with current prices")
@@ -525,7 +532,7 @@ def run_daily(
                 delivery + pd.Timedelta(days=1),
                 cache_dir,
             )
-        except Exception as e:
+        except requests.RequestException as e:
             print(f"WARN: ENTSO-E refresh failed ({e}); proceeding on cached data")
         update_cache(cache_dir)
         # Best-effort: a failure must not kill the run — the 12Z fallback
