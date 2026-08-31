@@ -105,6 +105,64 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
+## Status addendum (2026-08-31): ENTSO-E outage; load-surrogate registered
+
+**Production incident (2026-08-30/31): the ENTSO-E Transparency Platform went
+down and took the daily forecast with it.** The TSO day-ahead load forecast
+for delivery 2026-08-31 never appeared pre-gate anywhere (SMARD had nothing
+either — a source-data stall, not just the platform); by 08-31 morning the
+whole platform (web + API) returned 503. Delivery 08-31 is the first missed
+day since going live. All other inputs survived: weather (ECMWF/DWD chain),
+capacity (energy-charts), price history (cached), and every archive dataset
+kept landing. Precedent says this can last: the platform's December 2025
+crash ran **seven days**. Conclusion: the TSO load forecast is the daily
+forecast's only hard delivery-time dependency on ENTSO-E — so it gets a
+fallback, priced the same way the 12Z weather fallback was priced.
+
+### Registered experiment (2026-08-31): load-forecast surrogate (`load-de`)
+
+**Hypothesis: a small tree model on weather + calendar imitates the TSO
+day-ahead load forecast well enough that losing the ENTSO-E feed costs the
+price forecast about as little as the 12Z weather fallback (+0.004 rMAE /
++0.14 EUR/MWh).**
+
+Design (mirrors `res-de`): HistGradientBoosting, expanding window with
+monthly refits, every month predicted by a model trained strictly on earlier
+data. **Target is the TSO day-ahead load forecast, not actual load** — LEAR's
+weights were calibrated against that series including its biases, so the
+surrogate imitates the missing *input*, not the physical quantity. Features:
+the D−7 load forecast at the same hour (the naive copy, demoted from method
+to feature — HGB tolerates it going NaN in a long outage), ENS temperature
+and radiation ensemble stats from `ens_features.parquet` (t2m nat/south,
+ssrd nat/east/west/south; the ECMWF chain is independent of ENTSO-E and
+stayed up through this outage), hour, weekday, day-of-year, and
+`holiday_share` for D−1/D/D+1 — population-weighted share of Germany on
+public holiday (computus + fixed dates + regional dict; deterministic,
+offline, no calendar service to fail). Span: 6-variable ENS era, first fit
+2024-10-01 (the `res-de` v2 protocol).
+
+Endpoints, decision rule pre-committed:
+
+1. **Surrogate level (E1)**: OOS MAE/nMAE vs the D−7 copy baseline, overall
+   and on the holiday-affected slice (`holiday_share > 0` on D−1/D/D+1).
+   The tree must beat the copy overall — else the copy ships and the tree is
+   recorded as refuted.
+2. **Price level (E2)**: `lear-de` academic, window 364, test 2024-10-01..,
+   production-mode arms — (A) own-RES 00Z + true load forecast (the
+   2026-08-27 00Z swap arm, reference rMAE 0.409, rerun on the identical
+   span) vs (B) own-RES 00Z + surrogate load. The delta is the cost of
+   losing the ENTSO-E load feed entirely.
+3. **Wiring rule**: E2 cost ≤ +0.005 rMAE → the surrogate becomes a flagged
+   automatic fallback that still counts in the public scorecard (like 12Z
+   weather days: badge + measured-cost note). +0.005 to +0.015 → fallback
+   publishes but is excluded from the headline mean (like post-gate days).
+   Above +0.015 → no auto-publish; a missed day stays a missed day.
+
+Guess, written in advance: the tree lands near 1.5–2.5% nMAE against the
+copy's 3–5%, and E2 comes in at or under the 12Z scale — load's LEAR
+coefficients matter, but less than RES post-2021. The risk case is holiday
+clusters, which is why E1 gets a holiday slice.
+
 ## Status addendum (2026-08-29): registered observation — the missing kink at zero
 
 **The linear model mis-shapes negative prices: frequency roughly right, depth
