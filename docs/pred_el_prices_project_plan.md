@@ -193,6 +193,13 @@ normal day. Registered arm C (before running): **12Z weather + surrogate
 load — the exact evening product.** Guess in advance: costs are roughly
 additive, ≈ rMAE 0.421–0.423 against the 0.409 true/true anchor.
 
+**Arm C RUN (2026-08-31, lear-de-20260831-082242): rMAE 0.421 / MAE 15.02
+— +0.012 rMAE / +0.43 EUR/MWh vs the true/true anchor. The additive guess
+hit exactly. Middle band confirmed for the full evening product → ships as
+designed: published D−2 evening with its own flag, replaced pre-gate the
+next morning, excluded from the headline mean whenever it is the standing
+forecast.**
+
 ## Status addendum (2026-08-29): registered observation — the missing kink at zero
 
 **The linear model mis-shapes negative prices: frequency roughly right, depth
