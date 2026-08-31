@@ -49,6 +49,15 @@ NOTE_RES = {
         "cost: ~+0.1 EUR/MWh MAE)."
     ),
 }
+NOTE_LOAD_SURROGATE = (
+    "Load input is a surrogate model (weather + calendar + last week's load) — "
+    "the ENTSO-E load forecast was unavailable (measured cost: ~+0.3 EUR/MWh MAE)."
+)
+NOTE_EVENING = (
+    "Evening edition, built the night before from the ECMWF ENS 12Z run and a "
+    "load surrogate (measured cost: ~+0.4 EUR/MWh MAE vs the regular morning "
+    "forecast, which replaces this one when its inputs publish)."
+)
 RES_TARGETS = {
     "wind_onshore_forecast_mw": "wind_onshore_capacity_mw",
     "wind_offshore_forecast_mw": "wind_offshore_capacity_mw",
@@ -137,6 +146,44 @@ def own_res_forecast(
     return total
 
 
+def load_surrogate_forecast(
+    features: pd.DataFrame, cache_dir: Path, delivery: pd.Timestamp
+) -> pd.Series:
+    """Surrogate for the TSO day-ahead load forecast (registered `load-de`).
+
+    Imitates the missing *input* series, not physical load — LEAR's weights
+    were calibrated against the TSO forecast including its biases. Trained on
+    all cached history before `delivery`; inputs all survive an ENTSO-E
+    outage: ENS weather stats, calendar + holiday shares, and the D−7 load
+    forecast (which HGB tolerates going NaN in a long outage). Measured cost
+    at the price level: +0.31 EUR/MWh MAE (plan addendum 2026-08-31).
+    """
+    from pred_el_prices.features.holidays import holiday_share
+
+    load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
+    delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
+    lag_w = load_fc.copy()
+    lag_w.index = lag_w.index + pd.Timedelta(days=7)
+    weather = [c for c in features.columns if c.startswith(("t2m_", "ssrd_"))]
+
+    def design(idx: pd.DatetimeIndex) -> pd.DataFrame:
+        x = features.loc[idx, weather].copy()
+        x["load_d7"] = lag_w.reindex(idx)
+        x["hour"] = idx.hour
+        x["weekday"] = idx.dayofweek
+        x["doy"] = idx.dayofyear
+        for off in (-1, 0, 1):
+            x[f"holiday_{off:+d}"] = holiday_share(idx, off)
+        return x
+
+    train_index = features.index.intersection(load_fc.dropna().index)
+    train_index = train_index[train_index < delivery]
+    model = HistGradientBoostingRegressor(random_state=0)
+    model.fit(design(train_index), load_fc.reindex(train_index))
+    pred = model.predict(design(delivery_hours)).clip(min=0.0)
+    return pd.Series(pred, index=delivery_hours)
+
+
 def lear_forecast(
     dataset: pd.DataFrame,
     delivery: pd.Timestamp,
@@ -209,9 +256,15 @@ def lear_forecast(
 def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     """Derive latest.json and history.json from the forecast log + known prices."""
     log = pd.read_parquet(log_path)
+    # An evening edition is replaced by the next morning's run: both row sets
+    # stay in the append-only log, the LAST appended row per hour stands.
+    log = log[~log.index.duplicated(keep="last")].sort_index()
     latest_day = log.index.normalize().max()
     hours = log.loc[log.index.normalize() == latest_day]
     actuals = prices.reindex(hours.index)
+
+    def flag(rows: pd.DataFrame, col: str) -> bool:
+        return bool(rows.get(col, pd.Series(False, index=rows.index)).fillna(False).any())
 
     # Honesty flags derived per run, not hardcoded: which weather vintage fed
     # the RES forecast, and whether generation actually beat the auction gate
@@ -222,13 +275,21 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
         vintage = "00Z"
     gate = pd.Timestamp(f"{latest_day - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
     pre_gate = pd.Timestamp(hours["generated_utc"].iloc[0]) <= gate
+    is_evening = flag(hours, "evening")
+    is_surrogate = flag(hours, "load_surrogate")
+    note = f"{NOTE_GATE_OK if pre_gate else NOTE_GATE_MISSED} "
+    note += NOTE_EVENING if is_evening else NOTE_RES[vintage]
+    if is_surrogate and not is_evening:
+        note += f" {NOTE_LOAD_SURROGATE}"
     latest = {
         "generated_utc": hours["generated_utc"].iloc[0],
         "delivery_day": f"{latest_day:%Y-%m-%d}",
         "model": MODEL_LABEL,
         "pre_gate": bool(pre_gate),
         "weather_vintage": vintage,
-        "note": f"{NOTE_GATE_OK if pre_gate else NOTE_GATE_MISSED} {NOTE_RES[vintage]}",
+        **({"evening": True} if is_evening else {}),
+        **({"load_surrogate": True} if is_surrogate else {}),
+        "note": note,
         "hours": [
             {
                 "t": t.isoformat(),
@@ -278,6 +339,19 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
     # days scored before curves were published stay MAE-only. Post-gate
     # reconstructions (backfill_history) exist only in the published file —
     # their flag must ride along or the site would show them as pre-gate.
+    # Fallback provenance per day, from the standing (deduped) log rows: a
+    # day whose standing forecast was the evening edition or surrogate-built
+    # is flagged so the site can exclude it from the headline mean (middle
+    # band of the load-de wiring rule, plan addendum 2026-08-31).
+    day_flags: dict[str, dict] = {}
+    for day, rows in log.groupby(log.index.normalize()):
+        flags = {
+            **({"evening": True} if flag(rows, "evening") else {}),
+            **({"load_surrogate": True} if flag(rows, "load_surrogate") else {}),
+        }
+        if flags:
+            day_flags[f"{day:%Y-%m-%d}"] = flags
+
     post_gate: set[str] = set()
     history_path = out_dir / "history.json"
     if history_path.exists():
@@ -290,6 +364,12 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
                     curves[entry["day"]] = entry["hours"]
                 if entry.get("post_gate"):
                     post_gate.add(entry["day"])
+                merged = {
+                    **({"evening": True} if entry.get("evening") else {}),
+                    **({"load_surrogate": True} if entry.get("load_surrogate") else {}),
+                }
+                if merged:
+                    day_flags[entry["day"]] = merged
     history = {
         "days": [
             {
@@ -297,6 +377,7 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
                 "mae": m,
                 **({"partial": partial[d]} if d in partial else {}),
                 **({"post_gate": True} if d in post_gate else {}),
+                **day_flags.get(d, {}),
                 **({"hours": curves[d]} if d in curves else {}),
             }
             for d, m in sorted(days.items())[-60:]
@@ -364,13 +445,28 @@ def run_daily(
     skip_fetch: bool = False,
     allow_ens_fallback: bool = False,
     refresh_only: bool = False,
+    evening: bool = False,
+    allow_load_surrogate: bool = False,
 ) -> Path | None:
-    """Produce and publish the forecast for the next UTC day. Idempotent per day."""
+    """Produce and publish the forecast for the next UTC day. Idempotent per day.
+
+    `evening` is the evening edition (plan addendum 2026-08-31): runs the
+    night before the normal slot, targets the day AFTER tomorrow, builds on
+    the just-archived 12Z ENS run plus the load surrogate (the TSO load
+    forecast for that day does not exist yet), and is replaced by the next
+    morning's regular run. `allow_load_surrogate` lets a morning retry slot
+    publish with the surrogate when ENTSO-E has no load forecast (measured
+    cost ~+0.3 EUR/MWh); the first slot stays strict so real data gets its
+    chance to arrive.
+    """
     now = datetime.now(UTC)
+    if evening:
+        allow_ens_fallback = True  # the 12Z vintage IS the evening's weather
+        allow_load_surrogate = True
     delivery = (
         pd.Timestamp(delivery_day, tz="UTC")
         if delivery_day
-        else pd.Timestamp(now.date() + timedelta(days=1), tz="UTC")
+        else pd.Timestamp(now.date() + timedelta(days=2 if evening else 1), tz="UTC")
     )
     run_date = (delivery - pd.Timedelta(days=1)).date()
     log_path = out_dir / "forecast_log.parquet"
@@ -413,13 +509,20 @@ def run_daily(
         from pred_el_prices.pipeline.entsoe import backfill
 
         client = EntsoePandasClient(api_key=entsoe_api_key())
-        backfill(
-            client,
-            ["day_ahead_prices", "load_forecast", "wind_solar_forecast"],
-            pd.Timestamp("2015-01-01", tz="UTC"),
-            delivery + pd.Timedelta(days=1),
-            cache_dir,
-        )
+        # Best-effort: during a platform outage (2026-08-30/31: full 503 for
+        # days) the fetch must not kill the run — the caches carry enough
+        # history to forecast, and whatever is genuinely missing fails its
+        # own specific check further down instead of dying here.
+        try:
+            backfill(
+                client,
+                ["day_ahead_prices", "load_forecast", "wind_solar_forecast"],
+                pd.Timestamp("2015-01-01", tz="UTC"),
+                delivery + pd.Timedelta(days=1),
+                cache_dir,
+            )
+        except Exception as e:
+            print(f"WARN: ENTSO-E refresh failed ({e}); proceeding on cached data")
         update_cache(cache_dir)
         # Best-effort: a failure must not kill the run — the 12Z fallback
         # may cover the day. Gap healing of older 00Z runs happens in the
@@ -433,26 +536,71 @@ def run_daily(
     dataset, _ = build_dataset(cache_dir)
     prices = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))["price_eur_mwh"]
 
-    if log_path.exists() and (pd.read_parquet(log_path).index.normalize() == delivery).any():
-        print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
-        write_site_json(out_dir, log_path, prices)
-        return None
+    if log_path.exists():
+        logged = pd.read_parquet(log_path)
+        day_rows = logged[logged.index.normalize() == delivery]
+        if len(day_rows):
+            # Evening rows are a preview: a morning run replaces them (the
+            # log stays append-only — scoring keeps the last row per hour).
+            ev = day_rows.get("evening", pd.Series(False, index=day_rows.index)).fillna(False)
+            if evening or (~ev).any():
+                print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
+                write_site_json(out_dir, log_path, prices)
+                return None
+            print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
     load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
     load_d = load_fc.reindex(delivery_hours)
     missing = load_d.isna()
+    load_surrogate = False
     if missing.sum() > 4:
-        raise RuntimeError(
-            f"ENTSO-E load forecast for {delivery:%Y-%m-%d} not yet published; retry later"
-        )
-    if missing.any():
+        if not allow_load_surrogate:
+            raise RuntimeError(
+                f"ENTSO-E load forecast for {delivery:%Y-%m-%d} not yet published; retry later"
+            )
+        load_d = load_surrogate_forecast(features, cache_dir, delivery)
+        load_surrogate = True
+        print(f"load input: surrogate model (TSO forecast for {delivery:%Y-%m-%d} unavailable)")
+    elif missing.any():
         # ENTSO-E publishes local (CET/CEST) days: the last 1-2 hours of the
         # UTC delivery block belong to the next local day and do not exist
         # pre-gate. Fill from 24 h earlier (published, flat night load).
         lagged = load_fc.reindex(delivery_hours - pd.Timedelta(days=1))
         load_d = load_d.fillna(pd.Series(lagged.to_numpy(), index=delivery_hours))
         print(f"filled {int(missing.sum())} boundary hour(s) of load forecast from 24h-lag")
+
+    # Multi-day outage: ENTSO-E gaps in the trailing days would starve LEAR's
+    # calibration lags (exog at d, d-1, d-7) even though prices kept flowing
+    # through the refresh slots. Fill up to 7 such days with the same
+    # pre-gate substitutes the delivery day uses — the surrogate load and the
+    # own-RES forecast (written into the onshore column; LEAR's academic
+    # config only ever reads the three RES columns summed).
+    if allow_load_surrogate:
+        res_cols = list(RES_TARGETS)
+        for day in pd.date_range(delivery - pd.Timedelta(days=7), delivery - pd.Timedelta(days=1)):
+            hrs = pd.date_range(day, periods=24, freq="1h", tz="UTC")
+            sub = dataset.reindex(hrs)
+            # a day's last 1-2 price hours clear only the NEXT day (local-day
+            # boundary) — lear_forecast heals those; demand the rest
+            if sub["price_eur_mwh"].notna().sum() < 20:
+                continue
+            # the boundary hours may be absent as rows entirely (the price
+            # series defines the index) — they must exist to take fill values
+            dataset = dataset.reindex(dataset.index.union(hrs))
+            sub = dataset.loc[hrs]
+            if not hrs.isin(features.index).all():
+                continue
+            if sub["load_forecast_mw"].isna().any():
+                dataset.loc[hrs, "load_forecast_mw"] = load_surrogate_forecast(
+                    features, cache_dir, day
+                ).to_numpy()
+                print(f"calibration gap {day:%Y-%m-%d}: load forecast filled by surrogate")
+            if sub[res_cols].isna().any().any():
+                total = own_res_forecast(features, dataset, cache_dir, day)
+                dataset.loc[hrs, res_cols[0]] = total.to_numpy()
+                dataset.loc[hrs, res_cols[1:]] = 0.0
+                print(f"calibration gap {day:%Y-%m-%d}: RES forecast filled by own-RES")
 
     own_res = own_res_forecast(features, dataset, cache_dir, delivery)
     forecast = lear_forecast(dataset, delivery, load_d, own_res)
@@ -461,6 +609,8 @@ def run_daily(
     entry = forecast.to_frame()
     entry["generated_utc"] = now.isoformat(timespec="seconds")
     entry["weather_vintage"] = "00Z" if (day_runs == run_date).all() else "12Z"
+    entry["evening"] = evening
+    entry["load_surrogate"] = load_surrogate
     if log_path.exists():
         entry = pd.concat([pd.read_parquet(log_path), entry])
     out_dir.mkdir(parents=True, exist_ok=True)

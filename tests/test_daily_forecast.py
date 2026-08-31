@@ -245,6 +245,83 @@ def test_write_site_json_fills_actuals_once_known(tmp_path):
     assert len(history["days"][0]["hours"]) == 24
 
 
+def test_write_site_json_evening_edition_carries_its_own_flags(tmp_path):
+    """The evening edition (12Z + load surrogate, generated the night before)
+    is pre-gate but must be flagged as its own vintage, not pass as the
+    regular morning forecast."""
+    # delivery 2026-08-02; generated 2026-07-31 21:40 UTC — evening of D-2
+    log = _log(days=1, start="2026-08-02", generated="2026-07-31T21:40:00+00:00")
+    log["weather_vintage"] = "12Z"
+    log["evening"] = True
+    log["load_surrogate"] = True
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+
+    write_site_json(tmp_path, log_path, log["forecast"].iloc[:0])
+
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert latest["pre_gate"] is True
+    assert latest["evening"] is True
+    assert latest["load_surrogate"] is True
+    assert "Evening edition" in latest["note"]
+
+
+def test_morning_run_replaces_the_evening_edition(tmp_path):
+    """Evening and morning rows for the same delivery day coexist in the
+    append-only log; the morning rows (appended last) are the standing
+    forecast — site JSON and day flags follow them."""
+    evening = _log(days=1, start="2026-08-02", generated="2026-07-31T21:40:00+00:00")
+    evening["forecast"] = 99.0
+    evening["weather_vintage"] = "12Z"
+    evening["evening"] = True
+    evening["load_surrogate"] = True
+    morning = _log(days=1, start="2026-08-02", generated="2026-08-01T09:20:00+00:00")
+    morning["weather_vintage"] = "00Z"
+    morning["evening"] = False
+    morning["load_surrogate"] = False
+    log_path = tmp_path / "forecast_log.parquet"
+    pd.concat([evening, morning]).to_parquet(log_path)
+    prices = morning["forecast"] + 3.0
+
+    write_site_json(tmp_path, log_path, prices)
+
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert "evening" not in latest and "load_surrogate" not in latest
+    assert latest["generated_utc"] == "2026-08-01T09:20:00+00:00"
+    assert latest["weather_vintage"] == "00Z"
+    # the standing forecast is the morning one, scored against its values
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert [(d["day"], d["mae"]) for d in history["days"]] == [("2026-08-02", 3.0)]
+    assert "evening" not in history["days"][0]
+
+
+def test_write_site_json_flags_the_standing_evening_day_in_history(tmp_path):
+    """A scored day whose standing forecast stayed the evening edition (the
+    morning never replaced it) carries the flags into history so the site
+    can hold it out of the headline mean."""
+    log = _log(days=1, start="2026-08-02", generated="2026-07-31T21:40:00+00:00")
+    log["evening"] = True
+    log["load_surrogate"] = True
+    log_path = tmp_path / "forecast_log.parquet"
+    log.to_parquet(log_path)
+
+    write_site_json(tmp_path, log_path, log["forecast"] - 1.0)
+
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    day = history["days"][0]
+    assert (day["day"], day["mae"]) == ("2026-08-02", 1.0)
+    assert day["evening"] is True
+    assert day["load_surrogate"] is True
+
+    # and a log reseed must not strip the published flags
+    reseed = _log(days=1, start="2026-08-20")
+    reseed.to_parquet(log_path)
+    write_site_json(tmp_path, log_path, reseed["forecast"] - 2.0)
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    kept = next(d for d in history["days"] if d["day"] == "2026-08-02")
+    assert kept["evening"] is True and kept["load_surrogate"] is True
+
+
 def test_run_daily_refresh_only_fills_actuals_without_forecasting(tmp_path):
     """The post-auction slot rewrites the site JSON from fresh prices but
     must never generate a forecast, even when today's run is missing."""

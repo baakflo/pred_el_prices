@@ -149,6 +149,18 @@ def main() -> None:
         help="Refresh prices and rewrite the site JSON (fill actuals, score "
         "completed days) without ever generating a forecast; for post-auction slots",
     )
+    fc.add_argument(
+        "--evening",
+        action="store_true",
+        help="Evening edition: target the day AFTER tomorrow using the 12Z ENS "
+        "run + load surrogate; replaced by the next morning's regular run",
+    )
+    fc.add_argument(
+        "--allow-load-surrogate",
+        action="store_true",
+        help="If ENTSO-E has no load forecast for the delivery day, publish with "
+        "the surrogate model instead of failing (flagged; for retry slots)",
+    )
 
     bf = sub.add_parser(
         "backfill-history",
@@ -262,6 +274,8 @@ def main() -> None:
             skip_fetch=args.skip_fetch,
             allow_ens_fallback=args.allow_ens_fallback,
             refresh_only=args.refresh_only,
+            evening=args.evening,
+            allow_load_surrogate=args.allow_load_surrogate,
         )
     elif args.command == "backfill-history":
         from pred_el_prices.daily_forecast import backfill_history
