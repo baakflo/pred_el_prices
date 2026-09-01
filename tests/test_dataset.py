@@ -47,6 +47,23 @@ def synthetic_cache(tmp_path):
     return tmp_path
 
 
+def test_smard_extends_the_price_target_when_entsoe_goes_dark(synthetic_cache):
+    # platform outage: ENTSO-E stops publishing, SMARD (same auction) carries
+    # on — the dataset must keep extending, with ENTSO-E winning on overlap
+    idx = pd.date_range("2024-01-01", periods=96, freq="1h", tz="UTC")
+    smard_idx = pd.date_range("2024-01-04", periods=48, freq="1h", tz="UTC")
+    cache.upsert(
+        synthetic_cache,
+        "smard_day_ahead_prices",
+        pd.DataFrame({"price_eur_mwh": 60.0}, index=smard_idx),
+    )
+    df, summary = build_dataset(synthetic_cache)
+    assert len(df) == 120
+    assert summary["price_hours_from_smard"] == 24
+    assert (df["price_eur_mwh"].reindex(idx) == 80.0).all()  # ENTSO-E wins on overlap
+    assert (df["price_eur_mwh"].loc[smard_idx[24] :] == 60.0).all()
+
+
 def test_target_defines_index_and_columns(synthetic_cache):
     df, summary = build_dataset(synthetic_cache)
     assert len(df) == 96

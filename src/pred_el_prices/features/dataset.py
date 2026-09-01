@@ -58,9 +58,24 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
     """Hourly UTC table: target price + leakage-safe features, plus a build summary."""
     prices = resample_hourly(cache.load(cache_root, "entsoe/day_ahead_prices"))["price_eur_mwh"]
     prices = prices.dropna()
+    # The target gets the same SMARD fallback as the forecast columns: both
+    # outlets publish the identical EPEX auction result at the same moment,
+    # so patching costs no leakage — during the 2026-08-30+ platform outage
+    # SMARD was the only source still extending the price history.
+    smard_prices = cache.load(cache_root, "smard_day_ahead_prices")
+    price_patch = 0
+    if not smard_prices.empty and "price_eur_mwh" in smard_prices.columns:
+        merged = prices.combine_first(smard_prices["price_eur_mwh"].dropna())
+        price_patch = len(merged) - len(prices)
+        prices = merged
     index = prices.index
     out = pd.DataFrame({"price_eur_mwh": prices})
-    summary: dict = {"rows": len(out), "first": str(index.min()), "last": str(index.max())}
+    summary: dict = {
+        "rows": len(out),
+        "first": str(index.min()),
+        "last": str(index.max()),
+        "price_hours_from_smard": price_patch,
+    }
 
     patches: dict = {}
     for col, (e_ds, e_col, s_ds, s_col) in FORECAST_SOURCES.items():
