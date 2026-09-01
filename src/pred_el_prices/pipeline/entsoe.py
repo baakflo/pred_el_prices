@@ -14,7 +14,13 @@ import pandas as pd
 import requests
 from entsoe import EntsoePandasClient
 from entsoe.exceptions import NoMatchingDataError
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    stop_after_delay,
+    wait_exponential,
+)
 
 from pred_el_prices.pipeline import cache
 
@@ -39,7 +45,12 @@ def _is_retryable(exc: BaseException) -> bool:
 
 
 @retry(
-    stop=stop_after_attempt(6),
+    # The delay cap matters during a platform outage: a struggling server
+    # answers each request slowly AND every attempt 503s, so six attempts
+    # cost ~9 minutes per call — measured 2026-09-01, when that ladder ate
+    # the morning slots' timeout budget. Five minutes rides out transient
+    # blips; a real outage is handled upstream (best-effort fetch + SMARD).
+    stop=stop_after_attempt(6) | stop_after_delay(300),
     wait=wait_exponential(multiplier=5, max=300),
     retry=retry_if_exception(_is_retryable),
     reraise=True,

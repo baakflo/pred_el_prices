@@ -472,6 +472,31 @@ def _refresh_smard_prices(cache_dir: Path, end: pd.Timestamp) -> None:
         print(f"WARN: SMARD price refresh failed ({e})")
 
 
+def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
+    """Decide what a run does when `delivery` already has logged rows.
+
+    'keep': a standing forecast exists, only refresh the site JSON.
+    'keep-late': an evening edition stands but the run started past the
+    auction gate — replacing an honestly pre-gate forecast with a
+    post-gate-flagged one would downgrade the day's ledger entry for a
+    marginal weather upgrade, so the evening edition stays.
+    'replace': a pre-gate morning run supersedes the evening edition.
+
+    The evening column rides an append-only log whose oldest rows predate
+    the flag, so it arrives as object dtype with NaN holes — coerce before
+    boolean algebra (`~` on an object Series is Python integer invert:
+    ~True == -2, truthy, which silently turned every replacement into a
+    keep).
+    """
+    ev = day_rows.get("evening", pd.Series(False, index=day_rows.index)).fillna(False).astype(bool)
+    if evening or (~ev).any():
+        return "keep"
+    gate = pd.Timestamp(f"{delivery - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
+    if pd.Timestamp(now) > gate:
+        return "keep-late"
+    return "replace"
+
+
 def run_daily(
     cache_dir: Path,
     archive_dir: Path,
@@ -587,9 +612,16 @@ def run_daily(
         if len(day_rows):
             # Evening rows are a preview: a morning run replaces them (the
             # log stays append-only — scoring keeps the last row per hour).
-            ev = day_rows.get("evening", pd.Series(False, index=day_rows.index)).fillna(False)
-            if evening or (~ev).any():
+            action = standing_day_action(day_rows, evening, now, delivery)
+            if action == "keep":
                 print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
+                write_site_json(out_dir, log_path, prices)
+                return None
+            if action == "keep-late":
+                print(
+                    f"evening edition for {delivery:%Y-%m-%d} stands; past the gate, "
+                    "a post-gate replacement would downgrade the day"
+                )
                 write_site_json(out_dir, log_path, prices)
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")

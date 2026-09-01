@@ -38,7 +38,14 @@ concurrency:
 jobs:
   forecast:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The 00Z ENS download+decode alone takes ~35-40 min (measured daily,
+    # 08-28..09-01); 45 min left so little headroom that the ENTSO-E-outage
+    # retry ladder tipped both morning slots into timeout-cancellation on
+    # 2026-09-01 — worse, a cancelled 09:15 loses its downloaded run, so
+    # 09:50 queued 45 min behind it and re-downloaded from scratch. With
+    # room to finish, even a failing strict slot pushes the archived run
+    # (if: always()) and the retry slot reuses it in seconds.
+    timeout-minutes: 75
     env:
       SLOT: ${{ inputs.slot }}
     steps:

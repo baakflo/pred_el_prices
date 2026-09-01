@@ -10,9 +10,48 @@ from pred_el_prices.daily_forecast import (
     lear_forecast,
     run_daily,
     site_prices,
+    standing_day_action,
     write_site_json,
 )
 from pred_el_prices.pipeline import cache
+
+
+def _day_rows(evening_values):
+    idx = pd.date_range("2026-09-02", periods=len(evening_values), freq="1h", tz="UTC")
+    # object dtype on purpose: the real log's evening column arrives as
+    # object (append-only concat with pre-flag rows), where `~True` is -2
+    return pd.DataFrame({"forecast": 100.0, "evening": evening_values}, index=idx, dtype=object)
+
+
+def test_pre_gate_morning_run_replaces_the_evening_edition():
+    rows = _day_rows([True] * 24)
+    delivery = pd.Timestamp("2026-09-02", tz="UTC")
+    now = pd.Timestamp("2026-09-01 07:50", tz="UTC")  # gate is 10:00 UTC (CEST)
+    assert standing_day_action(rows, False, now, delivery) == "replace"
+
+
+def test_morning_run_keeps_a_standing_morning_forecast():
+    rows = _day_rows([True] * 12 + [False] * 12)
+    delivery = pd.Timestamp("2026-09-02", tz="UTC")
+    now = pd.Timestamp("2026-09-01 07:50", tz="UTC")
+    assert standing_day_action(rows, False, now, delivery) == "keep"
+
+
+def test_evening_run_never_replaces_anything():
+    rows = _day_rows([True] * 24)
+    delivery = pd.Timestamp("2026-09-02", tz="UTC")
+    now = pd.Timestamp("2026-08-31 21:50", tz="UTC")
+    assert standing_day_action(rows, True, now, delivery) == "keep"
+
+
+def test_late_morning_run_keeps_the_evening_edition():
+    """A run starting past the auction gate must not swap an honestly
+    pre-gate evening forecast for a post-gate-flagged replacement — the
+    2026-09-01 09:50 slot started 10:01 UTC, one minute past the gate."""
+    rows = _day_rows([True] * 24)
+    delivery = pd.Timestamp("2026-09-02", tz="UTC")
+    now = pd.Timestamp("2026-09-01 10:01", tz="UTC")
+    assert standing_day_action(rows, False, now, delivery) == "keep-late"
 
 
 def test_site_prices_patch_from_smard_where_entsoe_is_dark(tmp_path):
