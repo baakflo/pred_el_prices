@@ -16,6 +16,11 @@ on:
   #     curve next to the morning forecast the same day and scores completed
   #     days. 11:15 UTC covers summer (13:15 CEST); 12:15 UTC covers winter
   #     (13:15 CET) and doubles as a summer retry.
+  #   1515 - late refresh retry: SMARD ingests the auction results on its
+  #     own clock and on 2026-09-02 was still empty at 12:21 UTC, leaving
+  #     the site actual-less all evening (during an ENTSO-E outage SMARD is
+  #     the only price source). One more sweep mid-afternoon closes that
+  #     window; a no-op when the earlier slots already caught everything.
   #   2135 - evening edition (--evening): right after the 12Z fallback
   #     archive lands, forecast the day AFTER tomorrow from 12Z weather +
   #     load surrogate; own flag, replaced by the next morning's run.
@@ -88,7 +93,7 @@ jobs:
           --out archive_repo/site-state/site
           ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}
           ${{ env.SLOT != '0915' && '--allow-load-surrogate' || '' }}
-          ${{ (env.SLOT == '1115' || env.SLOT == '1215') && '--refresh-only' || '' }}
+          ${{ (env.SLOT == '1115' || env.SLOT == '1215' || env.SLOT == '1515') && '--refresh-only' || '' }}
           ${{ env.SLOT == '2135' && '--evening' || '' }}
 
       # Other workflows (and manual pre-seeds) push to the same repo; a
