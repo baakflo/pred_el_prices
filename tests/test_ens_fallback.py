@@ -67,12 +67,13 @@ def test_get_rotates_to_the_second_mirror(monkeypatch):
 
     def fake_get(url, headers=None, timeout=None):
         calls.append(url)
-        return _resp(503 if "amazonaws" in url else 200)
+        return _resp(503 if url.startswith(ecmwf.MIRRORS[0]) else 200)
 
     monkeypatch.setattr(ecmwf._session, "get", fake_get)
     monkeypatch.setattr(ecmwf, "REQUEST_PACING_S", 0.0)
     assert ecmwf._get("some/path").status_code == 200
     assert len(calls) == 2
+    assert calls[1].startswith(ecmwf.MIRRORS[1])
 
 
 def test_get_gives_up_immediately_when_absent_on_all_mirrors(monkeypatch):
