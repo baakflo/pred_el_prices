@@ -162,6 +162,10 @@ def load_surrogate_forecast(
 
     load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
+    if not delivery_hours.isin(features.index).all():
+        # same loud check own_res_forecast has — without it a missing
+        # weather day surfaces as a bare KeyError from .loc (2026-09-01)
+        raise RuntimeError(f"ENS features for delivery day {delivery:%Y-%m-%d} missing")
     lag_w = load_fc.copy()
     lag_w.index = lag_w.index + pd.Timedelta(days=7)
     weather = [c for c in features.columns if c.startswith(("t2m_", "ssrd_"))]
@@ -601,6 +605,17 @@ def run_daily(
             archive_run(run_date, archive_dir)
         except (FileNotFoundError, requests.RequestException) as e:
             print(f"WARN: 00Z ENS run {run_date} unavailable: {e}")
+        if evening:
+            # The 12Z run IS the evening's weather, but the dedicated
+            # archiver can still be mid-download when this run starts (its
+            # S3 crawl hit 45+ min on 2026-09-01 and the 21:50 slot raced
+            # past it into a missing-features crash). Idempotent self-heal:
+            # costs seconds when the file is there, saves the night when
+            # it is not.
+            try:
+                archive_run(run_date - timedelta(days=1), archive_dir, run_hour=12)
+            except (FileNotFoundError, requests.RequestException) as e:
+                print(f"WARN: 12Z ENS run {run_date - timedelta(days=1)} unavailable: {e}")
 
     features = update_features(features_path, archive_dir, run_date, allow_ens_fallback)
     dataset, _ = build_dataset(cache_dir)
