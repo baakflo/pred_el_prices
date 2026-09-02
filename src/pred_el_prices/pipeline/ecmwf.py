@@ -38,18 +38,24 @@ from pred_el_prices.pipeline.dwd import LAT_MAX, LAT_MIN, LON_MAX, LON_MIN, aggr
 
 # Identical files are published to several channels; a throttled attempt
 # moves on to the next mirror instead of re-queueing behind the same one.
-# Order is freshness-first: S3 and data.ecmwf.int carry a new run right at
-# publication; GCS syncs hours later (GCS-first broke the same-day 12Z
-# fallback job on 2026-08-26 — both evening slots 404'd the fresh run).
-# GCS is last but crucial for backfills: it keeps the full archive (probed
-# back to 2024-03-19) with no UA filtering or cloud-IP throttling, while
-# S3 hard-throttles cloud IPs and non-curl UAs since ~2026-08-18 and
+# Order is freshness-first, then answers-first: data.ecmwf.int and S3 both
+# carry a new run right at publication, but S3 deterministically 503s ever
+# more clients (cloud IPs and non-curl UAs since ~2026-08-18; by 2026-09-02
+# even residential curl got an instant 503, while data.ecmwf.int served the
+# same file in 1.7s). A fast 503 costs nothing, but first position means a
+# stalling throttle burns its 180s timeout on EVERY request of the sweep —
+# so the mirror that demonstrably answers goes first and S3 becomes the
+# backup. GCS syncs hours later (GCS-first broke the same-day 12Z fallback
+# job on 2026-08-26 — both evening slots 404'd the fresh run), so it is
+# last — but crucial for backfills: it keeps the full archive (probed back
+# to 2024-03-19) with no UA filtering or cloud-IP throttling, while
 # data.ecmwf.int holds only the last few days (historical dates 404 there;
 # the all-mirrors-404 rule below keeps backfill semantics intact). The
-# Azure mirror requires a SAS token since 2026-08 — not listed.
+# Azure mirror requires a SAS token since 2026-08 (409 without) — not
+# listed.
 MIRRORS = [
-    "https://ecmwf-forecasts.s3.amazonaws.com",
     "https://data.ecmwf.int/forecasts",
+    "https://ecmwf-forecasts.s3.amazonaws.com",
     "https://storage.googleapis.com/ecmwf-open-data",
 ]
 
