@@ -64,6 +64,21 @@ def test_smard_extends_the_price_target_when_entsoe_goes_dark(synthetic_cache):
     assert (df["price_eur_mwh"].loc[smard_idx[24] :] == 60.0).all()
 
 
+def test_energy_charts_extends_the_price_target_when_smard_sleeps_in(synthetic_cache):
+    # 2026-09-07 failure mode: ENTSO-E dark AND SMARD without the day's
+    # auction — the third outlet must keep the target extending
+    ec_idx = pd.date_range("2024-01-05", periods=24, freq="1h", tz="UTC")
+    cache.upsert(
+        synthetic_cache,
+        "energy_charts_prices",
+        pd.DataFrame({"price_eur_mwh": 70.0}, index=ec_idx),
+    )
+    df, summary = build_dataset(synthetic_cache)
+    assert len(df) == 120
+    assert summary["price_hours_from_energy_charts"] == 24
+    assert (df["price_eur_mwh"].loc[ec_idx] == 70.0).all()
+
+
 def test_target_defines_index_and_columns(synthetic_cache):
     df, summary = build_dataset(synthetic_cache)
     assert len(df) == 96

@@ -9,8 +9,9 @@ Leakage rules (auction gate 12:00 CET on D-1):
 
 ENTSO-E is the primary source (15-min native, resampled to hourly means);
 SMARD (hourly) patches the ENTSO-E gaps — chiefly the Sep-Dec 2018 zone-split
-teething and two 2022 outage days. The target index is defined by the price
-series. Fuel columns keep NaN before their sources begin (TTF 2017-10,
+teething and two 2022 outage days — and energy-charts patches the price
+target when both miss a day (first seen 2026-09-07). The target index is
+defined by the price series. Fuel columns keep NaN before their sources begin (TTF 2017-10,
 EUA proxy 2021-10); models must handle or drop those spans.
 """
 
@@ -58,23 +59,29 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
     """Hourly UTC table: target price + leakage-safe features, plus a build summary."""
     prices = resample_hourly(cache.load(cache_root, "entsoe/day_ahead_prices"))["price_eur_mwh"]
     prices = prices.dropna()
-    # The target gets the same SMARD fallback as the forecast columns: both
+    # The target gets the same fallback ladder as the site prices: all three
     # outlets publish the identical EPEX auction result at the same moment,
-    # so patching costs no leakage — during the 2026-08-30+ platform outage
-    # SMARD was the only source still extending the price history.
-    smard_prices = cache.load(cache_root, "smard_day_ahead_prices")
-    price_patch = 0
-    if not smard_prices.empty and "price_eur_mwh" in smard_prices.columns:
-        merged = prices.combine_first(smard_prices["price_eur_mwh"].dropna())
-        price_patch = len(merged) - len(prices)
-        prices = merged
+    # so patching costs no leakage. SMARD alone carried the 2026-08-30
+    # platform outage; on 2026-09-07 SMARD skipped the day's ingestion too
+    # and energy-charts was the only outlet still extending the history.
+    price_patches: dict[str, int] = {}
+    for ds, key in (
+        ("smard_day_ahead_prices", "price_hours_from_smard"),
+        ("energy_charts_prices", "price_hours_from_energy_charts"),
+    ):
+        fallback = cache.load(cache_root, ds)
+        price_patches[key] = 0
+        if not fallback.empty and "price_eur_mwh" in fallback.columns:
+            merged = prices.combine_first(fallback["price_eur_mwh"].dropna())
+            price_patches[key] = len(merged) - len(prices)
+            prices = merged
     index = prices.index
     out = pd.DataFrame({"price_eur_mwh": prices})
     summary: dict = {
         "rows": len(out),
         "first": str(index.min()),
         "last": str(index.max()),
-        "price_hours_from_smard": price_patch,
+        **price_patches,
     }
 
     patches: dict = {}

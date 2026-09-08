@@ -74,6 +74,29 @@ def test_site_prices_patch_from_smard_where_entsoe_is_dark(tmp_path):
     assert (prices.loc["2026-08-31"] == 60.0).all()
 
 
+def test_site_prices_third_outlet_fills_what_smard_missed(tmp_path):
+    """2026-09-07: ENTSO-E dark AND SMARD skipped the day's ingestion —
+    energy-charts must extend the series past both."""
+    e_idx = pd.date_range("2026-09-06", periods=24, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "entsoe/day_ahead_prices", pd.DataFrame({"price_eur_mwh": 50.0}, index=e_idx)
+    )
+    s_idx = pd.date_range("2026-09-07", periods=24, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "smard_day_ahead_prices", pd.DataFrame({"price_eur_mwh": 60.0}, index=s_idx)
+    )
+    # energy-charts overlaps SMARD (must lose) and extends a day past it
+    ec_idx = pd.date_range("2026-09-07", periods=48, freq="1h", tz="UTC")
+    cache.upsert(
+        tmp_path, "energy_charts_prices", pd.DataFrame({"price_eur_mwh": 70.0}, index=ec_idx)
+    )
+
+    prices = site_prices(tmp_path)
+    assert len(prices) == 72
+    assert (prices.loc["2026-09-07"] == 60.0).all()
+    assert (prices.loc["2026-09-08"] == 70.0).all()
+
+
 def test_site_prices_without_a_smard_cache(tmp_path):
     e_idx = pd.date_range("2026-08-29", periods=24, freq="1h", tz="UTC")
     cache.upsert(

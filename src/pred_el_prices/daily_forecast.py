@@ -447,33 +447,44 @@ def backfill_history(out_dir: Path, run_dirs: list[Path], start: str, end: str) 
 def site_prices(cache_dir: Path) -> pd.Series:
     """Auction clearing prices for scoring and calibration.
 
-    ENTSO-E is the primary source; SMARD (the Bundesnetzagentur outlet for
-    the same EPEX auction results, keyless) fills whatever hours the
-    platform has not delivered — during the 2026-08-30+ outage it was the
-    only reachable publisher. Where both have a value, ENTSO-E wins.
+    ENTSO-E is the primary source; SMARD and energy-charts (keyless outlets
+    for the same EPEX auction results) each fill whatever hours the sources
+    before them have not delivered. Three outlets because two proved not to
+    be independent: on 2026-09-07 the platform was dark AND SMARD skipped
+    the day's ingestion — energy-charts alone carried the 09-08 auction.
     """
-    entsoe = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))[
+    merged = resample_hourly(cache.load(cache_dir, "entsoe/day_ahead_prices"))[
         "price_eur_mwh"
     ].dropna()
-    smard = cache.load(cache_dir, "smard_day_ahead_prices")
-    if smard.empty or "price_eur_mwh" not in smard.columns:
-        return entsoe
-    merged = entsoe.combine_first(smard["price_eur_mwh"].dropna())
-    if len(merged) > len(entsoe):
-        print(f"INFO: {len(merged) - len(entsoe)} price hours filled from SMARD")
+    for dataset, outlet in (
+        ("smard_day_ahead_prices", "SMARD"),
+        ("energy_charts_prices", "energy-charts"),
+    ):
+        fallback = cache.load(cache_dir, dataset)
+        if fallback.empty or "price_eur_mwh" not in fallback.columns:
+            continue
+        before = len(merged)
+        merged = merged.combine_first(fallback["price_eur_mwh"].dropna())
+        if len(merged) > before:
+            print(f"INFO: {len(merged) - before} price hours filled from {outlet}")
     return merged
 
 
-def _refresh_smard_prices(cache_dir: Path, end: pd.Timestamp) -> None:
-    """Best-effort SMARD price update (resumes from the cache tail)."""
+def _refresh_fallback_prices(cache_dir: Path, end: pd.Timestamp) -> None:
+    """Best-effort price updates from the keyless outlets (resume from cache tail)."""
     import requests
 
+    from pred_el_prices.pipeline.energy_charts import update_cache as update_ec_cache
     from pred_el_prices.pipeline.smard import update_cache as update_smard_cache
 
     try:
         update_smard_cache(cache_dir, "smard_day_ahead_prices", pd.Timestamp("2015-01-01", tz="UTC"), end)
     except requests.RequestException as e:
         print(f"WARN: SMARD price refresh failed ({e})")
+    try:
+        update_ec_cache(cache_dir, end - pd.Timedelta(days=14), end)
+    except requests.RequestException as e:
+        print(f"WARN: energy-charts price refresh failed ({e})")
 
 
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
@@ -567,7 +578,7 @@ def run_daily(
                 )
             except requests.RequestException as e:
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
-            _refresh_smard_prices(cache_dir, end)
+            _refresh_fallback_prices(cache_dir, end)
         write_site_json(out_dir, log_path, site_prices(cache_dir))
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
@@ -596,7 +607,7 @@ def run_daily(
             )
         except requests.RequestException as e:
             print(f"WARN: ENTSO-E refresh failed ({e}); proceeding on cached data")
-        _refresh_smard_prices(cache_dir, delivery + pd.Timedelta(days=1))
+        _refresh_fallback_prices(cache_dir, delivery + pd.Timedelta(days=1))
         update_cache(cache_dir)
         # Best-effort: a failure must not kill the run — the 12Z fallback
         # may cover the day. Gap healing of older 00Z runs happens in the

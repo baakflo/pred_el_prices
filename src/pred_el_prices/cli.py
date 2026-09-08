@@ -101,6 +101,14 @@ def main() -> None:
     fuels.add_argument("--start", default="2015-01-01", help="UTC start date")
     fuels.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
 
+    echarts = sub.add_parser(
+        "fetch-energy-charts",
+        help="Update the energy-charts.info day-ahead price cache (keyless third outlet)",
+    )
+    echarts.add_argument("--start", default=None, help="UTC start date (default: 14 days back)")
+    echarts.add_argument("--end", default=None, help="UTC end date (default: now)")
+    echarts.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+
     smard = sub.add_parser(
         "fetch-smard", help="Update the SMARD caches (keyless: prices, load, wind/solar)"
     )
@@ -205,14 +213,22 @@ def main() -> None:
         written = archive_snapshot(args.archive_dir, energyforecast_token(), late=args.late)
         print(f"energyforecast: {written if written else 'already archived today'}")
     elif args.command == "archive-entsoe-forecasts":
+        import requests
         from entsoe import EntsoePandasClient
 
         from pred_el_prices.config import entsoe_api_key
         from pred_el_prices.pipeline.entsoe_snapshot import archive_snapshot
 
         client = EntsoePandasClient(api_key=entsoe_api_key())
-        written = archive_snapshot(args.archive_dir, client)
-        print(f"entsoe-forecasts: {written if written else 'nothing written'}")
+        # Best-effort: a platform outage must not fail the archive run after
+        # the weather already landed — later slots retry the snapshot, and a
+        # real gap shows as a missing file, not a lost workflow.
+        try:
+            written = archive_snapshot(args.archive_dir, client)
+        except requests.RequestException as e:
+            print(f"::warning::entsoe-forecasts snapshot skipped ({e}); later slots retry")
+        else:
+            print(f"entsoe-forecasts: {written if written else 'nothing written'}")
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 
@@ -244,6 +260,15 @@ def main() -> None:
 
         n = update_cache(args.cache_dir, pd.Timestamp(args.start, tz="UTC"))
         print(f"fuels_daily: {n} rows fetched")
+    elif args.command == "fetch-energy-charts":
+        import pandas as pd
+
+        from pred_el_prices.pipeline.energy_charts import update_cache
+
+        end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
+        start = pd.Timestamp(args.start, tz="UTC") if args.start else end - pd.Timedelta(days=14)
+        n = update_cache(args.cache_dir, start, end)
+        print(f"energy_charts_prices: {n} hourly rows fetched")
     elif args.command == "fetch-smard":
         import pandas as pd
 
