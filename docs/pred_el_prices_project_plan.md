@@ -105,7 +105,102 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
-## Status addendum (2026-08-31): ENTSO-E outage; load-surrogate registered
+## Status addendum (2026-09-22): why live MAE doubled — regime, linearity, and a measured surrogate cost
+
+**Observation:** the published 30-day mean has been climbing since early
+September (live pre-gate MAE, first 14 live days 19.3 → last 14 live days
+36.3 EUR/MWh). Suspicion was surrogate misalignment or a refit that is not
+really happening. Both were checked; neither is the driver.
+
+**1. Skill is flat, the market moved.** The naive same-hour-yesterday
+benchmark doubled with us (≈29 → ≈55); MAE/naive has stayed between 0.7 and
+0.9 every week since mid-August. Level error and shape error grew in step
+(|daily bias| 12.8 → 21.9, bias-removed MAE 15.6 → 28.1). September is a new
+regime: TSO evening residual load reached 54–57 GW on 09-14 and 09-22 (August
+max ≈46), the evening price-vs-residual-load slope tripled (≈3 → ≈8 EUR/MWh
+per GW, hours 16–18 UTC), daily means swung 24 → 108 → 226 EUR/MWh over
+09-20..09-22 with a 596 EUR/MWh hour, and 697 on 09-14. Errors sit exactly
+there: hours 16–18 UTC went from MAE ≈17 to ≈50 (3×), the rest of the day
+only 2×. The 09-22 forecast (MAE 93.8, bias −93.8) was additionally dragged
+down by the D-1/D-2 lags from the two cheap weekend days; 09-23 recovered to
+≈20 once they rolled through.
+
+**2. The refit is real but is not adaptation.** `run_daily` fits a fresh
+LassoLarsIC + Lasso per hour every morning (models/lear.py, no cached
+coefficients). But the window is a fixed 364 days with uniform weights: one
+new day is 0.3 % of the training data, and a linear model fitted across a
+whole year carries an averaged merit-order slope. It structurally cannot emit
+a 500 EUR/MWh evening when the current slope is 3× the annual average. This
+is the model-class limit Phase 2 exists for.
+
+**3. Surrogate cost measured directly: −6.5 EUR/MWh (≈22 %), constant.**
+Post-gate rescoring of 2026-09-01..09-21 with the identical LEAR (371-day
+calibration = production's 364 training days) but the *official* ENTSO-E load
+and wind/solar forecasts instead of own-RES v2 + load-de:
+
+| period | live MAE | post-gate MAE | delta |
+|---|---|---|---|
+| 09-01..09-08 | 26.7 | 20.1 | −6.6 |
+| 09-09..09-21 | 31.6 | 25.1 | −6.5 |
+
+Official inputs win 18/21 days (losses ≤ +1.9, gains up to −24 on 09-05 and
+09-19). The delta is identical in both halves of the month, so the surrogates
+are not what is getting worse — but the cost is far above the badge numbers
+(+0.4 evening, +0.3 load) and worth fixing. Hourly profile (09-09..09-22):
+nearly the whole gain is **hours 00–06 UTC** (post-gate MAE 5–22 vs live
+24–40) — own-RES night wind, most plausibly the 00Z-vintage handicap against
+the TSO's fresher runs. At **hours 17–18 UTC the official inputs are worse**
+(63 vs 27 at hour 17): the evening spikes are the linear model, not the
+inputs. Caveat: the TSO cache holds the latest revision, not the 18:00 D-1
+first publication, so −6.5 is an upper bound on the real pre-gate gap. 09-22
+and 09-23 were not scoreable (TSO wind/solar for local day 09-23 still
+unpublished at 16:20 UTC).
+
+**4. Two housekeeping findings.**
+- `post_gate: true` days that sit inside the live log (08-18, 08-25, 08-28,
+  08-31, 09-09) are bit-identical to the live forecast rows: they used
+  own-RES + surrogates and were merely generated late. Only 07-25..08-17 are
+  true official-exog reconstructions (reproduced within 0.1 EUR/MWh with
+  `calibration_window=364`, i.e. the backfill convention). The site legend
+  ("calculated after gate closed") and the 30-day-mean exclusion conflate the
+  two meanings.
+- Nothing scores the surrogates in production: `forecast_log.parquet` keeps
+  only the final price, and the 18:00 TSO snapshot (`pep
+  archive-entsoe-forecasts`) is written daily and never read back. The
+  hypothesis above was untestable from the pipeline's own artifacts.
+
+Scripts and outputs (local only, `_scratch/` is gitignored):
+`_scratch/postgate_rescore_2026-09/` (`postgate_rescore.py` main run,
+`fetch_patch.py` cache-gap overlay, `score_extra.py`, `sanity_backfilled.py`,
+`postgate_win364.py`; `daily_scores_final.csv`, `hourly_profile_0909_0922.csv`,
+`postgate_forecast.parquet`) and `_scratch/analyze.py`, `decomp.py`,
+`drivers.py` (history.json decomposition, naive benchmark, TSO drivers,
+ENS-vs-TSO wind proxy). Paths inside point at the state-repo clone and the
+website repo.
+
+### Next steps (agreed 2026-09-22, for the 09-23 full-time session)
+
+1. **Make the surrogate cost a tracked number.** Log own-RES and load-de
+   outputs (MW per hour) in `forecast_log.parquet`; add a refresh-slot step
+   that scores them against the archived 18:00 TSO snapshot and against the
+   next day's actuals, so `history.json` can carry a per-day surrogate error.
+2. **Night-wind fix as the cheap win.** Target hours 00–06 UTC: fresher
+   vintage (12Z evening edition already exists; ICON-EU-EPS switch is parked
+   and would cut download time), or an explicit hour-of-day / lead-time
+   feature in res-de. Measure against the 6.5 baseline above.
+3. **Fix the `post_gate` semantics** on the site: split into "late-generated,
+   live inputs" (counts like live, or at least is labelled so) vs
+   "reconstructed with official inputs".
+4. **First non-linear run (Phase 2 start).** The evening-spike numbers are the
+   brief: 364-day linear fit undershoots every scarcity evening. Start with
+   the hinge-at-zero / piecewise residual-load idea already registered
+   (2026-08-29 addendum) and a gradient-boosted residual on top of LEAR,
+   scored on 2026-09 with the post-gate frame from
+   `postgate_rescore.py` so input noise is held constant. Also worth a quick
+   ablation: shorter-window ensemble (epftoolbox LEAR uses 56/84/1092/1456)
+   to see how much of the level-tracking error a faster window buys.
+
+
 
 **Production incident (2026-08-30/31): the ENTSO-E Transparency Platform went
 down and took the daily forecast with it.** The TSO day-ahead load forecast
