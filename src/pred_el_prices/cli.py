@@ -88,6 +88,12 @@ def main() -> None:
     fetch.add_argument("--start", default="2015-01-01", help="UTC start date")
     fetch.add_argument("--end", default=None, help="UTC end date (default: now)")
     fetch.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+    fetch.add_argument(
+        "--zones",
+        nargs="+",
+        default=None,
+        help="Neighbour zones as entsoe-py area codes, e.g. FR NL (default: Germany)",
+    )
 
     capacity = sub.add_parser(
         "fetch-capacity",
@@ -258,7 +264,8 @@ def main() -> None:
         start = pd.Timestamp(args.start, tz="UTC")
         end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
         client = EntsoePandasClient(api_key=entsoe_api_key())
-        backfill(client, datasets, start, end, args.cache_dir)
+        for zone in args.zones or [None]:
+            backfill(client, datasets, start, end, args.cache_dir, zone=zone)
     elif args.command == "fetch-capacity":
         from pred_el_prices.pipeline.capacity import update_cache
 

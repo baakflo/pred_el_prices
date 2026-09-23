@@ -115,6 +115,39 @@ class TestBuildFeatures:
         )
 
 
+class TestDirect:
+    def _perturbed_features(self, hours):
+        fc = _synthetic_fc(15)
+        dataset = _synthetic_dataset(fc.index).assign(price_eur_mwh=fc["actual"])
+        x_base = lear_gbm_de.build_features(fc, dataset, direct=True)
+        day = fc.index.normalize()[0] + pd.Timedelta(days=5)
+        hit = (fc.index.normalize() == day) & fc.index.hour.isin(hours)
+        dataset.loc[hit, "price_eur_mwh"] += 1000.0
+        x_perturbed = lear_gbm_de.build_features(fc, dataset, direct=True)
+        return fc, day, x_base, x_perturbed
+
+    def test_no_lear_columns(self):
+        fc = _synthetic_fc(10)
+        dataset = _synthetic_dataset(fc.index).assign(price_eur_mwh=fc["actual"])
+        x = lear_gbm_de.build_features(fc, dataset, direct=True)
+        assert not any(c.startswith(("lear_", "resid_")) for c in x.columns)
+
+    def test_same_day_prices_do_not_leak(self):
+        fc, day, x_base, x_perturbed = self._perturbed_features(range(24))
+        on_day = fc.index.normalize() == day
+        pd.testing.assert_frame_equal(x_base[on_day], x_perturbed[on_day])
+
+    def test_target_auction_hours_of_d_minus_1_do_not_leak(self):
+        fc, day, x_base, x_perturbed = self._perturbed_features([22, 23])
+        next_day = fc.index.normalize() == day + pd.Timedelta(days=1)
+        pd.testing.assert_frame_equal(x_base[next_day], x_perturbed[next_day])
+
+    def test_earlier_hours_of_d_minus_1_are_used(self):
+        fc, day, x_base, x_perturbed = self._perturbed_features([12])
+        next_day = fc.index.normalize() == day + pd.Timedelta(days=1)
+        assert (x_perturbed.loc[next_day, "price_d1_max"] > x_base.loc[next_day, "price_d1_max"]).all()
+
+
 class TestRun:
     def test_corrected_mae_beats_lear(self, tmp_path):
         n_days = 200
@@ -177,3 +210,19 @@ class TestRun:
 
         recomputed_mae = mae(out["actual"].values, out["lear_gbm_forecast"].values)
         assert round(recomputed_mae, 3) == metrics["MAE_lear_gbm"]
+
+        dataset.assign(price_eur_mwh=true_price).to_parquet(dataset_path)
+        for flags in ({"scale_target": True}, {"direct": True, "scale_target": True}):
+            flag_dir = tmp_path / "_".join(flags)
+            flag_dir.mkdir()
+            flagged = lear_gbm_de.run(
+                out_dir=flag_dir,
+                base_run=str(base_dir),
+                first_fit="2020-03-01",
+                dataset_path=str(dataset_path),
+                max_iter=100,
+                learning_rate=0.1,
+                **flags,
+            )
+            assert flagged["n_hours"] == metrics["n_hours"]
+            assert flagged["MAE_lear_gbm"] < metrics["MAE_lear"]

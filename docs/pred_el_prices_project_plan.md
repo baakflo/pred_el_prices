@@ -105,6 +105,54 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
+## Status addendum (2026-09-23, afternoon): scarcity inputs for the tree correction — registered
+
+**Why.** The best honest model (GBM on low-hinge gate-safe LEAR, `lear-gbm-de-…094701`)
+still misses peaks: on 2020-01..2026-09-21 hours with an actual price above 200 EUR/MWh
+(6,123 h) it has MAE 41.7 and bias −13.9 (LEAR under it: 44.1 / −28.8). Its inputs describe
+German demand net of wind and solar only. They say nothing about supply: how much capacity is
+out, and whether the neighbours can export. A tree cannot learn a scarcity kink from a
+variable it never sees. Correction to an earlier claim: TTF and EUA were already features of
+`lear-gbm-de`; what is new in step A is using them as a price *level*.
+
+**Arms** (all `lear-gbm-de`, base `lear-de-…093701`, first fit 2020-01, monthly refits;
+scored on 2020-01-01..2026-09-21 with `_scratch/phase2_nonlinear/peaks.py`; reference G0 =
+`094701` rerun on the rebuilt dataset):
+- **G1 (step A, fuel level):** `scale_target=true`. The tree learns LEAR's error in units
+  of a gas-plant marginal cost, max(20, 2·TTF + 0.37·EUA) with 2-day-lagged settlements
+  (EUA proxy counts 0 before 2021-10). Same features.
+- **G2 (step B, neighbours):** G0 or G1, whichever has the lower MAE, plus
+  `features=["neighbours"]`. Features: day-ahead residual load (TSO load forecast minus
+  wind and solar forecasts) of FR, and summed over FR, NL, BE, AT, PL, CZ, CH, DK1, DK2;
+  the regional total including DE; its daily max. Same convention as DE's inputs. Caveat:
+  wind/solar day-ahead forecasts are due by 18:00 D−1 under EU 543/2013, so their
+  availability before the gate has to be checked live before production use.
+- **G3 (step C, outages and margin):** G2 plus `features=[..., "outages"]`. Unavailable
+  capacity by fuel type in DE and FR (ENTSO-E 15.1/15.2, planned plus forced), each outage
+  message in the version that was current at D−1 10:00 UTC. The version rule must leave
+  out later edits and withdrawals, which are the backtest leak here. Plus a margin feature:
+  installed dispatchable capacity minus unavailable capacity minus DE residual load. The
+  implementation of the version rule is recorded before the run.
+- **D3 (fully non-linear):** `direct=true` with G3's feature set and target handling. The
+  tree forecasts the price itself from calendar, forecasts, fuels, and price lags (D−1 from
+  UTC hours 0–21 only, and D−7). No LEAR involved.
+
+**Predictions** (G0 today: MAE 14.675, rMAE 0.387, h16–18 18.93, >200 MAE 41.7 / bias
+−13.9, Sept-2026 h16–18 34.1):
+(19) G1 beats G0 by ≥ 0.05 MAE (DM p < 0.05). Its >200 bias shrinks to ≥ −11: a fixed
+error in € is wrong when gas costs move 10×.
+(20) G2 beats its parent by DM p < 0.05, with h16–18 MAE down ≥ 0.3 and Sept-2026 h16–18
+down ≥ 2. Scarcity evenings are regional.
+(21) G3 beats G2 by DM p < 0.05, with >200 MAE down ≥ 2 vs G2. Outages are the supply side
+that no input has covered so far.
+(22) D3 loses to G3 overall by ≥ 0.3 MAE and has a worse >200 bias: trees cannot
+extrapolate above their training range, and LEAR's linear base is what lets the stack do so.
+D3 still beats LEAR `093701` alone.
+
+**Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
+step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
+expensive part.
+
 ## Status addendum (2026-09-23): Phase 2 start — bench verified, hinge experiment registered
 
 **Data refreshed** through 2026-09-23 via `pep fetch-{entsoe,smard,energy-charts,fuels,capacity}`

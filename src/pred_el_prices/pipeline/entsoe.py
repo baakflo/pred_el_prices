@@ -79,12 +79,21 @@ def _zone_windows(
 
 
 def fetch(
-    client: EntsoePandasClient, dataset: str, start: pd.Timestamp, end: pd.Timestamp
+    client: EntsoePandasClient,
+    dataset: str,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    zone: str | None = None,
 ) -> pd.DataFrame:
-    """One dataset over [start, end) UTC, zone split handled; empty frame if no data."""
+    """One dataset over [start, end) UTC; empty frame if no data.
+
+    zone=None is Germany with the 2018 zone split handled; any other entsoe-py
+    area code (e.g. "FR") is queried as is.
+    """
     method = DATASETS[dataset]
+    windows = _zone_windows(start, end) if zone is None else [(zone, start, end)]
     parts = []
-    for zone, s, e in _zone_windows(start, end):
+    for zone, s, e in windows:
         try:
             parts.append(_normalize(_call(client, method, zone, s, e)))
         except NoMatchingDataError:
@@ -113,18 +122,23 @@ def backfill(
     end: pd.Timestamp,
     cache_root,
     sleep_s: float = 0.5,
+    zone: str | None = None,
 ) -> None:
-    """Fetch month by month into the cache; resumes from the last cached month."""
+    """Fetch month by month into the cache; resumes from the last cached month.
+
+    Germany caches under entsoe/<dataset>, other zones under entsoe/<zone>/<dataset>.
+    """
     for dataset in datasets:
-        resume = cache.last_timestamp(cache_root, f"entsoe/{dataset}")
+        name = f"entsoe/{dataset}" if zone is None else f"entsoe/{zone}/{dataset}"
+        resume = cache.last_timestamp(cache_root, name)
         ds_start = start
         if resume is not None:
             # refetch the last cached month in full: it may be partial
             ds_start = max(start, resume.normalize().replace(day=1))
         for m_start, m_end in month_ranges(ds_start, end):
-            df = fetch(client, dataset, m_start, m_end)
-            cache.upsert(cache_root, f"entsoe/{dataset}", df)
-            print(f"{dataset} {m_start:%Y-%m}: {len(df)} rows", flush=True)
+            df = fetch(client, dataset, m_start, m_end, zone)
+            cache.upsert(cache_root, name, df)
+            print(f"{zone or 'DE'} {dataset} {m_start:%Y-%m}: {len(df)} rows", flush=True)
             time.sleep(sleep_s)
 
 

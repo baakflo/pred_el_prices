@@ -45,13 +45,35 @@ from pred_el_prices.eval.scorecard import load_forecast
 RES_COLS = ["wind_onshore_forecast_mw", "wind_offshore_forecast_mw", "solar_forecast_mw"]
 
 
-def build_features(fc: pd.DataFrame, dataset: pd.DataFrame) -> pd.DataFrame:
+def fuel_cost_scale(dataset: pd.DataFrame, index: pd.DatetimeIndex) -> pd.Series:
+    """Rough gas-plant marginal cost in EUR/MWh, floored at 20: 2 x TTF + 0.37 x EUA.
+
+    Both inputs carry the dataset's 2-day settlement lag. The EUA proxy starts
+    2021-10 and counts as 0 before (no back-fill: that would read the future).
+    """
+    ds = dataset.reindex(index)
+    srmc = 2.0 * ds["ttf_gas_eur_mwh"].fillna(0.0) + 0.37 * ds["eua_proxy_usd"].fillna(0.0)
+    return srmc.clip(lower=20.0)
+
+
+def build_features(
+    fc: pd.DataFrame,
+    dataset: pd.DataFrame,
+    groups: tuple[str, ...] = (),
+    direct: bool = False,
+) -> pd.DataFrame:
     """Design matrix for correcting LEAR's error, indexed like `fc`.
 
     `fc` has columns `pred` (LEAR forecast) and `actual`, e.g. from
     eval.scorecard.load_forecast. `dataset` is the hourly feature/target
     table (data/dataset/hourly.parquet); only day-ahead-known columns are
     used. See the module docstring for the leakage argument per feature.
+
+    `groups` adds optional feature groups: "neighbours" (day-ahead residual
+    load of the neighbouring zones, same TSO-forecast convention as DE's).
+    `direct` drops everything derived from LEAR and adds price lags instead,
+    for a tree that forecasts the price itself; the D-1 lag skips UTC 22-23
+    for the same reason the D-1 error features do.
     """
     idx = fc.index
     full_idx = pd.date_range(idx.min(), idx.max(), freq="1h", tz=idx.tz)
@@ -77,6 +99,23 @@ def build_features(fc: pd.DataFrame, dataset: pd.DataFrame) -> pd.DataFrame:
     x["rl_day_max"] = rl_by_day.transform("max")
     x["rl_day_min"] = rl_by_day.transform("min")
 
+    if "neighbours" in groups:
+        nb = ds[[c for c in ds.columns if c.startswith("rl_") and c.endswith("_mw")]]
+        x["rl_fr_mw"] = ds["rl_fr_mw"]
+        x["rl_neighbours_mw"] = nb.sum(axis=1, skipna=False)
+        x["rl_region_mw"] = x["rl_neighbours_mw"] + ds["residual_load_forecast_mw"]
+        x["rl_region_day_max"] = x["rl_region_mw"].groupby(day_key).transform("max")
+
+    if direct:
+        price = dataset["price_eur_mwh"].reindex(full_idx)
+        price_d1 = price.where(~full_idx.hour.isin([22, 23]))
+        x["price_lag24"] = price_d1.shift(24)
+        x["price_lag168"] = price.shift(168)
+        d1 = price_d1.groupby(day_key)
+        for stat in ("mean", "max", "min"):
+            x[f"price_d1_{stat}"] = d1.agg(stat).shift(1).reindex(day_key).to_numpy()
+        return x.reindex(idx)
+
     x["lear_pred"] = fc_full["pred"]
 
     # UTC 22-23 of D-1 are local 00:00-01:00 of delivery day D (CEST; 23:00 in
@@ -100,11 +139,21 @@ def run(
     dataset_path: str = "data/dataset/hourly.parquet",
     max_iter: int = 300,
     learning_rate: float = 0.05,
+    features: list[str] | None = None,
+    scale_target: bool = False,
+    direct: bool = False,
 ) -> dict:
+    """`features`: optional groups for build_features. `scale_target`: learn the
+    target in units of fuel_cost_scale and scale back, so a pattern learned at
+    cheap gas carries over to expensive gas. `direct`: the tree forecasts the
+    price itself; the base run only supplies the evaluation index and actuals.
+    """
     fc = load_forecast(Path(base_run))
     dataset = pd.read_parquet(dataset_path)
-    x = build_features(fc, dataset)
-    resid = fc["actual"] - fc["pred"]
+    x = build_features(fc, dataset, tuple(features or ()), direct)
+    scale = fuel_cost_scale(dataset, x.index) if scale_target else pd.Series(1.0, index=x.index)
+    base = pd.Series(0.0, index=fc.index) if direct else fc["pred"]
+    resid = (fc["actual"] - base) / scale
     resid_valid = resid.notna().to_numpy()
 
     month_starts = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), x.index.max(), freq="MS")
@@ -126,12 +175,13 @@ def run(
         model.fit(x.loc[train, cols], resid[train])
         parts.append(pd.Series(model.predict(x.loc[test, cols]), index=x.index[test]))
     correction = pd.concat(parts)
+    correction = correction * scale.reindex(correction.index)
     print(f"{len(correction)} OOS hours corrected", flush=True)
 
     eval_index = correction.index
     lear_pred = fc["pred"].reindex(eval_index)
     actual = fc["actual"].reindex(eval_index)
-    corrected = lear_pred + correction
+    corrected = base.reindex(eval_index) + correction
 
     out = corrected.rename("lear_gbm_forecast").to_frame().assign(actual=actual)
     out.to_parquet(out_dir / "forecast.parquet")
@@ -139,7 +189,13 @@ def run(
     metrics: dict = {
         "base_run": base_run,
         "first_fit": first_fit,
-        "params": {"max_iter": max_iter, "learning_rate": learning_rate},
+        "params": {
+            "max_iter": max_iter,
+            "learning_rate": learning_rate,
+            "features": features or [],
+            "scale_target": scale_target,
+            "direct": direct,
+        },
         "n_hours": len(eval_index),
         "MAE_lear": round(mae(actual.values, lear_pred.values), 3),
         "MAE_lear_gbm": round(mae(actual.values, corrected.values), 3),

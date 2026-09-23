@@ -51,7 +51,11 @@ FORECAST_SOURCES = {
     ),
 }
 
-FUEL_COLUMNS = ["ttf_gas_eur_mwh", "api2_coal_usd_t", "eua_proxy_usd"]
+# Neighbouring bidding zones (entsoe-py codes, cached by `fetch-entsoe --zones`).
+# Their day-ahead residual load follows the same TSO-forecast convention as DE's.
+NEIGHBOUR_ZONES = ["FR", "NL", "BE", "AT", "PL", "CZ", "CH", "DK_1", "DK_2"]
+
+FUEL_COLUMNS =["ttf_gas_eur_mwh", "api2_coal_usd_t", "eua_proxy_usd"]
 FUEL_SETTLEMENT_LAG_DAYS = 2
 
 
@@ -103,6 +107,21 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
         - out["wind_offshore_forecast_mw"]
         - out["solar_forecast_mw"]
     )
+
+    for zone in NEIGHBOUR_ZONES:
+        load = cache.load(cache_root, f"entsoe/{zone}/load_forecast")
+        res = cache.load(cache_root, f"entsoe/{zone}/wind_solar_forecast")
+        if load.empty:
+            continue
+        load_mw = resample_hourly(load[["Forecasted Load"]])["Forecasted Load"]
+        # a zone without wind/solar reporting has none to subtract; an hour
+        # missing from the reported forecast stays NaN
+        res_mw = (
+            resample_hourly(res).sum(axis=1, min_count=1).reindex(load_mw.index)
+            if not res.empty
+            else 0.0
+        )
+        out[f"rl_{zone.lower()}_mw"] = (load_mw - res_mw).reindex(index)
 
     fuels = cache.load(cache_root, "fuels_daily")
     if not fuels.empty:
