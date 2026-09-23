@@ -176,6 +176,29 @@ average, and pays for it on every other hour. What the peaks need is a forecast
 distribution, not a shifted median. That is the quantile step's job, and G1/G2s show that
 the fuel level is the right unit for its upper quantiles.
 
+**Outage version rule (recorded before any G3 run).** Finding: ENTSO-E re-stamped every
+outage message dated before the 2025-10-05..07 platform migration. All revisions of a
+January-2024 message carry `createdDateTime` values from those three days (checked on the
+probe sample and on four multi-revision messages queried per mRID). Revision contents
+survive, their publication times do not. So a true as-of reconstruction exists only from
+2025-10 on. Rules, with cutoff c = 10:00 UTC on D−1:
+- *Exact* (2025-10 onward, validation only): per message, the latest revision with
+  createdDateTime ≤ c; withdrawn messages count only for revisions before the withdrawal.
+- *Approximate* (the whole history, used by G3): latest version only.
+  - **Planned** messages: counted from the latest schedule. Leak: postponements and
+    cancellations published after c.
+  - **Forced** messages: counted only if the outage started before c − 1 h (REMIT's
+    one-hour publication rule makes it public by c). The unavailable MW at c is held flat
+    over all of D, a persistence forecast, so later revisions to its end date never enter.
+  - Only generation units (A80) of zones DE_LU and FR; wind and solar outages dropped.
+- Features: unavailable MW for DE thermal (nuclear, lignite, hard coal, gas, oil), DE
+  total, FR nuclear, FR total. Plus DE margin = installed dispatchable capacity (ENTSO-E
+  installed capacity per type, yearly: fossil, nuclear, hydro storage, biomass) − DE
+  unavailable dispatchable − DE residual load forecast.
+- Validation before trusting G3: on 2025-10..2026-09, the approximate vs the exact
+  features hour by hour. Required: correlation ≥ 0.9 and mean |diff| ≤ 10 % of the mean.
+  Otherwise the G3 result is reported as optimistic.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
