@@ -229,6 +229,31 @@ median's bias there is ≥ −10 (G2: −15.2).
 Decision: if (24) holds or the median ties G2 within 0.3 MAE with (25) met, run Optuna
 (pod, validation year 2025 trained through 2024, 30–60 trials). If not, stop there.
 
+**Result (same day, pod, 20 min, run `qnn-de-20260923-155904`).** Median MAE **16.18**
+(rMAE 0.426) vs G2 14.175 and LEAR 16.32; DM vs G2 −8.1. Mean pinball 5.84 (CRPS ≈ 11.7).
+**(24) missed**, and not within 0.3, so by the rule above no Optuna yet. **(25) missed:** the
+80 % interval covers 69 %, the 98 % interval 93.6 %; the median is exceeded 56.7 % of the
+time (biased low). **(26) half:** the 90th percentile is exceeded 33 % of the time on
+>200 hours (met), but the median's bias there is −52 (missed). By year (MAE):
+
+| year | QNN | G2 | LEAR | QNN bias |
+|---|---|---|---|---|
+| 2020 | 4.28 | 4.26 | 4.70 | +0.7 |
+| 2021 | 16.42 | 12.43 | 14.19 | −10.2 |
+| 2022 | 40.31 | 30.97 | 34.56 | −26.3 |
+| 2023 | **13.97** | 15.45 | 18.60 | +1.3 |
+| 2024 | 12.09 | 11.43 | 13.50 | −0.8 |
+| 2025 | 12.09 | 10.87 | 12.81 | −2.6 |
+| 2026 | 13.54 | 13.73 | 15.79 | −3.3 |
+
+Sept 2026: QNN 19.2 (h16–18 30.9) vs G2 22.0 (34.5). Reading: the loss is almost all
+2021–22, where the median trails the price rally by 10–26 EUR/MWh. Outside the crisis the
+network alone is level with LEAR + trees + neighbours. The failure is structural, not
+hyperparameters. Targets are scaled by the training window's median and MAD, which the
+expanding window anchors to the cheap 2019–20 levels, and refits come only once a month.
+So in 2022 the prices sit far out in the asinh tail, where the output saturates. The
+smoke test's 6.84 on Jan–Feb 2024 was two calm months, not a leak.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
