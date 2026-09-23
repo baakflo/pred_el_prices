@@ -185,6 +185,17 @@ def main() -> None:
     bf.add_argument("--start", required=True, help="First delivery day (UTC, YYYY-MM-DD)")
     bf.add_argument("--end", required=True, help="Last delivery day (UTC, YYYY-MM-DD)")
 
+    sr = sub.add_parser("score-run", help="Score a forecast run and write scorecard.json into it")
+    sr.add_argument("run_dir", type=Path, help="Run directory (contains forecast.parquet)")
+    sr.add_argument(
+        "--vs", type=Path, default=None, dest="vs_run_dir", help="Baseline run to compare against"
+    )
+    sr.add_argument("--start", default=None, help="Slice start day, UTC (YYYY-MM-DD, inclusive)")
+    sr.add_argument("--end", default=None, help="Slice end day, UTC (YYYY-MM-DD, inclusive)")
+    sr.add_argument(
+        "--dataset", type=Path, default=Path("data/dataset/hourly.parquet"), help="Price dataset"
+    )
+
     runx = sub.add_parser("run", help="Run a named experiment (artifacts land in runs/)")
     runx.add_argument("name", help="Experiment name, e.g. lear-de")
     runx.add_argument(
@@ -306,6 +317,29 @@ def main() -> None:
         from pred_el_prices.daily_forecast import backfill_history
 
         backfill_history(args.out, args.runs, args.start, args.end)
+    elif args.command == "score-run":
+        import json
+
+        import pandas as pd
+
+        from pred_el_prices.eval.scorecard import compare, load_forecast, score
+
+        fc = load_forecast(args.run_dir)
+        if args.start or args.end:
+            fc = fc.loc[args.start : args.end]
+        prices_all = pd.read_parquet(args.dataset)["price_eur_mwh"]
+        result = score(fc, prices_all)
+        if args.vs_run_dir is not None:
+            fc_a = load_forecast(args.vs_run_dir)
+            result["vs"] = compare(fc_a, fc)
+        if args.start or args.end:
+            start_label = args.start or fc.index.min().date().isoformat()
+            end_label = args.end or fc.index.max().date().isoformat()
+            out_path = args.run_dir / f"scorecard_{start_label}_{end_label}.json"
+        else:
+            out_path = args.run_dir / "scorecard.json"
+        out_path.write_text(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2))
     elif args.command == "run":
         import json
 
