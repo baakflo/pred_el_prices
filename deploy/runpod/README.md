@@ -32,6 +32,7 @@ RunPod console → Templates → New Template:
 | Container Disk | 20 GB |
 | Volume | 30 GB mounted at `/workspace` (survives pod stop/restart) |
 | Env var `GITHUB_PAT` | `{{ RUNPOD_SECRET_github_pat }}` |
+| Env var `PEP_REPO` | optional; `pred_el_prices_nl` to track the private dev repo (then scope the PAT to that repo and use its URL in the start command below) |
 | Expose SSH | keep TCP port 22 exposed (default in official images) |
 
 Container Start Command (one line):

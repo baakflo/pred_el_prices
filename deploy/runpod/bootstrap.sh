@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # RunPod bootstrap: idempotent setup of pred_el_prices on a fresh pod.
 # Expects GITHUB_PAT in the environment (injected via a RunPod secret).
+# PEP_REPO picks the GitHub repo (default: the public pred_el_prices; the
+# private dev repo pred_el_prices_nl needs a PAT scoped to it).
 set -euo pipefail
 
+REPO="${PEP_REPO:-pred_el_prices}"
 REPO_DIR=/workspace/pred_el_prices
 
 if [ -d "$REPO_DIR/.git" ]; then
     git -C "$REPO_DIR" pull --ff-only
 else
-    git clone "https://${GITHUB_PAT}@github.com/baakflo/pred_el_prices.git" "$REPO_DIR"
+    git clone "https://${GITHUB_PAT}@github.com/baakflo/${REPO}.git" "$REPO_DIR"
 fi
 
 # GRIB decoding: the Linux eccodes wheel has no bundled binary (same as CI)
