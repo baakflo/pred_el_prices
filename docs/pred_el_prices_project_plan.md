@@ -286,6 +286,30 @@ per-day CRPS-approximating pinball; (32) the 80 % coverage stays below 75 %. Pin
 tuning alone will not fix calibration; that needs a separate recalibration step (e.g.
 conformal widening), registered separately if (32) holds.
 
+**Outage validation (2026-09-23, before G3): the registered approximation fails.** Exact
+pre-gate unavailability was reconstructed from real revision timestamps (617 of 625
+multi-revision DE messages complete, nothing pending) for Nov–Dec 2025 (DE) and Nov
+2025–Jan 2026 (FR), then compared hour by hour with rule A (the registered one) and rule B
+(only outages running at the cutoff, planned or forced, held flat):
+
+| feature | exact mean | rule A: bias / corr / mean abs diff | rule B |
+|---|---|---|---|
+| DE thermal | 6,706 MW | +1,964 / 0.48 / 31 % | +1,975 / 0.27 / 36 % |
+| DE dispatchable | 8,210 | +1,986 / 0.36 / 25 % | +2,119 / 0.13 / 31 % |
+| FR nuclear | 9,735 | +1,539 / 0.65 / 17 % | +1,555 / 0.65 / 18 % |
+| FR total | 12,172 | +1,889 / 0.65 / 17 % | +2,100 / 0.63 / 19 % |
+
+Required was correlation ≥ 0.9 and ≤ 10 %; both rules miss by far. Cause: German REMIT
+publication is late. Among "planned maintenance" messages starting in Nov–Dec 2025, the
+median went out 13 h before the start, a quarter after it had begun, and 10 % more than
+61 h late. Forced messages: median 0.2 h after the start, 10 % more than two days late. A
+message's final version therefore contains outages nobody could see at the gate, whatever
+rule filters it. **Pre-2025-10 pre-gate unavailability is not recoverable from ENTSO-E.**
+Per the rule above, G3 runs with rule A and its result is an optimistic upper bound: no
+gain there means outages are out; a gain is untrustworthy until it is re-measured on
+exact data. Clean route: daily 10:00 UTC outage snapshots from now on, plus the exact
+reconstruction from 2025-10, then re-test once there is a year or more of it.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.

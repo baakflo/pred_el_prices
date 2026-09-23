@@ -95,6 +95,23 @@ def main() -> None:
         help="Neighbour zones as entsoe-py area codes, e.g. FR NL (default: Germany)",
     )
 
+    outages = sub.add_parser(
+        "fetch-outages",
+        help="Backfill ENTSO-E REMIT generation-unit outage documents (resumes where it left off)",
+    )
+    outages.add_argument(
+        "--zones", nargs="+", default=["DE_LU", "FR"], help="entsoe-py area codes"
+    )
+    outages.add_argument("--start", default="2018-12-01", help="UTC start date")
+    outages.add_argument("--end", default=None, help="UTC end date (default: now)")
+    outages.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
+    outages.add_argument(
+        "--revisions-since",
+        default="2025-10-01",
+        help="Only pull per-document revision history for months on/after this UTC date "
+        "(one request per changed document; earlier months store latest-version rows only)",
+    )
+
     capacity = sub.add_parser(
         "fetch-capacity",
         help="Update the monthly installed wind/solar capacity cache (energy-charts.info)",
@@ -266,6 +283,19 @@ def main() -> None:
         client = EntsoePandasClient(api_key=entsoe_api_key())
         for zone in args.zones or [None]:
             backfill(client, datasets, start, end, args.cache_dir, zone=zone)
+    elif args.command == "fetch-outages":
+        import pandas as pd
+        from entsoe import EntsoePandasClient
+
+        from pred_el_prices.config import entsoe_api_key
+        from pred_el_prices.pipeline.outages import backfill, fetch_installed_capacity
+
+        start = pd.Timestamp(args.start, tz="UTC")
+        end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
+        revisions_since = pd.Timestamp(args.revisions_since, tz="UTC")
+        client = EntsoePandasClient(api_key=entsoe_api_key())
+        fetch_installed_capacity(client, args.zones, range(2018, 2027), args.cache_dir)
+        backfill(client, args.zones, start, end, args.cache_dir, revisions_since=revisions_since)
     elif args.command == "fetch-capacity":
         from pred_el_prices.pipeline.capacity import update_cache
 

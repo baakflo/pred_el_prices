@@ -70,7 +70,10 @@ def build_features(
     used. See the module docstring for the leakage argument per feature.
 
     `groups` adds optional feature groups: "neighbours" (day-ahead residual
-    load of the neighbouring zones, same TSO-forecast convention as DE's).
+    load of the neighbouring zones, same TSO-forecast convention as DE's) and
+    "outages" (unavailable capacity DE/FR and the DE margin, from
+    features/outages.py — an approximation that overstates what was public at
+    the gate, so gains are an upper bound).
     `direct` drops everything derived from LEAR and adds price lags instead,
     for a tree that forecasts the price itself; the D-1 lag skips UTC 22-23
     for the same reason the D-1 error features do.
@@ -105,6 +108,21 @@ def build_features(
         x["rl_neighbours_mw"] = nb.sum(axis=1, skipna=False)
         x["rl_region_mw"] = x["rl_neighbours_mw"] + ds["residual_load_forecast_mw"]
         x["rl_region_day_max"] = x["rl_region_mw"].groupby(day_key).transform("max")
+
+    if "outages" in groups:
+        for c in (
+            "unavail_de_thermal_mw",
+            "unavail_de_dispatchable_mw",
+            "unavail_fr_nuclear_mw",
+            "unavail_fr_total_mw",
+        ):
+            x[c] = ds[c]
+        x["margin_de_mw"] = (
+            ds["installed_de_dispatchable_mw"]
+            - ds["unavail_de_dispatchable_mw"]
+            - ds["residual_load_forecast_mw"]
+        )
+        x["margin_de_day_min"] = x["margin_de_mw"].groupby(day_key).transform("min")
 
     if direct:
         price = dataset["price_eur_mwh"].reindex(full_idx)

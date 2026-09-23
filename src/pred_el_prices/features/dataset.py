@@ -123,6 +123,14 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
         )
         out[f"rl_{zone.lower()}_mw"] = (load_mw - res_mw).reindex(index)
 
+    if (cache_root / "outages" / "DE_LU" / "latest").exists():
+        # registered approximation of pre-gate unavailability; validation on
+        # 2025-11..2026-01 found it ~2 GW high (late REMIT reporting), so any
+        # model gain from these columns is an optimistic upper bound
+        from pred_el_prices.features.outages import outage_features
+
+        out = out.join(outage_features(cache_root, index))
+
     fuels = cache.load(cache_root, "fuels_daily")
     if not fuels.empty:
         lagged = fuels.copy()
