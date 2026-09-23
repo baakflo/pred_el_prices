@@ -21,6 +21,6 @@ command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 
 cd "$REPO_DIR"
-uv sync --extra dev
+uv sync --extra dev --extra nn
 
 echo "bootstrap done: $(git rev-parse --short HEAD)"

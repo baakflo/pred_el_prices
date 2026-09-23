@@ -93,9 +93,9 @@ def fetch(
     method = DATASETS[dataset]
     windows = _zone_windows(start, end) if zone is None else [(zone, start, end)]
     parts = []
-    for zone, s, e in windows:
+    for area, s, e in windows:
         try:
-            parts.append(_normalize(_call(client, method, zone, s, e)))
+            parts.append(_normalize(_call(client, method, area, s, e)))
         except NoMatchingDataError:
             pass
     if not parts:
