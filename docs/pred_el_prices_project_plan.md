@@ -299,8 +299,17 @@ single-hinge base beats GBM on plain LEAR (DM 3.1, p < 0.001); high vs low base 
    hour 0 16.5 → 8.0, DM 10.7, 473/721 days won; filling the boundary with a perfect
    surrogate instead ties (DM −0.74). Repos now diverge: nl's `build_xy(gate_safe)` drops
    price lags only — reconcile on the next sync.
-2. **Re-state published numbers** (site badges, README, write-ups) on gate-safe runs, and
-   correct the 2026-09-22 surrogate-cost claim (≈ 2.4, not 6.5).
+2. **Re-stated 2026-09-23 (website `76501c6`),** pod runs with the shipped definition
+   (code d8a18e8), long tier 2019-01-01..2026-09-21 (67,704 h): academic-364 MAE 15.21 /
+   rMAE 0.442 (`133950`; was 13.9/0.41), w56 17.56/0.511 (`134504`), w84 17.13/0.498
+   (`134542`), extended-364 18.08/0.526 (`134644`); naives 34.37 / 27.88. Input costs,
+   2024-10-01..2026-08-25, gate-safe vs leaky rerun (leaky reproduces the published
+   +0.14/+0.31/+0.43): 12Z +0.18, load surrogate +0.28, evening +0.45 EUR/MWh (runs
+   `140326..141251`). Same-horizon 2016–17 gate-safe: w56 4.597, w84 4.469 vs benchmark
+   4.593/4.529 — the "our data 4–6 % better" claim was mostly the leak. Still open:
+   `promo/peaks-*` (built on leaky arm-C backtest through 2026-08-15) and the 23
+   backfilled post-gate days 07-25..08-17 in `history.json`. The 2026-09-22 surrogate-cost
+   claim (≈ 2.4, not 6.5) is corrected in the results block above.
 3. **Ship candidate:** GBM correction on single-hinge gate-safe LEAR — needs a production
    path (monthly refit of the tree on the rolling backtest's errors) and a live A/B.
 4. **Open anomaly:** both hinges together < either alone; rerun with higher Lasso
