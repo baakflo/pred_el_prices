@@ -62,6 +62,7 @@ def run(
     dataset_path: str = "data/dataset/hourly.parquet",
     predict_exog_path: str | None = None,
     hinge: list[float] | None = None,
+    gate_safe_prices: bool = False,
 ) -> dict:
     if hinge is not None and exog != "academic":
         raise ValueError("hinge needs exog='academic' (residual load = load - res)")
@@ -103,6 +104,7 @@ def run(
         n_jobs=n_jobs,
         predict_exog=predict_exog,
         hinge_quantiles=tuple(hinge) if hinge is not None else None,
+        gate_safe_prices=gate_safe_prices,
     )
     actual = df[PRICE_COL].loc[pred.index]
     pred.to_frame().assign(actual=actual).to_parquet(out_dir / "forecast.parquet")
@@ -114,6 +116,7 @@ def run(
         "test_end": test_end,
         "exog": exog,
         "hinge": hinge,
+        "gate_safe_prices": gate_safe_prices,
         "overall": _slice_metrics(prices_all, actual, pred),
         "by_year": {},
     }

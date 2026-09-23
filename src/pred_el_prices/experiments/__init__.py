@@ -11,10 +11,11 @@ from pathlib import Path
 
 
 def run(name: str, params: dict, runs_root: Path = Path("runs")) -> dict:
-    from pred_el_prices.experiments import lear_de, load_de, res_de
+    from pred_el_prices.experiments import lear_de, lear_gbm_de, load_de, res_de
 
     registry = {
         "lear-de": lear_de.run,
+        "lear-gbm-de": lear_gbm_de.run,
         "res-de": res_de.run,
         "load-de": load_de.run,
     }

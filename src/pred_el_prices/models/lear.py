@@ -132,6 +132,7 @@ def rolling_forecast(
     n_jobs: int = 1,
     predict_exog: pd.DataFrame | None = None,
     hinge_quantiles: tuple[float, float] | None = None,
+    gate_safe_prices: bool = False,
 ) -> pd.Series:
     """Daily-recalibrated LEAR forecasts for every day from test_start to the end.
 
@@ -147,6 +148,11 @@ def rolling_forecast(
     override keep the published values.
 
     `hinge_quantiles` is passed to forecast_day (knots re-estimated per window).
+
+    `gate_safe_prices`: UTC hours 22-23 of the day before the target belong to
+    the target's LOCAL delivery day, i.e. to the very auction being forecast.
+    Plain LEAR sees them as lag-1 prices; production cannot, and heals them
+    from 24h-lag (daily_forecast.lear_forecast). True mirrors that healing.
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
@@ -173,7 +179,11 @@ def rolling_forecast(
         if day in override:
             exog_window = exog_window.copy()
             exog_window[-1, :, override_cols] = override[day].T
-        return forecast_day(prices_all[sl], exog_window, dow_all[sl], hinge_quantiles)
+        prices_window = prices_all[sl]
+        if gate_safe_prices:
+            prices_window = prices_window.copy()
+            prices_window[-2, 22:] = prices_window[-3, 22:]
+        return forecast_day(prices_window, exog_window, dow_all[sl], hinge_quantiles)
 
     if n_jobs == 1:
         preds = []

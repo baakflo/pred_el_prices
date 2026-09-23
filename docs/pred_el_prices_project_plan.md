@@ -163,6 +163,15 @@ the D−2 auction). Predictions: (7) on 2020-01..2026-09 it beats its own LEAR b
 hinge did; (9) negative-hour depth ratio at least halves — trees can learn the floor that
 a hinge could not.
 
+**Registered (2026-09-23, before the run): backtest night-hour leak.** UTC 22–23 of D−1
+are local 00:00–01:00 of delivery day D, cleared in the auction being forecast; plain
+`lear-de` feeds them to LEAR as lag-1 prices (and as the D−1 training target), production
+cannot (`daily_forecast.lear_forecast` heals them from 24h-lag). Evidence so far: the
+long-tier plain run has MAE 3.7 at hour 0 UTC, rising monotonically to 10.4 at hour 4.
+`--set gate_safe_prices=true` mirrors production's healing for prices only. Predictions:
+(10) hour-0 MAE at least doubles and hours 0–1 together lose ≥ 3 EUR/MWh; (11) overall
+rMAE worsens by ≥ 0.005 — every lear-de backtest number so far is flattered by that much.
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.

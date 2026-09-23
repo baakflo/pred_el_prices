@@ -114,6 +114,35 @@ class TestRollingForecast:
         assert np.allclose(preds.values, preds_par.values)
 
 
+class TestGateSafePrices:
+    def test_target_auction_hours_cannot_move_the_forecast(self):
+        n_days = 40
+        idx = pd.date_range("2020-01-01", periods=n_days * 24, freq="1h", tz="UTC")
+        rng = np.random.default_rng(3)
+        df = pd.DataFrame(
+            {
+                "price": 50 + rng.normal(0, 5, len(idx)),
+                "load": 50000 + rng.normal(0, 500, len(idx)),
+                "res": 10000 + rng.normal(0, 500, len(idx)),
+            },
+            index=idx,
+        )
+        test_start = idx[-24]
+        # UTC 22-23 of the day before the target: same auction as the target day
+        leaked = df.copy()
+        leaked.loc[idx[-26:-24], "price"] += 500.0
+        kw = {"calibration_window": 25, "progress_every": 0}
+        safe = rolling_forecast(
+            df, "price", ["load", "res"], test_start, gate_safe_prices=True, **kw
+        )
+        safe_leaked = rolling_forecast(
+            leaked, "price", ["load", "res"], test_start, gate_safe_prices=True, **kw
+        )
+        plain_leaked = rolling_forecast(leaked, "price", ["load", "res"], test_start, **kw)
+        assert np.array_equal(safe.values, safe_leaked.values)
+        assert not np.allclose(safe_leaked.values, plain_leaked.values)
+
+
 class TestHinge:
     def test_knots_come_from_the_window_only(self):
         rl = np.random.default_rng(0).normal(30000, 8000, (50, 24))
