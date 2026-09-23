@@ -61,7 +61,10 @@ def run(
     n_jobs: int = -1,
     dataset_path: str = "data/dataset/hourly.parquet",
     predict_exog_path: str | None = None,
+    hinge: list[float] | None = None,
 ) -> dict:
+    if hinge is not None and exog != "academic":
+        raise ValueError("hinge needs exog='academic' (residual load = load - res)")
     df = _load_dataset(dataset_path)
     start = pd.Timestamp(test_start, tz="UTC")
     if test_end is not None:
@@ -99,6 +102,7 @@ def run(
         calibration_window=window,
         n_jobs=n_jobs,
         predict_exog=predict_exog,
+        hinge_quantiles=tuple(hinge) if hinge is not None else None,
     )
     actual = df[PRICE_COL].loc[pred.index]
     pred.to_frame().assign(actual=actual).to_parquet(out_dir / "forecast.parquet")
@@ -109,6 +113,7 @@ def run(
         "test_start": test_start,
         "test_end": test_end,
         "exog": exog,
+        "hinge": hinge,
         "overall": _slice_metrics(prices_all, actual, pred),
         "by_year": {},
     }

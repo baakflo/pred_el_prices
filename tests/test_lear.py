@@ -4,7 +4,12 @@ import numpy as np
 import pandas as pd
 
 from pred_el_prices.eval.metrics import mae, naive_forecast, rmae_with_history, smape
-from pred_el_prices.models.lear import InvariantScaler, build_xy, rolling_forecast
+from pred_el_prices.models.lear import (
+    InvariantScaler,
+    build_xy,
+    hinge_features,
+    rolling_forecast,
+)
 
 
 class TestInvariantScaler:
@@ -107,3 +112,41 @@ class TestRollingForecast:
             n_jobs=2,
         )
         assert np.allclose(preds.values, preds_par.values)
+
+
+class TestHinge:
+    def test_knots_come_from_the_window_only(self):
+        rl = np.random.default_rng(0).normal(30000, 8000, (50, 24))
+        h = hinge_features(rl, (0.1, 0.9))
+        assert h.shape == (50, 48)
+        shocked = rl.copy()
+        shocked[-1] += 50000  # target day far outside the window
+        assert np.array_equal(hinge_features(shocked, (0.1, 0.9))[:-1], h[:-1])
+
+    def test_terms_are_zero_between_the_knots(self):
+        rl = np.random.default_rng(1).normal(30000, 8000, (50, 24))
+        k_lo, k_hi = np.quantile(rl[:-1], (0.1, 0.9))
+        h = hinge_features(rl, (0.1, 0.9))
+        assert np.all(h[:, :24][rl >= k_lo] == 0) and np.all(h[:, 24:][rl <= k_hi] == 0)
+        assert np.all(h[:, :24][rl < k_lo] > 0) and np.all(h[:, 24:][rl > k_hi] > 0)
+
+    def test_hinge_learns_a_price_floor(self):
+        # merit-order toy: price rises with residual load but pins at -1 below 10 GW
+        n_days = 90
+        idx = pd.date_range("2020-01-01", periods=n_days * 24, freq="1h", tz="UTC")
+        rng = np.random.default_rng(2)
+        load = 50000 + 8000 * np.sin(np.arange(len(idx)) * 2 * np.pi / 24)
+        res = rng.uniform(5000, 50000, len(idx))
+        price = np.maximum(3e-3 * (load - res - 10000), -1.0) + rng.normal(0, 1, len(idx))
+        df = pd.DataFrame({"price": price, "load": load, "res": res}, index=idx)
+        test_start = idx[70 * 24]
+        kw = {"calibration_window": 60, "progress_every": 0}
+        plain = rolling_forecast(df, "price", ["load", "res"], test_start, **kw)
+        hinged = rolling_forecast(
+            df, "price", ["load", "res"], test_start, hinge_quantiles=(0.25, 0.9), **kw
+        )
+        actual = df["price"].loc[plain.index]
+        floor = (df["load"] - df["res"]).loc[plain.index] < 10000
+        assert mae(actual[floor].values, hinged[floor].values) < mae(
+            actual[floor].values, plain[floor].values
+        )

@@ -105,6 +105,49 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
+## Status addendum (2026-09-23): Phase 2 start — bench verified, hinge experiment registered
+
+**Data refreshed** through 2026-09-23 via `pep fetch-{entsoe,smard,energy-charts,fuels,capacity}`
++ `pep build-dataset` (102,705 rows; forecast columns gap-free after SMARD patching; API2 coal
+ticker dead since 2025-12-30 — unused by any model, but it freezes `complete_rows`).
+
+**September bench = plain `pep run lear-de`** (`window=371`, academic, 2026-09-01..21): MAE
+23.284 (h16–18 39.85, h00–06 11.97). The model inputs are identical to the `postgate_rescore.py` frame except
+one hour (2025-10-25 22:00 UTC RES: SMARD-patched 38,684 vs interpolated 40,597 MW); with
+that hour interpolated the dataset run reproduces the post-gate forecast **bit-exactly**
+(23.187). So no scratch frame needs promoting. **Noise floor, measured:** that single
+1.9 GW input hour, 11 months before the test window, moves September MAE by 0.1 and single
+hours by up to 25 EUR/MWh (LASSO selection flips). September deltas of a few tenths are not
+evidence; verdicts come from DM on the long tier.
+
+**On residual load:** no run in any repo ever trained a model on it. Linear residual load is
+redundant in LEAR by construction (L − R lies in the span of L and R already present), so a
+non-result would have been expected. A hinge is not in that span.
+
+### Registered experiment (2026-09-23): hinge-LEAR
+
+**Design.** `pep run lear-de --set exog=academic --set hinge=[0.1,0.9]`: plain academic LEAR
+plus same-day (lag 0) terms max(0, k_lo − RL) and max(0, RL − k_hi), RL = load − RES
+forecast; knots = q10/q90 of RL over each calibration window (re-estimated daily, never
+the target day); terms divided by the window's RL MAD and exempt from the asinh scaling
+(`models/lear.py::hinge_features`). 247 → 295 weights (n > p at 357 rows). Arms:
+long tier window 364, 2019-01-01..2026-09-21 vs plain academic on the same fresh data;
+September tier window 371. Informational (inputs only, no fit): over 2025-08-26..2026-08-31
+q10 = 5.9 GW, q90 = 47.3 GW, and 88 % of negative-price hours have RL below q10.
+
+**Pre-registered predictions (before any hinge fit):**
+1. Long tier, negative hours: sign recall rises by ≥ 10 pp over the baseline, and the depth
+   ratio (median forecast / median actual on jointly negative hours) at least halves.
+2. Long tier, hours with actual ≥ 0: MAE no worse than baseline + 0.10 EUR/MWh.
+3. Long tier overall: rMAE lower by ≥ 0.005, DM (hinge better) p < 0.05.
+4. September: hours 16–18 improve by **less than** 3 EUR/MWh on 39.85. The high hinge does
+   not fix scarcity evenings, because scarcity is not a function of RL alone (imports,
+   outages, the slope moves within the year). Overall September change within ±1.0.
+
+**Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
+boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
+ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
+
 ## Status addendum (2026-09-22): why live MAE doubled — regime, linearity, and a measured surrogate cost
 
 **Observation:** the published 30-day mean has been climbing since early

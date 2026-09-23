@@ -61,22 +61,50 @@ def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray):
     return x, y
 
 
-def forecast_day(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray) -> np.ndarray:
+def hinge_features(rl: np.ndarray, quantiles: tuple[float, float]) -> np.ndarray:
+    """Piecewise residual-load terms, (n_days, 48): max(0, k_lo - RL) and max(0, RL - k_hi).
+
+    rl: (n_days, 24) residual load; the last row is the target day. Knots are
+    quantiles of RL over the other rows (the calibration window only), and
+    both terms are divided by that window's RL MAD so they enter on a
+    comparable scale — they bypass the asinh scaling, which would turn a
+    mostly-zero column (MAD 0 -> 1) into a log of megawatts.
+    """
+    window = rl[:-1]
+    k_lo, k_hi = np.quantile(window, quantiles)
+    mad = np.median(np.abs(window - np.median(window))) / 0.6745
+    return np.hstack([np.maximum(0.0, k_lo - rl), np.maximum(0.0, rl - k_hi)]) / mad
+
+
+def forecast_day(
+    prices: np.ndarray,
+    exog: np.ndarray,
+    dayofweek: np.ndarray,
+    hinge_quantiles: tuple[float, float] | None = None,
+) -> np.ndarray:
     """Fit on all complete days and predict the last day (whose price row is unused).
 
     Inputs cover the calibration window plus the target day as the final row;
     prices[-1] may be NaN. Returns the 24 predicted prices.
+
+    `hinge_quantiles` adds same-day (lag 0) hinge terms on residual load
+    exog[..., 0] - exog[..., 1] (i.e. exog must be [load, res]); see
+    hinge_features. None reproduces plain LEAR exactly.
     """
     x_all, y_all = build_xy(prices, exog, dayofweek)
+    n_unscaled = 7  # day-of-week dummies
+    if hinge_quantiles is not None:
+        hinges = hinge_features(exog[:, :, 0] - exog[:, :, 1], hinge_quantiles)
+        x_all = np.hstack([x_all, hinges[7:]])
+        n_unscaled += hinges.shape[1]
     x_train, y_train = x_all[:-1], y_all[:-1]
     x_pred = x_all[-1:]
 
-    n_dummies = 7
-    scaler_x = InvariantScaler().fit(x_train[:, :-n_dummies])
+    scaler_x = InvariantScaler().fit(x_train[:, :-n_unscaled])
     scaler_y = InvariantScaler().fit(y_train)  # column-wise: one median/mad per hour
 
-    xs_train = np.hstack([scaler_x.transform(x_train[:, :-n_dummies]), x_train[:, -n_dummies:]])
-    xs_pred = np.hstack([scaler_x.transform(x_pred[:, :-n_dummies]), x_pred[:, -n_dummies:]])
+    xs_train = np.hstack([scaler_x.transform(x_train[:, :-n_unscaled]), x_train[:, -n_unscaled:]])
+    xs_pred = np.hstack([scaler_x.transform(x_pred[:, :-n_unscaled]), x_pred[:, -n_unscaled:]])
     ys_train = scaler_y.transform(y_train)
 
     out = np.empty((1, 24))
@@ -103,6 +131,7 @@ def rolling_forecast(
     progress_every: int = 50,
     n_jobs: int = 1,
     predict_exog: pd.DataFrame | None = None,
+    hinge_quantiles: tuple[float, float] | None = None,
 ) -> pd.Series:
     """Daily-recalibrated LEAR forecasts for every day from test_start to the end.
 
@@ -116,6 +145,8 @@ def rolling_forecast(
     is production's information set when the official series appears post-gate
     and a substitute must be used pre-gate. Days without a complete 24-hour
     override keep the published values.
+
+    `hinge_quantiles` is passed to forecast_day (knots re-estimated per window).
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
@@ -142,7 +173,7 @@ def rolling_forecast(
         if day in override:
             exog_window = exog_window.copy()
             exog_window[-1, :, override_cols] = override[day].T
-        return forecast_day(prices_all[sl], exog_window, dow_all[sl])
+        return forecast_day(prices_all[sl], exog_window, dow_all[sl], hinge_quantiles)
 
     if n_jobs == 1:
         preds = []

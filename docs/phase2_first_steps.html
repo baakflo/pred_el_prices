@@ -1,0 +1,412 @@
+<title>Bending LEAR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=STIX+Two+Text:ital,wght@0,500;0,600;1,500&display=swap">
+<style>
+:root{
+  --bg:hsl(214 22% 98%); --panel:hsl(214 24% 95%); --ink:hsl(214 32% 12%); --ink-2:hsl(214 12% 36%);
+  --muted:hsl(214 8% 54%); --hair:hsl(214 16% 86%); --accent:hsl(214 62% 38%); --accent-soft:hsla(214,62%,38%,.10);
+  --s1:#2a78d6; --s2:#eb6834; --pt:hsla(214,20%,40%,.38); --band:hsla(214,62%,45%,.12);
+  --good:#0ca30c; --crit:#d03b3b;
+  --serif:"STIX Two Text",Georgia,"Times New Roman",serif;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --bg:hsl(214 20% 8%); --panel:hsl(214 18% 12%); --ink:hsl(214 22% 93%); --ink-2:hsl(214 12% 72%);
+  --muted:hsl(214 7% 56%); --hair:hsl(214 14% 22%); --accent:hsl(214 72% 70%); --accent-soft:hsla(214,72%,70%,.12);
+  --s1:#3987e5; --s2:#d95926; --pt:hsla(214,25%,75%,.34); --band:hsla(214,72%,65%,.14);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:hsl(214 20% 8%); --panel:hsl(214 18% 12%); --ink:hsl(214 22% 93%); --ink-2:hsl(214 12% 72%);
+  --muted:hsl(214 7% 56%); --hair:hsl(214 14% 22%); --accent:hsl(214 72% 70%); --accent-soft:hsla(214,72%,70%,.12);
+  --s1:#3987e5; --s2:#d95926; --pt:hsla(214,25%,75%,.34); --band:hsla(214,72%,65%,.14);
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.6 var(--sans);margin:0;padding-inline:20px;padding-block:40px 80px}
+.wrap{max-width:900px;margin:0 auto;display:flex;flex-direction:column;gap:56px}
+.prose{max-width:68ch}
+h1,h2,h3{font-family:var(--serif);font-weight:600;text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:clamp(2rem,5vw,2.8rem);letter-spacing:-.01em}
+h2{font-size:1.65rem}
+h3{font-size:1.15rem;margin-top:8px}
+p{margin:0}
+section{display:flex;flex-direction:column;gap:16px}
+.eyebrow{font:500 .74rem/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+.lede{font-size:1.1rem;color:var(--ink-2)}
+code,.m{font-family:var(--mono);font-size:.88em}
+.figs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:6px;overflow:hidden}
+.fig{background:var(--bg);padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+.fig b{font:500 1.5rem/1.1 var(--mono);font-variant-numeric:tabular-nums}
+.fig span{font-size:.82rem;color:var(--ink-2)}
+.panel{background:var(--panel);border-radius:8px;padding:20px;display:flex;flex-direction:column;gap:14px}
+.controls{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;font-size:.9rem}
+.controls label{display:flex;align-items:center;gap:8px;color:var(--ink-2)}
+.controls output{font-family:var(--mono);color:var(--ink);min-width:4.5ch;font-variant-numeric:tabular-nums}
+input[type=range]{accent-color:var(--accent);width:150px}
+select,button{font:inherit;font-size:.88rem;color:var(--ink);background:var(--bg);border:1px solid var(--hair);border-radius:5px;padding:4px 10px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+.chart{position:relative;width:100%}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.ctitle{font-size:.85rem;font-weight:600;margin-bottom:4px}
+.axis text,.lbl{fill:var(--muted);font:11px var(--mono)}
+.axis line,.axis path{stroke:var(--hair)}
+.grid line{stroke:var(--hair);stroke-dasharray:2 3}
+.zero{stroke:var(--muted);stroke-width:1}
+.l1{fill:none;stroke:var(--s1);stroke-width:2}
+.l2{fill:none;stroke:var(--s2);stroke-width:2}
+.pt{fill:var(--pt)}
+.mk{fill:var(--s1);stroke:var(--panel);stroke-width:2}
+.band{fill:var(--band)}
+.xh{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3}
+.tip{position:absolute;pointer-events:none;background:var(--bg);border:1px solid var(--hair);border-radius:5px;padding:6px 9px;font:12px/1.4 var(--mono);color:var(--ink);white-space:nowrap;box-shadow:0 2px 10px hsla(214,30%,10%,.12)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:.82rem;color:var(--ink-2)}
+.legend i{display:inline-block;width:14px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.readout div{display:flex;flex-direction:column;gap:2px}
+.readout b{font:500 1.15rem/1.2 var(--mono);font-variant-numeric:tabular-nums}
+.readout span{font-size:.78rem;color:var(--ink-2)}
+.verdict{font-weight:600}
+.verdict.yes{color:var(--good)} .verdict.no{color:var(--crit)}
+.eq{font-family:var(--mono);font-size:.9rem;background:var(--panel);border-radius:6px;padding:12px 16px;overflow-x:auto;line-height:1.8}
+.callout{border-left:3px solid var(--accent);padding:4px 0 4px 16px;color:var(--ink-2)}
+.callout strong{color:var(--ink)}
+table{border-collapse:collapse;font-size:.9rem;width:100%}
+.tbl{overflow-x:auto}
+th,td{text-align:left;padding:7px 12px 7px 0;border-bottom:1px solid var(--hair);vertical-align:top}
+th{font-weight:600;font-size:.8rem;color:var(--ink-2)}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.step{display:flex;gap:14px;align-items:baseline}
+.step .num{font:600 .8rem/1 var(--mono);color:var(--bg);background:var(--accent);border-radius:4px;padding:5px 8px;flex:none}
+ul{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:6px}
+.small{font-size:.84rem;color:var(--ink-2)}
+hr{border:none;border-top:1px solid var(--hair);margin:0}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header style="display:flex;flex-direction:column;gap:14px">
+  <div class="eyebrow">Phase 2 · kickoff · 2026-09-23</div>
+  <h1>Bending LEAR</h1>
+  <p class="lede prose">The linear model's price curve is a straight line in residual load, but the market's
+  merit order bends in two places: a floor just under zero and a steep wall on scarcity evenings.
+  This page covers the three steps that test whether bending the line in those two places pays off,
+  and how each step is scored.</p>
+  <div class="figs">
+    <div class="fig"><b>23.19</b><span>LEAR MAE, 1–21 Sep, official inputs (€/MWh)</span></div>
+    <div class="fig"><b>39.5</b><span>same, hours 16–18 UTC only</span></div>
+    <div class="fig"><b>11.9</b><span>same, hours 00–06 UTC only</span></div>
+    <div class="fig"><b>5–17×</b><span>how much too deep LEAR's negative prices are</span></div>
+  </div>
+</header>
+
+<section>
+  <div class="eyebrow">Before step 1 · housekeeping</div>
+  <h2>Where the data comes from</h2>
+  <p class="prose">The September test bench used to read the production cache inside
+  <code>pred_el_prices_weather_archive/site-state</code> plus a hand-made gap patch. That cache
+  only holds 2024–2026 and carries no fuel prices. Instead, the local cache in <code>data/cache</code>
+  (2015→) is refreshed from the public APIs with the project's own <code>pep fetch-*</code> commands,
+  and <code>pep build-dataset</code> rebuilds <code>hourly.parquet</code> through today. One source of truth,
+  no path into another repo.</p>
+  <div class="tbl"><table>
+    <tr><th>What</th><th>Where it lives</th><th>Status</th></tr>
+    <tr><td>ENTSO-E, SMARD, energy-charts, fuels</td><td><code>data/cache/</code> (local, gitignored)</td><td>refreshed today via <code>pep fetch-*</code></td></tr>
+    <tr><td>Model table</td><td><code>data/dataset/hourly.parquet</code></td><td>rebuilt through 2026-09-23</td></tr>
+    <tr><td>Production state, forecast log</td><td><code>pred_el_prices_weather_archive</code> (bot-committed)</td><td>read-only for us</td></tr>
+    <tr><td>Neural-phase design notes</td><td><code>pred_el_prices_benchmarks/docs/design_notes.md</code></td><td>parked there on purpose before the public release</td></tr>
+  </table></div>
+</section>
+
+<hr>
+
+<!-- ============================ STEP 1 ============================ -->
+<section>
+  <div class="step"><span class="num">STEP 1</span><h2>A test bench that any model can use</h2></div>
+  <p class="prose">Every model we try today gets the same two exams. Each exam catches something the other misses:</p>
+  <ul class="prose">
+    <li><strong>September exam</strong> (1–21 Sep 2026, 504 hours, official TSO forecasts as inputs).
+      This is the regime that broke the live forecast: evening residual load of 54–57 GW and a slope three times steeper.
+      Holding the inputs fixed means any change in score comes from the model, not from forecast noise.</li>
+    <li><strong>Long exam</strong> (rolling backtest 2019–2026, ~66,000 hours). September has almost no negative
+      hours and only 21 days, which is far too few to call a small gain real. The long exam is where negative
+      prices and statistical significance get judged.</li>
+  </ul>
+  <p class="prose">The bench is a function: give it a model and it returns the scores below. LEAR must reproduce
+  its own reference numbers through it before we trust it with anything new.</p>
+
+  <h3>The scores, one at a time</h3>
+
+  <div class="prose callout"><strong>MAE and rMAE.</strong> MAE is the average absolute error in €/MWh. rMAE divides it by the MAE of a
+  naive forecast ("same hour, one week ago"), so 0.41 means 59 % less error than copying last week. The ratio
+  lets you compare calm years with crisis years. Minimising MAE drives a model toward the <em>median</em> price,
+  which is why point models under-call spikes: a spike is never the median.</div>
+
+  <div class="panel" id="pinball">
+    <div class="ctitle">Pinball loss: MAE with a tilt</div>
+    <p class="small prose">Pinball loss punishes under-forecasts with weight τ and over-forecasts with weight 1−τ.
+    Averaged over many hours, it is minimised exactly at the τ-quantile of the price distribution. At τ = 0.5 it is
+    half the MAE. At τ = 0.9 it rewards a forecast that sits above 90 % of outcomes. This is the loss the
+    probabilistic models will train on. <b>CRPS</b> is pinball loss averaged over every τ from 0 to 1: one number
+    that scores a whole predicted distribution, and it collapses to MAE when the "distribution" is a single point.</p>
+    <div class="controls">
+      <label for="tau">quantile τ <input type="range" id="tau" min="0.05" max="0.95" step="0.05" value="0.9"><output id="tauOut">0.90</output></label>
+    </div>
+    <div class="charts">
+      <div><div class="ctitle">Loss for one hour vs error (actual − forecast)</div><div class="chart" id="pbV"></div></div>
+      <div><div class="ctitle">Average loss over 400 sample hours vs forecast value</div><div class="chart" id="pbAvg"></div></div>
+    </div>
+    <div class="legend"><span><i style="background:var(--s1)"></i>pinball loss</span><span><i style="background:var(--s2)"></i>τ-quantile of the sample</span></div>
+  </div>
+
+  <div class="panel" id="dm">
+    <div class="ctitle">The Diebold–Mariano test: "is B really better than A, or did we get lucky?"</div>
+    <p class="small prose">For each day, take model A's absolute error summed over the 24 hours, minus model B's. That gives
+    one number per day, the loss differential <span class="m">d</span>. If B is truly better, <span class="m">d</span>
+    averages above zero. The DM statistic is that average divided by its standard error (with a correction for
+    days that are correlated with their neighbours). Far from zero means the gain is real, and |DM| &gt; 1.96 is the
+    usual 5 % bar. The simulation below draws daily differentials with a known true gain. Set the gain to something
+    realistic and switch between 21 days and the long exam.</p>
+    <div class="controls">
+      <label for="dmGain">true gain <input type="range" id="dmGain" min="0" max="8" step="0.5" value="2"><output id="dmGainOut">2.0</output></label>
+      <label for="dmSd">day-to-day scatter <input type="range" id="dmSd" min="2" max="30" step="1" value="12"><output id="dmSdOut">12</output></label>
+      <label for="dmN">days <select id="dmN"><option value="21" selected>21 (September)</option><option value="90">90</option><option value="365">365</option><option value="2000">2000 (long exam)</option></select></label>
+      <button id="dmRe" type="button">Draw again</button>
+    </div>
+    <div class="chart" id="dmChart"></div>
+    <div class="legend"><span><i style="background:var(--pt)"></i>one day's loss differential d (€/MWh, 24-hour mean)</span><span><i style="background:var(--s1)"></i>sample mean</span><span><i style="background:var(--band);height:8px"></i>95 % interval of the mean</span></div>
+    <div class="readout">
+      <div><b id="dmMean">–</b><span>mean d (€/MWh)</span></div>
+      <div><b id="dmStat">–</b><span>DM statistic</span></div>
+      <div><b id="dmP">–</b><span>p-value (two-sided)</span></div>
+      <div><b id="dmNeed">–</b><span>days needed for this gain, roughly</span></div>
+      <div><span class="verdict" id="dmVerdict">–</span><span>verdict at 5 %</span></div>
+    </div>
+    <p class="small">Simulated data with independent days, for intuition only. The real test uses the epftoolbox
+    convention (24-hour norm per day) on actual forecast errors.</p>
+  </div>
+
+  <div class="prose callout"><strong>Negative-hour scores</strong> (registered 2026-08-29). <em>Sign recall</em>: of the hours
+  that cleared negative, the share the model also called negative (LEAR: 60 % backtest, 41 % live). <em>Depth ratio</em>:
+  on hours where both were negative, the model's median divided by the actual median (LEAR: −15.0 vs −2.9, i.e. 5×
+  too deep). A model that understands the zero floor should push recall up and the depth ratio toward 1 without
+  losing MAE on positive hours.</div>
+</section>
+
+<hr>
+
+<!-- ============================ STEP 2 ============================ -->
+<section>
+  <div class="step"><span class="num">STEP 2</span><h2>Hinges: two bends in a straight line</h2></div>
+
+  <div class="prose callout"><strong>"We tried residual load once, it didn't work."</strong> No run, config or report in any of
+  the three repos shows residual load actually trained into a model; the closest is the residual-only
+  explainer (<code>reports/explainers/exog_input_vectors</code>), marked untested. Either way, a linear residual
+  load <em>should not</em> work, and that is the key to this step. LEAR already sees load L and renewables R separately,
+  so adding L − R changes nothing:</div>
+  <div class="eq">β<sub>L</sub>·L + β<sub>R</sub>·R + γ·(L − R) = (β<sub>L</sub>+γ)·L + (β<sub>R</sub>−γ)·R &nbsp;&nbsp;← the same straight line, relabelled</div>
+  <p class="prose">A <strong>hinge</strong> is different: <span class="m">max(0, k − RL)</span> is zero above the knot k and
+  grows below it. No mix of L and R can produce that corner, so it hands the model a shape it had no way to express before.
+  Two hinges give a line with two bends:</p>
+  <div class="eq">price ≈ a + b·RL + c<sub>low</sub>·max(0, k<sub>low</sub> − RL) + c<sub>high</sub>·max(0, RL − k<sub>high</sub>)</div>
+  <p class="prose">The low hinge lets the line flatten into the floor just under zero, where must-run units and §51 EEG
+  curtailment bids pin the price. The high hinge lets it steepen on the scarcity wall. It stays a linear model in its weights,
+  so LASSO, the rolling refit and every existing guarantee still apply. The plot below uses synthetic data shaped like the real merit order.</p>
+
+  <div class="panel" id="hinge">
+    <div class="controls">
+      <label for="hLowOn"><input type="checkbox" id="hLowOn" checked> low hinge at</label>
+      <label for="kLow" style="margin-left:-16px"><input type="range" id="kLow" min="-10" max="20" step="1" value="4"><output id="kLowOut">4 GW</output></label>
+      <label for="hHighOn"><input type="checkbox" id="hHighOn" checked> high hinge at</label>
+      <label for="kHigh" style="margin-left:-16px"><input type="range" id="kHigh" min="30" max="58" step="1" value="45"><output id="kHighOut">45 GW</output></label>
+    </div>
+    <div class="chart" id="hingeChart"></div>
+    <div class="legend"><span><i style="background:var(--pt);height:8px;width:8px;border-radius:50%"></i>synthetic hours</span><span><i style="background:var(--s1)"></i>straight line (today's LEAR, in spirit)</span><span><i style="background:var(--s2)"></i>line with hinges</span></div>
+    <div class="tbl"><table id="hingeTbl">
+      <tr><th></th><th>MAE, all hours</th><th>MAE, RL &gt; 45 GW</th><th>sign recall</th><th>depth ratio</th></tr>
+      <tr><td>straight line</td><td class="n" id="t1a"></td><td class="n" id="t1b"></td><td class="n" id="t1c"></td><td class="n" id="t1d"></td></tr>
+      <tr><td>with hinges</td><td class="n" id="t2a"></td><td class="n" id="t2b"></td><td class="n" id="t2c"></td><td class="n" id="t2d"></td></tr>
+    </table></div>
+  </div>
+
+  <h3>How it goes into the real model</h3>
+  <ul class="prose">
+    <li><strong>Knots from the calibration window only.</strong> Each daily refit sets k<sub>low</sub> and k<sub>high</sub> from
+      residual-load quantiles of its own training days, so the knots never see the test day.</li>
+    <li><strong>Same-day only (lag 0).</strong> Every extra input series normally costs 72 weights (3 lags × 24 h). Two hinges at
+      all lags would take the model from 247 to 391 weights against 357 training days, back into the n &lt; p regime that
+      distorted the 364-day ablation. At lag 0 they cost 48 weights, giving 295.</li>
+    <li><strong>Predictions written down before the fit</strong>, like every earlier experiment.</li>
+    <li><strong>Pass condition:</strong> hours 16–18 in September improve on 39.5; on the long exam, sign recall and depth ratio
+      improve with no MAE lost on positive hours, and DM confirms it against plain LEAR. If hinges get most of the way there,
+      "this needs a neural net" goes into the plan as overstated.</li>
+  </ul>
+</section>
+
+<hr>
+
+<!-- ============================ STEP 3 ============================ -->
+<section>
+  <div class="step"><span class="num">STEP 3</span><h2>Trees that correct LEAR</h2></div>
+  <p class="prose">A gradient-boosted tree model (sklearn's HistGradientBoosting, as used by <code>res-de</code> and
+  <code>load-de</code>) learns <em>LEAR's error</em>, not the price. The final forecast is LEAR plus the tree's correction.
+  LEAR stays in charge of the price level. Trees can't extrapolate: a tree never predicts beyond values it saw in training, so
+  on its own it could not follow a gas-price shock. A correction layer can still learn patterns like "high-RL evenings
+  with a scarce margin: LEAR runs 40 low".</p>
+  <ul class="prose">
+    <li><strong>Target:</strong> LEAR's <em>out-of-sample</em> error from the rolling backtest. In-sample residuals are
+      shrunk by the fit and would teach the trees that LEAR is better than it is.</li>
+    <li><strong>Features:</strong> residual load and the hinges, hour, weekday, TTF gas and EUA carbon (2-day lag, not
+      yet used by any model), LEAR's own forecast, and LEAR's recent errors.</li>
+    <li><strong>Refit:</strong> expanding window, once a month, each month predicted only by a model trained on earlier months
+      (the <code>res-de</code> loop).</li>
+  </ul>
+  <div class="prose callout"><strong>Correction to what I told you this morning.</strong> I said LEAR's error from yesterday
+  would leak. It doesn't: the prices for day D−1 come out of the D−2 auction, so they are public a full day before
+  the D−1 12:00 gate. LEAR already uses them as its lag-1 input. Yesterday's LEAR error is fair game. The real trap
+  is the in-sample residual described above.</div>
+  <p class="prose"><strong>Pass condition:</strong> beats the step-2 winner on both exams, significant under DM on the long one.
+  This is also the bridge to probabilistic output: swap the tree's loss for pinball loss and the same machinery predicts quantiles.</p>
+</section>
+
+<p class="small">Sources: plan addenda 2026-08-29 and 2026-09-22 (<code>docs/pred_el_prices_project_plan.md</code>);
+reference numbers from <code>_scratch/postgate_rescore_2026-09</code>. Interactive panels use synthetic data.</p>
+</div>
+
+<script>
+(function(){
+const NS="http://www.w3.org/2000/svg";
+function rng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function gauss(r){let u=0,v=0;while(!u)u=r();while(!v)v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function el(tag,attrs,parent){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+function ticks(a,b,n){const step=Math.pow(10,Math.floor(Math.log10((b-a)/n)));const err=(b-a)/n/step;const s=step*(err>=7.5?10:err>=3.5?5:err>=1.5?2:1);const out=[];for(let v=Math.ceil(a/s)*s;v<=b+1e-9;v+=s)out.push(+v.toFixed(10));return out;}
+function frame(host,{W=560,H=280,x,y,xl,yl}){
+  host.innerHTML="";
+  const m={l:48,r:14,t:10,b:36};
+  const svg=el("svg",{viewBox:`0 0 ${W} ${H}`,role:"img"},host);
+  const sx=v=>m.l+(v-x[0])/(x[1]-x[0])*(W-m.l-m.r);
+  const sy=v=>H-m.b-(v-y[0])/(y[1]-y[0])*(H-m.t-m.b);
+  const g=el("g",{class:"grid"},svg), ax=el("g",{class:"axis"},svg);
+  for(const t of ticks(y[0],y[1],5)){el("line",{x1:m.l,x2:W-m.r,y1:sy(t),y2:sy(t)},g);const tx=el("text",{x:m.l-6,y:sy(t)+4,"text-anchor":"end"},ax);tx.textContent=t;}
+  for(const t of ticks(x[0],x[1],6)){const tx=el("text",{x:sx(t),y:H-m.b+16,"text-anchor":"middle"},ax);tx.textContent=t;}
+  el("line",{x1:m.l,x2:W-m.r,y1:H-m.b,y2:H-m.b},ax);
+  if(xl){const t=el("text",{x:W-m.r,y:H-4,"text-anchor":"end",class:"lbl"},svg);t.textContent=xl;}
+  if(yl){const t=el("text",{x:m.l,y:m.t-0,"text-anchor":"start",class:"lbl",dy:"-2"},svg);t.textContent=yl;}
+  return {svg,sx,sy,m,W,H};
+}
+function path(pts,cls,f){const d=pts.map((p,i)=>(i?"L":"M")+f.sx(p[0]).toFixed(1)+","+f.sy(p[1]).toFixed(1)).join("");return el("path",{d,class:cls},f.svg);}
+function hover(host,f,xr,fn){
+  const tip=document.createElement("div");tip.className="tip";tip.hidden=true;host.appendChild(tip);
+  const line=el("line",{class:"xh",y1:f.m.t,y2:f.H-f.m.b,visibility:"hidden"},f.svg);
+  const hit=el("rect",{x:f.m.l,y:f.m.t,width:f.W-f.m.l-f.m.r,height:f.H-f.m.t-f.m.b,fill:"transparent"},f.svg);
+  function move(ev){const r=f.svg.getBoundingClientRect();const px=(ev.clientX-r.left)/r.width*f.W;
+    const v=xr[0]+(px-f.m.l)/(f.W-f.m.l-f.m.r)*(xr[1]-xr[0]);if(v<xr[0]||v>xr[1])return;
+    line.setAttribute("x1",f.sx(v));line.setAttribute("x2",f.sx(v));line.setAttribute("visibility","visible");
+    tip.innerHTML=fn(v);tip.hidden=false;const hr=host.getBoundingClientRect();let left=ev.clientX-hr.left+12;
+    if(left+tip.offsetWidth>hr.width)left=ev.clientX-hr.left-tip.offsetWidth-12;tip.style.left=left+"px";tip.style.top=(ev.clientY-hr.top-10)+"px";}
+  hit.addEventListener("pointermove",move);hit.addEventListener("pointerleave",()=>{tip.hidden=true;line.setAttribute("visibility","hidden");});
+}
+const fmt=(v,d=1)=>v.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+
+/* ---------------- pinball ---------------- */
+const pr=rng(7), sample=[];
+for(let i=0;i<400;i++){let p=85+28*gauss(pr);if(pr()<0.12)p+=60+90*pr()*pr()*2;if(pr()<0.05)p=-2-6*pr();sample.push(p);}
+const sorted=[...sample].sort((a,b)=>a-b);
+const pin=(e,t)=>e>=0?t*e:(t-1)*e;
+function drawPinball(){
+  const t=+document.getElementById("tau").value;document.getElementById("tauOut").textContent=t.toFixed(2);
+  const fv=frame(document.getElementById("pbV"),{W:420,H:240,x:[-60,60],y:[0,60],xl:"error (€/MWh)",yl:"loss"});
+  el("line",{class:"zero",x1:fv.sx(0),x2:fv.sx(0),y1:fv.m.t,y2:fv.H-fv.m.b},fv.svg);
+  const vp=[];for(let e=-60;e<=60;e+=1)vp.push([e,pin(e,t)]);path(vp,"l1",fv);
+  const lab=el("text",{x:fv.sx(40),y:fv.sy(pin(40,t))-8,"text-anchor":"middle",class:"lbl"},fv.svg);lab.textContent="slope τ = "+t.toFixed(2);
+  const lab2=el("text",{x:fv.sx(-40),y:fv.sy(pin(-40,t))-8,"text-anchor":"middle",class:"lbl"},fv.svg);lab2.textContent="slope 1−τ = "+(1-t).toFixed(2);
+  hover(document.getElementById("pbV"),fv,[-60,60],v=>`error ${fmt(v,0)} → loss ${fmt(pin(v,t))}`);
+  const avg=q=>sample.reduce((s,y)=>s+pin(y-q,t),0)/sample.length;
+  const pts=[];let best=[0,1e9];for(let q=-20;q<=260;q+=2){const a=avg(q);pts.push([q,a]);if(a<best[1])best=[q,a];}
+  const ymax=Math.max(...pts.map(p=>p[1]));
+  const fa=frame(document.getElementById("pbAvg"),{W:420,H:240,x:[-20,260],y:[0,Math.ceil(ymax/10)*10],xl:"forecast (€/MWh)",yl:"avg loss"});
+  const qv=sorted[Math.min(sorted.length-1,Math.floor(t*sorted.length))];
+  el("line",{x1:fa.sx(qv),x2:fa.sx(qv),y1:fa.m.t,y2:fa.H-fa.m.b,stroke:"var(--s2)","stroke-width":2},fa.svg);
+  path(pts,"l1",fa);el("circle",{cx:fa.sx(best[0]),cy:fa.sy(best[1]),r:5,class:"mk"},fa.svg);
+  const ql=el("text",{x:fa.sx(qv)+6,y:fa.m.t+12,class:"lbl"},fa.svg);ql.textContent=`${Math.round(t*100)}th pct = ${fmt(qv,0)}`;
+  hover(document.getElementById("pbAvg"),fa,[-20,260],v=>`forecast ${fmt(v,0)} → avg loss ${fmt(avg(v),2)}`);
+}
+document.getElementById("tau").addEventListener("input",drawPinball);drawPinball();
+
+/* ---------------- Diebold–Mariano ---------------- */
+let dmSeed=11;
+function normCdf(z){const t=1/(1+0.2316419*Math.abs(z));const d=0.3989423*Math.exp(-z*z/2);const p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return z>0?1-p:p;}
+function drawDM(){
+  const gain=+document.getElementById("dmGain").value, sd=+document.getElementById("dmSd").value, n=+document.getElementById("dmN").value;
+  document.getElementById("dmGainOut").textContent=fmt(gain);document.getElementById("dmSdOut").textContent=sd;
+  const r=rng(dmSeed), d=[];for(let i=0;i<n;i++)d.push(gain+sd*gauss(r));
+  const mean=d.reduce((a,b)=>a+b,0)/n, v=d.reduce((a,b)=>a+(b-mean)**2,0)/(n-1), se=Math.sqrt(v/n), dm=mean/se, p=2*(1-normCdf(Math.abs(dm)));
+  const lim=Math.max(20,Math.ceil((Math.abs(gain)+3*sd)/10)*10);
+  const host=document.getElementById("dmChart");
+  const f=frame(host,{W:860,H:230,x:[0,n],y:[-lim,lim],xl:"day",yl:"d (€/MWh)"});
+  el("rect",{x:f.m.l,width:f.W-f.m.l-f.m.r,y:f.sy(mean+1.96*se),height:Math.max(1,f.sy(mean-1.96*se)-f.sy(mean+1.96*se)),class:"band"},f.svg);
+  el("line",{class:"zero",x1:f.m.l,x2:f.W-f.m.r,y1:f.sy(0),y2:f.sy(0)},f.svg);
+  const rad=n>500?1.6:n>100?2.6:4.5;
+  d.forEach((y,i)=>el("circle",{cx:f.sx(i+0.5),cy:f.sy(Math.max(-lim,Math.min(lim,y))),r:rad,class:"pt"},f.svg));
+  el("line",{x1:f.m.l,x2:f.W-f.m.r,y1:f.sy(mean),y2:f.sy(mean),class:"l1"},f.svg);
+  hover(host,f,[0,n],x=>{const i=Math.min(n-1,Math.max(0,Math.floor(x)));return `day ${i+1}: d = ${fmt(d[i])} €/MWh`;});
+  document.getElementById("dmMean").textContent=fmt(mean,2);
+  document.getElementById("dmStat").textContent=fmt(dm,2);
+  document.getElementById("dmP").textContent=p<0.001?"< 0.001":fmt(p,3);
+  document.getElementById("dmNeed").textContent=gain>0?"≈ "+Math.ceil((2.8*sd/gain)**2).toLocaleString("en-US"):"∞";
+  const vEl=document.getElementById("dmVerdict");const sig=Math.abs(dm)>1.96;
+  vEl.textContent=sig?(dm>0?"✓ B significantly better":"✓ A significantly better"):"✗ can't tell apart";vEl.className="verdict "+(sig?"yes":"no");
+}
+["dmGain","dmSd","dmN"].forEach(id=>document.getElementById(id).addEventListener("input",drawDM));
+document.getElementById("dmRe").addEventListener("click",()=>{dmSeed++;drawDM();});drawDM();
+
+/* ---------------- hinges ---------------- */
+const hr=rng(3), H=[];
+for(let i=0;i<700;i++){
+  const u=hr();const rl=u<0.2?-15+25*hr():u<0.9?10+40*hr():50+12*hr();
+  let m=2.4*(rl-4)+(rl>45?7*(rl-45):0);
+  let p=m>0?m+(6+0.08*m)*gauss(hr):-(0.4+4.5*hr()*hr());
+  if(m<=0&&hr()<0.06)p=m*0.6;
+  H.push([rl,p]);
+}
+function solve(A,b){const n=b.length;A=A.map((r,i)=>[...r,b[i]]);
+  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;[A[c],A[p]]=[A[p],A[c]];
+    for(let r=0;r<n;r++){if(r===c)continue;const f=A[r][c]/A[c][c];for(let k=c;k<=n;k++)A[r][k]-=f*A[c][k];}}
+  return A.map((r,i)=>r[n]/r[i]);}
+function fit(feat){const X=H.map(([x])=>feat(x)),k=X[0].length;
+  const A=Array.from({length:k},()=>Array(k).fill(0)),b=Array(k).fill(0);
+  X.forEach((row,i)=>{for(let a=0;a<k;a++){b[a]+=row[a]*H[i][1];for(let c=0;c<k;c++)A[a][c]+=row[a]*row[c];}});
+  const w=solve(A,b);return x=>feat(x).reduce((s,v,i)=>s+v*w[i],0);}
+function median(a){if(!a.length)return NaN;const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+function scores(f){const e=H.map(([x,y])=>Math.abs(f(x)-y));const hi=H.map((p,i)=>[p,e[i]]).filter(([p])=>p[0]>45);
+  const neg=H.filter(p=>p[1]<0);const called=neg.filter(([x])=>f(x)<0);
+  return{mae:e.reduce((a,b)=>a+b,0)/e.length,maeHi:hi.reduce((a,[,v])=>a+v,0)/hi.length,
+    recall:called.length/neg.length,depth:median(called.map(([x])=>f(x)))/median(called.map(p=>p[1]))};}
+function drawHinge(){
+  const kl=+document.getElementById("kLow").value,kh=+document.getElementById("kHigh").value;
+  const lo=document.getElementById("hLowOn").checked,hi=document.getElementById("hHighOn").checked;
+  document.getElementById("kLowOut").textContent=kl+" GW";document.getElementById("kHighOut").textContent=kh+" GW";
+  const lin=fit(x=>[1,x]);
+  const hin=fit(x=>{const r=[1,x];if(lo)r.push(Math.max(0,kl-x));if(hi)r.push(Math.max(0,x-kh));return r;});
+  const host=document.getElementById("hingeChart");
+  const f=frame(host,{W:860,H:340,x:[-15,62],y:[-80,280],xl:"residual load forecast (GW)",yl:"price (€/MWh)"});
+  el("line",{class:"zero",x1:f.m.l,x2:f.W-f.m.r,y1:f.sy(0),y2:f.sy(0)},f.svg);
+  H.forEach(([x,y])=>el("circle",{cx:f.sx(x),cy:f.sy(Math.max(-80,Math.min(280,y))),r:2.6,class:"pt"},f.svg));
+  const lp=[],hp=[];for(let x=-15;x<=62;x+=0.5){lp.push([x,Math.max(-80,Math.min(280,lin(x)))]);hp.push([x,Math.max(-80,Math.min(280,hin(x)))]);}
+  path(lp,"l1",f);path(hp,"l2",f);
+  [[lo,kl],[hi,kh]].forEach(([on,k])=>{if(!on)return;el("line",{x1:f.sx(k),x2:f.sx(k),y1:f.m.t,y2:f.H-f.m.b,class:"xh"},f.svg);
+    const t=el("text",{x:f.sx(k)+5,y:f.m.t+12,class:"lbl"},f.svg);t.textContent="knot "+k;});
+  hover(host,f,[-15,62],x=>`RL ${fmt(x)} GW<br>straight ${fmt(lin(x))}<br>hinged &nbsp;&nbsp;${fmt(hin(x))}`);
+  const a=scores(lin),b=scores(hin);
+  const pct=v=>isFinite(v)?Math.round(v*100)+" %":"–", rat=v=>isFinite(v)?fmt(v)+"×":"–";
+  [["t1",a],["t2",b]].forEach(([p,s])=>{document.getElementById(p+"a").textContent=fmt(s.mae);document.getElementById(p+"b").textContent=fmt(s.maeHi);
+    document.getElementById(p+"c").textContent=pct(s.recall);document.getElementById(p+"d").textContent=rat(s.depth);});
+}
+["kLow","kHigh","hLowOn","hHighOn"].forEach(id=>document.getElementById(id).addEventListener("input",drawHinge));drawHinge();
+})();
+</script>
