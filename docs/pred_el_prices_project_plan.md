@@ -310,6 +310,23 @@ gain there means outages are out; a gain is untrustworthy until it is re-measure
 exact data. Clean route: daily 10:00 UTC outage snapshots from now on, plus the exact
 reconstruction from 2025-10, then re-test once there is a year or more of it.
 
+**G3 and D3 results (same evening, laptop).**
+
+| arm | run | MAE | h16–18 | >200 MAE / bias | Sept 26 / h16–18 | DM vs G2 |
+|---|---|---|---|---|---|---|
+| G2 | `151236` | 14.175 | 18.58 | 41.0 / −15.2 | 22.0 / 34.5 | — |
+| G3 = G2 + outages (rule A, upper bound) | `175737` | 14.231 | 18.48 | 41.7 / −11.9 | 20.7 / 32.6 | −0.9 (p 0.82) |
+| D3 direct trees, G2 features | `180452` | 17.367 | — | — | — | — |
+
+**(21) missed:** even the leaky outage features add nothing overall. They nudge the peak bias
+and September, but not beyond noise. Outages stay out of the tree correction. The only
+route left is exact snapshots, re-tested once they cover a year. **(22)** D3 loses to the
+stack by 3.1 (met), but also to LEAR alone (16.32, missed). Its by-year profile mirrors
+the first QNN: fine in calm years (2023 13.2 vs LEAR 18.6), lost in the rally (2022 43.7).
+D3 ran on G2's features rather than G3's, since G3's outage columns are not honest. Both
+fully non-linear failures in 2021–22 are the level problem that fuel scaling and a
+rolling window fixed for the network.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.

@@ -160,5 +160,8 @@ def outage_features(cache_root: Path, index: pd.DatetimeIndex) -> pd.DataFrame:
     out["unavail_fr_total_mw"] = approx_profile(fr[fr["plant_type"].isin(DISPATCHABLE)], index)
     out["installed_de_dispatchable_mw"] = installed(cache_root, "DE_LU", DISPATCHABLE, index)
     # no outage history before the first cached month: unknown, not zero
-    first = min(de["start"].min(), fr["start"].min()).normalize() + pd.offsets.MonthBegin(1)
-    return out.where(out.index >= first)
+    months = sorted(
+        p.stem for z in ("DE_LU", "FR") for p in (Path(cache_root) / "outages" / z / "latest").glob("*.parquet")
+    )
+    out.loc[out.index < pd.Timestamp(months[0], tz="UTC")] = np.nan
+    return out
