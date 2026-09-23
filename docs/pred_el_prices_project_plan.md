@@ -263,6 +263,16 @@ Predictions: (27) 2022 MAE drops below 34 (from 40.3) and the 2021–22 bias hal
 (28) overall median MAE ≤ 14.5, i.e. within 0.3 of G2 (14.175); (29) 80 % coverage moves
 to ≥ 74 %. If (28) holds, Optuna runs on this configuration.
 
+**Result (pod, ~12 min, run `qnn-de-20260923-170301`).** Median MAE **13.36** (rMAE 0.352)
+vs G2 14.175: **DM 4.2, p < 0.001, the best point forecast so far**, and from a network on
+its own. Mean pinball 5.84 → 4.94. By year vs G2: 2020 4.23/4.26, 2021 11.42/12.43, 2022
+27.48/30.97, 2023 12.78/15.45, 2024 12.19/11.43, 2025 12.12/10.87, 2026 13.43/13.73. Bias
+2021/22: +2.9/−2.0 (was −10.2/−26.3). Peaks: >200 MAE 32.4 (G2 41.0), bias −13.8; h16–18
+16.6 (G2 18.6); Sept 2026 18.1, h16–18 **25.1** (G2 34.5). (27) **met** (27.5, bias
+gone). (28) **met, and then some.** (29) **missed:** 80 % coverage 68.5 %, 98 % 92.4 %.
+The bands are still too narrow, although the median is now unbiased (exceeded 50.3 %).
+On >200 hours the 90th percentile is exceeded 22 % of the time.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
