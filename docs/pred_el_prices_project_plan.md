@@ -190,6 +190,11 @@ ensemble, computed offline). Predictions: (13) the {56, 84, 364} mean beats 364 
 (15) `lear-gbm-de` on the high-only base beats GBM-on-plain by ≥ 0.05 EUR/MWh MAE on the
 common span with DM p < 0.05, keeping depth ratio ≤ 1.6.
 
+**Registered (2026-09-23, after GBM-on-high-only, before this run):** (16) GBM on the
+low-only base does **not** beat GBM on high-only (MAE ≥ 13.45): trees already learn the
+floor the low hinge gives LEAR, while the high hinge supplies the one thing trees lack —
+linear extrapolation above the knot.
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
