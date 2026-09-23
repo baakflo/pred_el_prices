@@ -45,22 +45,24 @@ def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray, gate_s
     Rows for the first 7 days are dropped (lag burn-in). Returns X, Y, and the
     row->day offset (7).
 
-    gate_safe: the lag-1 block drops UTC hours 22-23 on EVERY row (22 columns
-    instead of 24). Those hours of d-1 are local 00-01 of delivery day d,
-    cleared in the very auction being forecast; dropping them from training
-    rows too keeps training consistent with what exists at the gate. (Copying
-    d-2 in instead duplicates the lag-2 columns, which LassoLarsIC chokes on.)
+    gate_safe: the lag-1 blocks (prices AND exog) drop UTC hours 22-23 on EVERY
+    row. Those hours of day d-1 are local 00-01 of delivery day d: their price
+    clears in the very auction being forecast and their TSO forecasts publish
+    that evening, so production only has 24h-lag stand-ins at the gate.
+    Dropping them from the training rows too keeps the fit consistent with
+    what production can see. (Dropping, not copying d-2 in: copies duplicate
+    the lag-2 columns, which LassoLarsIC chokes on.)
     """
     n_days = prices.shape[0]
     n_exog = exog.shape[2]
     rows = range(7, n_days)
+    lag1 = slice(0, 22) if gate_safe else slice(None)
     blocks = []
     for lag in PRICE_LAG_DAYS:
-        hours = slice(0, 22) if gate_safe and lag == 1 else slice(None)
-        blocks.append(prices[[d - lag for d in rows], hours])
+        blocks.append(prices[[d - lag for d in rows], lag1 if lag == 1 else slice(None)])
     for j in range(n_exog):
         for lag in EXOG_LAG_DAYS:
-            blocks.append(exog[[d - lag for d in rows], :, j])
+            blocks.append(exog[[d - lag for d in rows], lag1 if lag == 1 else slice(None), j])
     dummies = np.zeros((len(rows), 7))
     dummies[np.arange(len(rows)), dayofweek[7:]] = 1.0
     x = np.hstack([*blocks, dummies])
@@ -88,7 +90,7 @@ def forecast_day(
     exog: np.ndarray,
     dayofweek: np.ndarray,
     hinge_quantiles: tuple[float, float] | None = None,
-    gate_safe_prices: bool = False,
+    gate_safe: bool = False,
 ) -> np.ndarray:
     """Fit on all complete days and predict the last day (whose price row is unused).
 
@@ -97,10 +99,10 @@ def forecast_day(
 
     `hinge_quantiles` adds same-day (lag 0) hinge terms on residual load
     exog[..., 0] - exog[..., 1] (i.e. exog must be [load, res]); see
-    hinge_features. None reproduces plain LEAR exactly. `gate_safe_prices` is
-    passed to build_xy.
+    hinge_features. None reproduces plain LEAR exactly. `gate_safe` is passed
+    to build_xy (production: daily_forecast.lear_forecast runs it on).
     """
-    x_all, y_all = build_xy(prices, exog, dayofweek, gate_safe_prices)
+    x_all, y_all = build_xy(prices, exog, dayofweek, gate_safe)
     n_unscaled = 7  # day-of-week dummies
     if hinge_quantiles is not None:
         hinges = hinge_features(exog[:, :, 0] - exog[:, :, 1], hinge_quantiles)
@@ -161,10 +163,11 @@ def rolling_forecast(
     `gate_safe_prices`: UTC hours 22-23 of the day before the target belong to
     the target's LOCAL delivery day, i.e. to the very auction being forecast.
     Plain LEAR sees them as lag-1 prices (and as the last training target);
-    production cannot, and heals them from 24h-lag for the forecast day only
-    (daily_forecast.lear_forecast) — a train/test mismatch. True heals that
-    day's training target AND drops lag-1 hours 22-23 on every row (build_xy),
-    so the model never learns to lean on prices it will not have at the gate.
+    production cannot, and once healed them from 24h-lag for the forecast day
+    only — a train/test mismatch. True heals that day's training target AND
+    drops lag-1 hours 22-23 of prices and exog on every row (build_xy
+    gate_safe, the scheme production runs since 2026-09-23). Runs recorded
+    before that merge dropped the price lags only.
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
