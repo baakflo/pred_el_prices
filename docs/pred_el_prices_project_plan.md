@@ -172,6 +172,12 @@ long-tier plain run has MAE 3.7 at hour 0 UTC, rising monotonically to 10.4 at h
 (10) hour-0 MAE at least doubles and hours 0–1 together lose ≥ 3 EUR/MWh; (11) overall
 rMAE worsens by ≥ 0.005 — every lear-de backtest number so far is flattered by that much.
 
+**Registered (2026-09-23, after long-tier hinge and GBM-on-plain results, before this run):
+GBM on hinge-LEAR.** Trees extrapolate flat, a hinge extrapolates linearly — on September
+evenings GBM-on-plain lost (38.8 vs 36.3) where the hinge won (32.6). Prediction (12):
+`lear-gbm-de` with the long hinge run as base keeps GBM-on-plain's overall gain
+(MAE ≤ 13.80 on 2020-01..2026-09-21) and lands September hours 16–18 at ≤ 34.
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
