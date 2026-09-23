@@ -167,6 +167,15 @@ Prediction (23): G2s is within 0.1 MAE of G2 and keeps most of G1's bias fix
 (>200 bias ≥ −5). If so, G3 builds on G2s: a model that stops under-forecasting peaks is
 worth a tie on MAE ahead of the quantile step.
 
+Result: G2s (`151653`) scored MAE 14.371, +0.20 over G2 (DM −1.4), with >200 bias −3.3 and
+Sept h16–18 32.6. **(23) missed** on the MAE margin; G3 builds on G2. Reading: bias on
+hours *selected by a high outcome* is not a defect of a median forecast. Any forecast that
+minimises absolute error regresses towards the typical price, so it under-shoots the hours
+that turned out extreme. Fuel scaling buys back that bias by forecasting higher peaks on
+average, and pays for it on every other hour. What the peaks need is a forecast
+distribution, not a shifted median. That is the quantile step's job, and G1/G2s show that
+the fuel level is the right unit for its upper quantiles.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
