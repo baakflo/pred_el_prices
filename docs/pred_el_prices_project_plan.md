@@ -199,6 +199,36 @@ survive, their publication times do not. So a true as-of reconstruction exists o
   features hour by hour. Required: correlation ≥ 0.9 and mean |diff| ≤ 10 % of the mean.
   Otherwise the G3 result is reported as optimistic.
 
+**Registered (2026-09-23, before any full run): quantile network `qnn-de`.** The user's
+call: the pinball step goes straight to a neural network with 99 percentiles, run after G3,
+on the pod, with fixed sensible settings first and an Optuna search only if it performs
+reasonably. Design (commit `c3c5313`):
+- **Inputs:** one sample per UTC day. LEAR's gate-safe blocks: price lags d−1 (hours 0–21),
+  d−2, d−3, d−7. Load, RES and neighbour-sum residual load at d, d−1 (0–21), d−7. TTF and
+  EUA (2-day lag). Weekday dummies. 313 inputs, median/MAD + asinh scaled on the training
+  window. G3's outage features are added as a second arm if they pass validation.
+- **Network:** MLP 256-256, ELU, dropout 0.1. Output 24 hours × 99 percentiles, built from
+  a median plus softplus steps outwards, so they never cross. Loss: mean pinball in the
+  scaled space. Monotone scaling keeps percentiles valid after the inverse transform.
+- **Training:** AdamW, lr 1e-3, weight decay 1e-4, batch 32, ≤ 400 epochs, early stop
+  (patience 30) on a random 15 % of training days. Expanding window from 2018-12, monthly
+  refits from 2020-01. Each refit trains on days ≤ M−2 only: UTC 22–23 of M−1 belong to
+  M's auction. 4 seeds, averaged percentile by percentile.
+
+A smoke test (Jan–Feb 2024, 2 seeds, before a fix to the head's start-up spread) gave
+median MAE 6.84 vs G2 9.23 and LEAR 10.72 on the same hours. Too short to trust, and
+suspicious enough that the leak tests were written before any further run.
+
+Predictions for 2020-01..2026-09-21:
+(24) median MAE < G2's 14.175, DM p < 0.05.
+(25) calibration: 80 % central interval covers 75–85 %; the 1st and 99th percentiles are
+each exceeded 0.5–3 % of the time (smoke: 11 % below the 1st, so this can miss at the low
+end, where the negative hours are).
+(26) on hours > 200 EUR/MWh the 90th percentile is exceeded ≤ 35 % of the time, and the
+median's bias there is ≥ −10 (G2: −15.2).
+Decision: if (24) holds or the median ties G2 within 0.3 MAE with (25) met, run Optuna
+(pod, validation year 2025 trained through 2024, 30–60 trials). If not, stop there.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
