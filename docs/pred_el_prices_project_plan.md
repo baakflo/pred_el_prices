@@ -210,6 +210,98 @@ survives it (≥ 0.005 rMAE, DM p < 0.05).
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
 
+### Results (2026-09-23, same day)
+
+Long tier = 2019-01-01..2026-09-21 on a 32-core RunPod (Python 3.13; laptop runs Python
+3.11 — all long-tier arms share the pod, so comparisons are like for like). Step-3 runs on
+the laptop (2020-01..). Scored with `pep score-run` / `_scratch/phase2_nonlinear/table.py`.
+Reference: plain academic LEAR `lear-de-20260923-081457`, rMAE 0.4085, sign recall 59.6 %,
+depth ratio 3.76.
+
+| # | prediction | verdict | numbers |
+|---|---|---|---|
+| 1 | hinge: recall +10 pp, depth halves | **missed** | recall +7.1 pp; depth 3.76 → **4.35** (deeper) |
+| 2 | hinge: no MAE loss on hours ≥ 0 | met | 13.74 → 13.52 |
+| 3 | hinge: rMAE −0.005, DM p < 0.05 | **missed narrowly** | −0.0042; DM 2.3, p = 0.010 |
+| 4 | Sept 16–18 gain < 3, overall ±1.0 | **refuted** | −6.6 (39.85 → 33.21); overall −1.08 |
+| 5 | high-only carries ≥ 70 % of evening gain | met | 116 % (h16–18 18.89 → 18.41); rMAE 0.3976, DM 8.4 |
+| 6 | low-only moves recall more; depth not halved | met | recall 65.5 vs 60.0 %; depth 4.19; rMAE 0.3942, DM 9.1 |
+| 7 | GBM on plain: −0.02 rMAE, DM p < 0.01 | met | 0.408 → **0.362** (2020–); DM 13.0; wins 66 % of days |
+| 8 | GBM beats hinge on Sept 16–18 | **refuted** | GBM 38.8 vs plain 36.3 vs hinge 32.6 |
+| 9 | GBM halves the depth ratio | met | 3.96 → **1.42**; recall 60.4 → 68.9 % |
+| 10–11 | gate-safe (production scheme): h0 doubles, rMAE +0.005 | met, massively | h0 3.7 → 19.3; rMAE 0.409 → 0.532 (a train/test mismatch — see below) |
+| 12 | GBM on hinge: keeps gain, Sept 16–18 ≤ 34 | half | 13.75 (met); Sept 36.6 (missed); ties GBM-on-plain, DM p = 0.61 |
+| 13 | window ensemble {56,84,364}: −0.01 rMAE | **missed** | −0.005, DM p = 0.13 |
+| 14 | ensemble cuts Sept 16–18 by 3 | **refuted** | 39.9 (w56 47.4, w84 46.9) vs 36.3 |
+| 15 | GBM on high-only beats GBM on plain | met | 13.45 vs 13.74, DM 5.0; depth 1.39 |
+| 16 | GBM on low-only does not beat GBM on high-only | **missed (literal)** | 13.433 vs 13.452 — a tie, DM p = 0.36 |
+| 17 | consistent gate-safe plain at rMAE 0.46–0.51 | **missed (better)** | **0.4432** |
+| 18 | high-only gain survives gate-safe | met | 0.4432 → 0.4330, DM 8.9 |
+
+**Reading.** (a) A hinge is not what the zero regime needs (decision rule, prediction 1):
+the low term *deepens* negatives. Trees learn the floor (depth 1.4) where no linear term
+did. (b) Each hinge alone beats plain LEAR clearly, yet both together are worse than
+either — the both-hinge run logged many unconverged Lasso fits (duality gaps 1–3);
+suspected optimisation artefact, **open**. (c) September's scarcity evenings defeat
+everything trained on history: trees extrapolate flat, short windows lack data; only the
+linear high hinge helped (and the trees on top wash it out again). (d) Best model today:
+GBM on a single-hinge LEAR base, rMAE 0.354 vs 0.408 — under the leaky convention below.
+
+**Finding: every `lear-de` backtest so far leaks two target-auction prices.** LEAR's UTC
+day D−1 hours 22–23 are local 00:00–01:00 of delivery day D, i.e. cleared in the auction
+being forecast; plain `lear-de` feeds them in as lag-1 prices (hour-0 MAE 3.7, rising
+monotonically with distance from midnight). Production cannot see them and heals them
+from 24h-lag *on the forecast day only* — while training on history that has them: a
+train/test mismatch. `gate_safe_prices=true` (commit 1a63aae) drops lag-1 hours 22–23 on
+every row. Long tier:
+
+| scheme | rMAE | h0 MAE | Sept MAE (1–21) |
+|---|---|---|---|
+| leaky backtest (all published numbers) | 0.4085 | 3.7 | 23.04 |
+| production scheme (heal forecast day only) | 0.5321 | 19.3 | 29.09 |
+| **consistent gate-safe** | **0.4432** | 9.6 | 27.31 |
+
+Consequences: (1) published backtest numbers are flattered by ≈ 0.035 rMAE; (2) the
+production scheme costs ≈ 0.09 rMAE (≈ 3 EUR/MWh) against the consistent one — the
+September production-scheme backtest (29.09) sits next to the real live MAE (29.74);
+(3) **the 2026-09-22 surrogate cost is mostly this leak**: the post-gate rescore used the
+leaky scheme. September, window 371, official inputs: leaky 23.28 → consistent gate-safe
+27.37 → live 29.74, so the real live-input cost is ≈ 2.4, not 6.5, and the "night-wind"
+attribution (hours 00–06) is largely the leak (gate-safe night hours 20–22 vs leaky 5–8
+vs live 24–30). Step 3's own D−1 error features exclude UTC 22–23 (fixed before scoring;
+the fix moved GBM MAE by 0.02).
+
+**Everything re-run gate-safe (the honest numbers).** Long-tier LEAR arms 2019-01..,
+GBM arms 2020-01.. (DM vs the first row of each block):
+
+| arm | rMAE | Sept MAE | Sept h16–18 | depth | DM |
+|---|---|---|---|---|---|
+| LEAR gate-safe `091935` | 0.4432 | 27.31 | 38.2 | 3.83 | — |
+| + high hinge `092728` | 0.4330 | 26.97 | 36.9 | 3.52 | 8.9 |
+| + low hinge `093701` | 0.4296 | 26.77 | 37.8 | 4.38 | 7.8 |
+| GBM on LEAR gate-safe `lear-gbm-de-…092912` (2020–) | 0.3914 | 23.42 | 39.6 | 1.59 | 12.5 |
+| GBM on high-hinge gate-safe `…093730` | 0.3867 | 21.48 | 35.5 | 1.58 | 13.5 |
+| GBM on low-hinge gate-safe `…094701` | 0.3866 | 21.16 | 34.1 | 1.55 | 13.3 |
+
+(The GBM rows' DM is against LEAR gate-safe on 2020–, where it scores 0.443.) GBM on a
+single-hinge base beats GBM on plain LEAR (DM 3.1, p < 0.001); high vs low base is a tie
+(DM p = 0.48). **Best honest model: GBM correction on single-hinge gate-safe LEAR, rMAE
+0.387** — better than every leaky LEAR number ever published here (0.407).
+
+### Next steps (proposed 2026-09-23, for the user)
+
+1. **Production decision: switch `lear_forecast` to the consistent gate-safe scheme**
+   (`build_xy(gate_safe=True)` in the production path). Expected ≈ 3 EUR/MWh on the
+   long tier; September production-scheme backtest 29.09 vs gate-safe 27.31.
+2. **Re-state published numbers** (site badges, README, write-ups) on gate-safe runs, and
+   correct the 2026-09-22 surrogate-cost claim (≈ 2.4, not 6.5).
+3. **Ship candidate:** GBM correction on single-hinge gate-safe LEAR — needs a production
+   path (monthly refit of the tree on the rolling backtest's errors) and a live A/B.
+4. **Open anomaly:** both hinges together < either alone; rerun with higher Lasso
+   `max_iter` to test the optimisation-artefact reading.
+5. **Probabilistic step:** the same tree correction with pinball loss (quantiles) is the
+   natural bridge to Phase 2 proper.
+
 ## Status addendum (2026-09-22): why live MAE doubled — regime, linearity, and a measured surrogate cost
 
 **Observation:** the published 30-day mean has been climbing since early

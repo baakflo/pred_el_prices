@@ -106,6 +106,43 @@ hr{border:none;border-top:1px solid var(--hair);margin:0}
 </header>
 
 <section>
+  <div class="eyebrow">Results · end of day 2026-09-23</div>
+  <h2>What the three steps found</h2>
+  <div class="prose callout"><strong>The biggest finding was not a model.</strong> Every <code>lear-de</code> backtest so far
+  leaked two prices from the auction it was forecasting. LEAR's "yesterday" is a UTC day, and its hours 22–23 are already
+  00:00–01:00 on the German delivery day being forecast, so they clear in the same auction. Hour-0 error was 3.7 €/MWh,
+  suspiciously good. Production can't see those prices, but it trains on history that has them, and that mismatch costs it
+  about 3 €/MWh. The fix drops the two inputs on every training day.</div>
+  <div class="tbl"><table>
+    <tr><th>LEAR, 2019–2026</th><th>rMAE</th><th>hour 0 MAE</th><th>Sept 1–21 MAE</th></tr>
+    <tr><td>leaky backtest (all published numbers)</td><td class="n">0.409</td><td class="n">3.7</td><td class="n">23.0</td></tr>
+    <tr><td>production's scheme (live: 29.7 in Sept)</td><td class="n">0.532</td><td class="n">19.3</td><td class="n">29.1</td></tr>
+    <tr><td><strong>honest, gate-safe</strong></td><td class="n"><strong>0.443</strong></td><td class="n">9.6</td><td class="n">27.3</td></tr>
+  </table></div>
+  <p class="prose">This also rewrites yesterday's diagnosis: the "−6.5 €/MWh surrogate cost", blamed on night wind, is mostly
+  this leak. The real cost of the live inputs is about 2.4.</p>
+  <div class="tbl"><table>
+    <tr><th>Honest models (gate-safe), 2020–2026</th><th>rMAE</th><th>Sept MAE</th><th>Sept 16–18 h</th><th>negatives: depth ×</th></tr>
+    <tr><td>LEAR</td><td class="n">0.443</td><td class="n">27.3</td><td class="n">38.2</td><td class="n">4.1</td></tr>
+    <tr><td>LEAR + one hinge</td><td class="n">0.430–0.433</td><td class="n">26.8–27.0</td><td class="n">36.9–37.8</td><td class="n">3.5–4.4</td></tr>
+    <tr><td>trees on LEAR (step 3)</td><td class="n">0.391</td><td class="n">23.4</td><td class="n">39.6</td><td class="n">1.6</td></tr>
+    <tr><td><strong>trees on LEAR + one hinge</strong></td><td class="n"><strong>0.387</strong></td><td class="n"><strong>21.2–21.5</strong></td><td class="n">34.1–35.5</td><td class="n">1.6</td></tr>
+  </table></div>
+  <ul class="prose">
+    <li><strong>Hinges:</strong> each one alone helps (DM ≈ 8–9), but the low hinge makes negatives <em>deeper</em>, not shallower.
+      Both hinges together do worse than either alone, an open anomaly with a suspected optimiser cause.</li>
+    <li><strong>Trees:</strong> the big, significant step (DM ≈ 13). They learn the zero floor: depth ratio 4 → 1.6, sign recall 58 → 68 %.</li>
+    <li><strong>September's scarcity evenings</strong> beat everything trained on history. Trees extrapolate flat, and short windows
+      are worse still. Only the linear hinge helped there.</li>
+    <li>18 predictions registered before their runs: 9 met, 1 half, 8 missed or refuted. All of them are in the plan's 2026-09-23 results block.</li>
+  </ul>
+  <p class="prose"><strong>Your decision:</strong> switch production to the gate-safe scheme (expected ≈ 3 €/MWh), then consider
+  shipping the tree correction.</p>
+</section>
+
+<hr>
+
+<section>
   <div class="eyebrow">Before step 1 · housekeeping</div>
   <h2>Where the data comes from</h2>
   <p class="prose">The September test bench used to read the production cache inside
@@ -266,10 +303,10 @@ hr{border:none;border-top:1px solid var(--hair);margin:0}
     <li><strong>Refit:</strong> expanding window, once a month, each month predicted only by a model trained on earlier months
       (the <code>res-de</code> loop).</li>
   </ul>
-  <div class="prose callout"><strong>Correction to what I told you this morning.</strong> I said LEAR's error from yesterday
-  would leak. It doesn't: the prices for day D−1 come out of the D−2 auction, so they are public a full day before
-  the D−1 12:00 gate. LEAR already uses them as its lag-1 input. Yesterday's LEAR error is fair game. The real trap
-  is the in-sample residual described above.</div>
+  <div class="prose callout"><strong>Correction to what I told you this morning, and a later caveat.</strong> I said LEAR's
+  error from yesterday would leak. For local days it doesn't: day D−1 cleared in the D−2 auction. But LEAR's days are UTC days,
+  and UTC 22–23 of D−1 belong to delivery day D, the auction being forecast. The tree's D−1 features skip those two hours.
+  The same two hours turned out to leak into every LEAR backtest (see Results above).</div>
   <p class="prose"><strong>Pass condition:</strong> beats the step-2 winner on both exams, significant under DM on the long one.
   This is also the bridge to probabilistic output: swap the tree's loss for pinball loss and the same machinery predicts quantiles.</p>
 </section>
