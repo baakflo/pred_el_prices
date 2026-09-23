@@ -62,11 +62,20 @@ class TestDesign:
         orig = qnn_de.fit_predict
         qnn_de.fit_predict = spy
         try:
-            qnn_de._refit(x, y, rows, month, QNNConfig(), 0)
+            end = month + pd.offsets.MonthBegin(1)
+            qnn_de._refit(x, y, rows, month, end, QNNConfig(), 0)
+            n_expanding = seen["n_train"]
+            qnn_de._refit(x, y, rows, month, end, QNNConfig(), 0, window_days=10)
         finally:
             qnn_de.fit_predict = orig
-        assert seen["n_train"] == int((rows <= month - pd.Timedelta(days=2)).sum())
-        assert rows[seen["n_train"] - 1] == month - pd.Timedelta(days=2)
+        assert n_expanding == int((rows <= month - pd.Timedelta(days=2)).sum())
+        assert rows[n_expanding - 1] == month - pd.Timedelta(days=2)
+        assert seen["n_train"] == 10
+
+    def test_fuel_scale_divides_prices_by_that_days_cost(self):
+        _, _, fuels, _ = _days(5)
+        cost = qnn_de.fuel_cost(fuels)
+        np.testing.assert_allclose(cost, np.maximum(20, 2 * fuels[:, 0] + 0.37 * fuels[:, 1]))
 
 
 class TestFit:

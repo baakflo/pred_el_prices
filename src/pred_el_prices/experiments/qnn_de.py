@@ -71,15 +71,24 @@ def design(prices, exog, fuels, days):
     return x, y, days[7:]
 
 
-def _refit(x, y, row_days, month, config, seed):
-    train = row_days <= month - pd.Timedelta(days=2)
-    test = (row_days >= month) & (row_days < month + pd.offsets.MonthBegin(1))
+def fuel_cost(fuels: np.ndarray) -> np.ndarray:
+    """Gas-plant marginal cost per day, EUR/MWh, floored at 20: 2 x TTF + 0.37 x EUA."""
+    return np.maximum(20.0, 2.0 * fuels[:, 0] + 0.37 * fuels[:, 1])
+
+
+def _refit(x, y, row_days, start, end, config, seed, window_days=None):
+    """Fit on days up to start-2 (optionally the last `window_days` of them), predict [start, end)."""
+    last_train = start - pd.Timedelta(days=2)
+    train = row_days <= last_train
+    if window_days is not None:
+        train &= row_days > last_train - pd.Timedelta(days=window_days)
+    test = (row_days >= start) & (row_days < end)
     if not test.any():
-        return month, None
+        return start, None
     import torch
 
     torch.set_num_threads(1)
-    return month, fit_predict(x[train], y[train], x[test], 7, config, seed)
+    return start, fit_predict(x[train], y[train], x[test], 7, config, seed)
 
 
 def run(
@@ -98,7 +107,15 @@ def run(
     patience: int = 30,
     n_seeds: int = 4,
     n_jobs: int = -1,
+    window_days: int | None = None,
+    refit: str = "month",
+    fuel_scale: bool = False,
 ) -> dict:
+    """`window_days`: rolling training window (None = expanding). `refit`: "month" or
+    "week". `fuel_scale`: prices (target and lags) in units of that day's gas-plant
+    marginal cost (fuel_cost); a positive per-day factor, so percentiles scale back
+    exactly.
+    """
     config = QNNConfig(
         hidden=hidden or [256, 256],
         dropout=dropout,
@@ -109,24 +126,31 @@ def run(
         patience=patience,
     )
     prices, exog, fuels, days, hours = load_days(dataset_path, train_start, exog_extra or [])
-    x, y, row_days = design(prices, exog, fuels, days)
+    scale = fuel_cost(fuels) if fuel_scale else np.ones(len(days))
+    x, y, row_days = design(prices / scale[:, None], exog, fuels, days)
+    row_scale = scale[7:]
 
     last = row_days.max() if test_end is None else pd.Timestamp(test_end, tz="UTC")
-    months = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), last, freq="MS")
-    jobs = [(m, s) for m in months for s in range(n_seeds)]
-    print(f"{len(months)} refits x {n_seeds} seeds = {len(jobs)} fits, X {x.shape}", flush=True)
+    freq = {"month": "MS", "week": "7D"}[refit]
+    starts = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), last, freq=freq)
+    ends = [*starts[1:], last + pd.Timedelta(days=1)]
+    jobs = [(s, e, k) for s, e in zip(starts, ends, strict=True) for k in range(n_seeds)]
+    print(f"{len(starts)} refits x {n_seeds} seeds = {len(jobs)} fits, X {x.shape}", flush=True)
     results = Parallel(n_jobs=n_jobs, verbose=10)(
-        delayed(_refit)(x, y, row_days, m, config, s) for m, s in jobs
+        delayed(_refit)(x, y, row_days, s, e, config, k, window_days) for s, e, k in jobs
     )
 
-    by_month: dict = {}
-    for month, pred in results:
+    by_start: dict = {}
+    for start, pred in results:
         if pred is not None:
-            by_month.setdefault(month, []).append(pred)
+            by_start.setdefault(start, []).append(pred)
     parts = []
-    for month, preds in sorted(by_month.items()):
+    for start, preds in sorted(by_start.items()):
+        end = ends[list(starts).index(start)]
+        in_period = (row_days >= start) & (row_days < end)
         q = np.sort(np.mean(preds, axis=0), axis=-1)  # (n_days, 24, 99), Vincentized
-        test_days = row_days[(row_days >= month) & (row_days < month + pd.offsets.MonthBegin(1))]
+        q = q * row_scale[in_period][:, None, None]
+        test_days = row_days[in_period]
         idx = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in test_days for h in range(24)])
         parts.append(pd.DataFrame(q.reshape(-1, len(QUANTILES)), index=idx, columns=Q_COLS))
     qdf = pd.concat(parts)
@@ -147,6 +171,9 @@ def run(
             "exog_extra": exog_extra or [],
             "config": vars(config),
             "n_seeds": n_seeds,
+            "window_days": window_days,
+            "refit": refit,
+            "fuel_scale": fuel_scale,
         },
         "overall": probabilistic_metrics(qdf, prices_all),
         "by_year": {},

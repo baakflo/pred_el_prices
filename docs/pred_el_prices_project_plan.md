@@ -254,6 +254,15 @@ expanding window anchors to the cheap 2019–20 levels, and refits come only onc
 So in 2022 the prices sit far out in the asinh tail, where the output saturates. The
 smoke test's 6.84 on Jan–Feb 2024 was two calm months, not a leak.
 
+**Registered (2026-09-23, after that result, before the run): QNN level fix.** One arm, the
+same network and settings, three structural changes: `window_days=730` (rolling two years,
+so the scaler follows the current level), `refit="week"` (training still ends two days
+before each week), and `fuel_scale=true` (target and price lags divided by that day's
+max(20, 2·TTF + 0.37·EUA), a positive per-day factor, so percentiles scale back exactly).
+Predictions: (27) 2022 MAE drops below 34 (from 40.3) and the 2021–22 bias halves;
+(28) overall median MAE ≤ 14.5, i.e. within 0.3 of G2 (14.175); (29) 80 % coverage moves
+to ≥ 74 %. If (28) holds, Optuna runs on this configuration.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
