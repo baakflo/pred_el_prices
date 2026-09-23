@@ -290,9 +290,15 @@ single-hinge base beats GBM on plain LEAR (DM 3.1, p < 0.001); high vs low base 
 
 ### Next steps (proposed 2026-09-23, for the user)
 
-1. **Production decision: switch `lear_forecast` to the consistent gate-safe scheme**
-   (`build_xy(gate_safe=True)` in the production path). Expected ≈ 3 EUR/MWh on the
-   long tier; September production-scheme backtest 29.09 vs gate-safe 27.31.
+1. **SHIPPED 2026-09-23 (public repo `24bbbbb`, CI green):** production `lear_forecast`
+   runs `forecast_day(gate_safe=True)`, which drops lag-1 hours 22–23 of prices AND TSO
+   forecasts on every row (the production path also lacks the boundary TSO forecasts, so
+   the prices-only variant was not enough — a 21-day check had it losing). Replay of the
+   production function on a pod, 2024-10-01..2026-09-21 (721 days, pre-gate data,
+   official exog; `_scratch/phase2_nonlinear/pod_prod_dryrun.py`): MAE 16.24 → 14.73,
+   hour 0 16.5 → 8.0, DM 10.7, 473/721 days won; filling the boundary with a perfect
+   surrogate instead ties (DM −0.74). Repos now diverge: nl's `build_xy(gate_safe)` drops
+   price lags only — reconcile on the next sync.
 2. **Re-state published numbers** (site badges, README, write-ups) on gate-safe runs, and
    correct the 2026-09-22 surrogate-cost claim (≈ 2.4, not 6.5).
 3. **Ship candidate:** GBM correction on single-hinge gate-safe LEAR — needs a production
