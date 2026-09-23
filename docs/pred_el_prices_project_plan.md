@@ -149,6 +149,24 @@ that no input has covered so far.
 extrapolate above their training range, and LEAR's linear base is what lets the stack do so.
 D3 still beats LEAR `093701` alone.
 
+**Results so far (same day).** G0 rerun on the rebuilt dataset (`151234`) reproduces `094701`
+exactly.
+
+| arm | run | MAE | rMAE | h16–18 | >200 MAE / bias | Sept h16–18 | DM vs G0 |
+|---|---|---|---|---|---|---|---|
+| G0 | `151234` | 14.675 | 0.387 | 18.93 | 41.7 / −13.9 | 34.1 | — |
+| G1 fuel level | `145542` | 14.803 | 0.390 | 19.22 | 42.4 / **−1.0** | 33.1 | −0.8 (p 0.79) |
+| G2 neighbours | `151236` | **14.175** | **0.373** | 18.58 | 41.0 / −15.2 | 34.5 | **7.3** |
+
+(19) **missed** on MAE: fuel scaling costs 0.13. Its bias half came true: the >200 bias
+nearly vanishes. (20) **half met:** DM 7.3 and h16–18 −0.36 hold, Sept-2026 h16–18 does not
+(+0.5). G2 therefore builds on G0.
+
+**Registered after these results, before the run:** arm G2s = G2 + `scale_target=true`.
+Prediction (23): G2s is within 0.1 MAE of G2 and keeps most of G1's bias fix
+(>200 bias ≥ −5). If so, G3 builds on G2s: a model that stops under-forecasting peaks is
+worth a tie on MAE ahead of the quantile step.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
