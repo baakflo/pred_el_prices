@@ -125,39 +125,19 @@ def run(
         max_epochs=max_epochs,
         patience=patience,
     )
-    prices, exog, fuels, days, hours = load_days(dataset_path, train_start, exog_extra or [])
-    scale = fuel_cost(fuels) if fuel_scale else np.ones(len(days))
-    x, y, row_days = design(prices / scale[:, None], exog, fuels, days)
-    row_scale = scale[7:]
-
-    last = row_days.max() if test_end is None else pd.Timestamp(test_end, tz="UTC")
-    freq = {"month": "MS", "week": "7D"}[refit]
-    starts = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), last, freq=freq)
-    ends = [*starts[1:], last + pd.Timedelta(days=1)]
-    jobs = [(s, e, k) for s, e in zip(starts, ends, strict=True) for k in range(n_seeds)]
-    print(f"{len(starts)} refits x {n_seeds} seeds = {len(jobs)} fits, X {x.shape}", flush=True)
-    results = Parallel(n_jobs=n_jobs, verbose=10)(
-        delayed(_refit)(x, y, row_days, s, e, config, k, window_days) for s, e, k in jobs
+    qdf = backtest(
+        dataset_path,
+        train_start,
+        exog_extra or [],
+        config,
+        first_fit,
+        test_end,
+        refit,
+        window_days,
+        fuel_scale,
+        n_seeds,
+        n_jobs,
     )
-
-    by_start: dict = {}
-    for start, pred in results:
-        if pred is not None:
-            by_start.setdefault(start, []).append(pred)
-    parts = []
-    for start, preds in sorted(by_start.items()):
-        end = ends[list(starts).index(start)]
-        in_period = (row_days >= start) & (row_days < end)
-        q = np.sort(np.mean(preds, axis=0), axis=-1)  # (n_days, 24, 99), Vincentized
-        q = q * row_scale[in_period][:, None, None]
-        test_days = row_days[in_period]
-        idx = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in test_days for h in range(24)])
-        parts.append(pd.DataFrame(q.reshape(-1, len(QUANTILES)), index=idx, columns=Q_COLS))
-    qdf = pd.concat(parts)
-    if test_end is not None:
-        qdf = qdf[qdf.index < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)]
-    actual = pd.Series(prices.reshape(-1), index=hours).reindex(qdf.index)
-    qdf["actual"] = actual
     qdf.to_parquet(out_dir / "quantiles.parquet")
     qdf[["q50", "actual"]].rename(columns={"q50": "qnn_median"}).to_parquet(
         out_dir / "forecast.parquet"
@@ -182,6 +162,59 @@ def run(
         part = qdf[qdf.index.year == year]
         metrics["by_year"][int(year)] = probabilistic_metrics(part, prices_all)
     return metrics
+
+
+REFIT_FREQ = {"month": "MS", "week": "7D", "4weeks": "28D"}
+
+
+def backtest(
+    dataset_path: str,
+    train_start: str,
+    exog_extra: list[str],
+    config: QNNConfig,
+    first_fit: str,
+    test_end: str | None,
+    refit: str,
+    window_days: int | None,
+    fuel_scale: bool,
+    n_seeds: int,
+    n_jobs: int,
+    verbose: int = 10,
+) -> pd.DataFrame:
+    """Percentile forecasts q01..q99 plus `actual`, hourly, from first_fit to test_end."""
+    prices, exog, fuels, days, hours = load_days(dataset_path, train_start, exog_extra)
+    scale = fuel_cost(fuels) if fuel_scale else np.ones(len(days))
+    x, y, row_days = design(prices / scale[:, None], exog, fuels, days)
+    row_scale = scale[7:]
+
+    last = row_days.max() if test_end is None else pd.Timestamp(test_end, tz="UTC")
+    starts = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), last, freq=REFIT_FREQ[refit])
+    ends = [*starts[1:], last + pd.Timedelta(days=1)]
+    jobs = [(s, e, k) for s, e in zip(starts, ends, strict=True) for k in range(n_seeds)]
+    if verbose:
+        print(f"{len(starts)} refits x {n_seeds} seeds = {len(jobs)} fits, X {x.shape}", flush=True)
+    results = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_refit)(x, y, row_days, s, e, config, k, window_days) for s, e, k in jobs
+    )
+
+    by_start: dict = {}
+    for start, pred in results:
+        if pred is not None:
+            by_start.setdefault(start, []).append(pred)
+    parts = []
+    for start, preds in sorted(by_start.items()):
+        end = ends[list(starts).index(start)]
+        in_period = (row_days >= start) & (row_days < end)
+        q = np.sort(np.mean(preds, axis=0), axis=-1)  # (n_days, 24, 99), Vincentized
+        q = q * row_scale[in_period][:, None, None]
+        test_days = row_days[in_period]
+        idx = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in test_days for h in range(24)])
+        parts.append(pd.DataFrame(q.reshape(-1, len(QUANTILES)), index=idx, columns=Q_COLS))
+    qdf = pd.concat(parts)
+    if test_end is not None:
+        qdf = qdf[qdf.index < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)]
+    qdf["actual"] = pd.Series(prices.reshape(-1), index=hours).reindex(qdf.index)
+    return qdf
 
 
 def pinball_by_quantile(qdf: pd.DataFrame) -> np.ndarray:

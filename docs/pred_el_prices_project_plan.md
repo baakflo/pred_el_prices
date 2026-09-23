@@ -273,6 +273,19 @@ gone). (28) **met, and then some.** (29) **missed:** 80 % coverage 68.5 %, 98 % 
 The bands are still too narrow, although the median is now unbiased (exceeded 50.3 %).
 On >200 hours the 90th percentile is exceeded 22 % of the time.
 
+**Registered (before the search): Optuna on the level-fix network (`qnn-tune`).** Objective:
+mean pinball over the 99 percentiles in EUR/MWh on **2025** (validation), refits every 4
+weeks, 2 seeds, fuel scaling on. Search space: 1–3 layers, width 64–512, dropout 0–0.4,
+lr 1e-4–3e-3, weight decay 1e-6–1e-2, batch 16–128, rolling window 1–4 years. TPE sampler
+(seed 0), about 60 trials, the level-fix configuration enqueued as trial 0. The winner
+then reruns the full weekly backtest with 4 seeds. **Holdout: 2026-01-01..09-21**, never
+seen by the search; the full span 2020–26 includes the tuning year and is reported but
+marked as such. Predictions: (30) the best trial beats trial 0 on 2025 pinball by ≥ 3 %;
+(31) on the 2026 holdout the tuned network beats the level fix on pinball, DM p < 0.05 on
+per-day CRPS-approximating pinball; (32) the 80 % coverage stays below 75 %. Pinball
+tuning alone will not fix calibration; that needs a separate recalibration step (e.g.
+conformal widening), registered separately if (32) holds.
+
 **Decision rule.** The best G arm becomes the point reference for the pinball (quantile)
 step. If (21) misses, outages stay out of the production path; the as-of pipeline is the
 expensive part.
