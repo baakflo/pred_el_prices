@@ -32,7 +32,6 @@ RunPod console → Templates → New Template:
 | Container Disk | 20 GB |
 | Volume | 30 GB mounted at `/workspace` (survives pod stop/restart) |
 | Env var `GITHUB_PAT` | `{{ RUNPOD_SECRET_github_pat }}` |
-| Env var `PEP_REPO` | optional; `pred_el_prices_nl` to track the private dev repo (then scope the PAT to that repo and use its URL in the start command below) |
 | Expose SSH | keep TCP port 22 exposed (default in official images) |
 
 Container Start Command (one line):
@@ -40,6 +39,18 @@ Container Start Command (one line):
 ```
 bash -c 'curl -sf -H "Authorization: token $GITHUB_PAT" https://raw.githubusercontent.com/baakflo/pred_el_prices/main/deploy/runpod/bootstrap.sh | bash; /start.sh'
 ```
+
+For the private dev repo, the repo name appears twice — once in the URL
+(where the bootstrap script is downloaded from) and once as `PEP_REPO`
+(which repo the script clones) — and the PAT must be scoped to that repo:
+
+```
+bash -c 'curl -sf -H "Authorization: token $GITHUB_PAT" https://raw.githubusercontent.com/baakflo/pred_el_prices_nl/main/deploy/runpod/bootstrap.sh | PEP_REPO=pred_el_prices_nl bash; /start.sh'
+```
+
+The env var in the template must be named exactly `GITHUB_PAT` (the secret
+behind it may have any name). `curl -sf` fails silently: a wrong variable
+name yields an empty script and a log with no bootstrap lines at all.
 
 The bootstrap clones/pulls the repo into `/workspace/pred_el_prices` and runs
 `uv sync`; `/start.sh` is the image's own entrypoint that starts sshd and

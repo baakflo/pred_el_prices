@@ -144,6 +144,25 @@ q10 = 5.9 GW, q90 = 47.3 GW, and 88 % of negative-price hours have RL below q10.
    not fix scarcity evenings, because scarcity is not a function of RL alone (imports,
    outages, the slope moves within the year). Overall September change within ±1.0.
 
+**Registered add-on (2026-09-23, after the September hinge run, before any long-tier
+result).** September already showed hours 16–18 at 39.85 → 33.21 (prediction 4 refuted)
+and negatives *deeper* (median −26.3 vs −18.8, 34 h). Single-hinge ablations on the long
+tier separate the two terms: high-only `hinge=[0.0,0.9]`, low-only `hinge=[0.1,1.0]` (a knot
+at quantile 0/1 zeroes that term on the training window). Predictions: (5) high-only
+carries ≥ 70 % of the full hinge's MAE gain at hours 16–18; (6) low-only moves sign recall
+more than high-only does, and (in light of September) its depth ratio does **not** halve.
+
+**Registered step 3 (2026-09-23, before any fit): gradient-boosted correction of LEAR.**
+Target: out-of-sample error of the long-tier LEAR run (actual − forecast). Model: sklearn
+HistGradientBoosting, absolute-error loss, expanding window, monthly refits, first
+prediction month 2020-01. Features: hour, weekday, day-of-year harmonics, load, RES and
+residual load forecasts plus the day's RL max/min, TTF and EUA (2-day lag), LEAR's own
+forecast, and LEAR's error at the same hour on D−1 and D−7 (legal: D−1 prices come out of
+the D−2 auction). Predictions: (7) on 2020-01..2026-09 it beats its own LEAR base by
+≥ 0.02 rMAE, DM p < 0.01; (8) on September 2026 it cuts hours 16–18 by more than the
+hinge did; (9) negative-hour depth ratio at least halves — trees can learn the floor that
+a hinge could not.
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
