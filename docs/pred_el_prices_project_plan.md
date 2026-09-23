@@ -286,6 +286,32 @@ per-day CRPS-approximating pinball; (32) the 80 % coverage stays below 75 %. Pin
 tuning alone will not fix calibration; that needs a separate recalibration step (e.g.
 conformal widening), registered separately if (32) holds.
 
+**Results (same evening).** Search `qnn-tune-20260923-172006`, 60 trials, ~45 min on the
+pod. Best: 3 × 256, dropout 0.28, lr 5.0e-4, weight decay 8.5e-5, batch 32, window 1,460
+days. 2025 pinball 4.391 vs trial 0's 4.744 (−7.4 %). The top trials all used the
+four-year window. The full weekly backtest with 4 seeds is `qnn-de-20260923-182551`
+(~35 min):
+
+| span | metric | level fix `170301` | tuned `182551` |
+|---|---|---|---|
+| **holdout 2026-01..09-21** | pinball / median MAE | 5.021 / 13.33 | **4.723 / 12.66** |
+| | 80 % / 98 % coverage | 70.0 / 93.5 % | 77.2 / 96.3 % |
+| | DM on daily pinball | — | **3.56, p = 0.0002** |
+| Sept 2026 (1–21) | pinball / MAE / h16–18 | 6.53 / 18.08 / 25.1 | **5.71 / 16.64 / 25.8** |
+| full 2020–26 (contains the tuning year) | pinball / MAE | 4.935 / 13.36 | **4.784 / 13.16** (DM 4.9) |
+| | 80 % / 98 % coverage | 68.5 / 92.4 % | 75.6 / 96.2 % |
+
+Against G2, full span: MAE 13.16 vs 14.18 (DM 5.05), >200 MAE 32.7 vs 41.0 with bias
+−11.4 vs −15.2, h16–18 16.95 vs 18.58. 2026 alone: 12.75 vs 13.73. By year (tuned / G2):
+2020 4.32/4.26, 2021 11.20/12.43, 2022 27.76/30.97, 2023 12.26/15.45, 2024 11.79/11.43,
+2025 12.02/10.87. **(30) met** (−7.4 %). **(31) met** (holdout DM 3.56). **(32) missed, in
+the good direction:** tuning widened the bands (dropout 0.28, four-year window), and 80 %
+coverage rose to 75.6 % overall and 77.2 % on the holdout. Still short of 80 %: the 1st
+percentile is undercut 1.5 % of the time, the 99th exceeded 2.2 %, the 90th 12.7 %; on
+>200 hours the 90th is exceeded 18 %. **Best model of the project: the tuned quantile
+network.** Next: a small calibration step (conformal widening per hour, fitted on a
+trailing window) for the last ~3–5 pp of coverage, then the fan-chart page.
+
 **Outage validation (2026-09-23, before G3): the registered approximation fails.** Exact
 pre-gate unavailability was reconstructed from real revision timestamps (617 of 625
 multi-revision DE messages complete, nothing pending) for Nov–Dec 2025 (DE) and Nov
