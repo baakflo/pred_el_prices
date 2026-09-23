@@ -40,6 +40,25 @@ class TestBuildXy:
         assert x[0, -7:].sum() == 1.0
         assert x[0, -7 + dow[7]] == 1.0
 
+    def test_gate_safe_drops_the_target_auction_hours_on_every_row(self):
+        n_days = 20
+        prices = np.arange(n_days * 24, dtype=float).reshape(n_days, 24)
+        exog = prices[:, :, None] * 10
+        dow = np.arange(n_days) % 7
+        x_plain, y_plain = build_xy(prices, exog, dow)
+        x_safe, y_safe = build_xy(prices, exog, dow, gate_safe=True)
+        # lag-1 blocks of prices and of the one exog series lose hours 22-23
+        assert x_safe.shape[1] == x_plain.shape[1] - 4
+        for row, d in enumerate(range(7, n_days)):
+            assert np.array_equal(x_safe[row, :22], prices[d - 1, :22])
+            # safe layout: prices 22+24+24+24 = 94, exog lag0 (24), exog lag1 (22)
+            assert np.array_equal(x_safe[row, 94 + 24 : 94 + 46], exog[d - 1, :22, 0])
+        # lag-2/3/7 prices, exog lag 0 and lag 7, dummies are untouched
+        assert np.array_equal(x_safe[:, 22:94], x_plain[:, 24:96])
+        assert np.array_equal(x_safe[:, 94:118], x_plain[:, 96:120])
+        assert np.array_equal(x_safe[:, 140:], x_plain[:, 144:])
+        assert np.array_equal(y_safe, y_plain)
+
 
 class TestMetrics:
     def test_mae_smape(self):

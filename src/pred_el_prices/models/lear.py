@@ -38,22 +38,30 @@ class InvariantScaler:
         return np.sinh(x) * self.mad + self.median
 
 
-def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray):
+def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray, gate_safe: bool = False):
     """Day-indexed design matrix and 24-wide target.
 
     prices: (n_days, 24); exog: (n_days, 24, n_exog); dayofweek: (n_days,).
     Rows for the first 7 days are dropped (lag burn-in). Returns X, Y, and the
     row->day offset (7).
+
+    gate_safe: the lag-1 blocks (prices AND exog) drop UTC hours 22-23 on EVERY
+    row. Those hours of day d-1 are local 00-01 of delivery day d: their price
+    clears in the very auction being forecast and their TSO forecasts publish
+    that evening, so production only has 24h-lag stand-ins at the gate.
+    Dropping them from the training rows too keeps the fit consistent with
+    what production can see.
     """
     n_days = prices.shape[0]
     n_exog = exog.shape[2]
     rows = range(7, n_days)
+    lag1 = slice(0, 22) if gate_safe else slice(None)
     blocks = []
     for lag in PRICE_LAG_DAYS:
-        blocks.append(prices[[d - lag for d in rows], :])
+        blocks.append(prices[[d - lag for d in rows], lag1 if lag == 1 else slice(None)])
     for j in range(n_exog):
         for lag in EXOG_LAG_DAYS:
-            blocks.append(exog[[d - lag for d in rows], :, j])
+            blocks.append(exog[[d - lag for d in rows], lag1 if lag == 1 else slice(None), j])
     dummies = np.zeros((len(rows), 7))
     dummies[np.arange(len(rows)), dayofweek[7:]] = 1.0
     x = np.hstack([*blocks, dummies])
@@ -61,13 +69,16 @@ def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray):
     return x, y
 
 
-def forecast_day(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray) -> np.ndarray:
+def forecast_day(
+    prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray, gate_safe: bool = False
+) -> np.ndarray:
     """Fit on all complete days and predict the last day (whose price row is unused).
 
     Inputs cover the calibration window plus the target day as the final row;
-    prices[-1] may be NaN. Returns the 24 predicted prices.
+    prices[-1] may be NaN. Returns the 24 predicted prices. `gate_safe` is
+    passed to build_xy.
     """
-    x_all, y_all = build_xy(prices, exog, dayofweek)
+    x_all, y_all = build_xy(prices, exog, dayofweek, gate_safe)
     x_train, y_train = x_all[:-1], y_all[:-1]
     x_pred = x_all[-1:]
 
