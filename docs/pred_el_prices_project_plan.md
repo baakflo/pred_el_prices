@@ -186,6 +186,10 @@ remaining lever is adaptation speed. Arms: plain academic LEAR at windows 56 and
 ensemble, computed offline). Predictions: (13) the {56, 84, 364} mean beats 364 alone by
 ≥ 0.01 rMAE overall; (14) it cuts September hours 16–18 by ≥ 3 EUR/MWh vs 364's 36.3.
 
+**Registered (2026-09-23, after the high-only ablation beat both hinges, before this run):**
+(15) `lear-gbm-de` on the high-only base beats GBM-on-plain by ≥ 0.05 EUR/MWh MAE on the
+common span with DM p < 0.05, keeping depth ratio ≤ 1.6.
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
