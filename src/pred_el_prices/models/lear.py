@@ -38,19 +38,27 @@ class InvariantScaler:
         return np.sinh(x) * self.mad + self.median
 
 
-def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray):
+def build_xy(prices: np.ndarray, exog: np.ndarray, dayofweek: np.ndarray, gate_safe: bool = False):
     """Day-indexed design matrix and 24-wide target.
 
     prices: (n_days, 24); exog: (n_days, 24, n_exog); dayofweek: (n_days,).
     Rows for the first 7 days are dropped (lag burn-in). Returns X, Y, and the
     row->day offset (7).
+
+    gate_safe: the lag-1 block takes UTC hours 22-23 from day d-2 on EVERY row.
+    Those hours of d-1 are local 00-01 of delivery day d, cleared in the very
+    auction being forecast; defining the feature this way on training rows too
+    keeps training consistent with what exists at the gate.
     """
     n_days = prices.shape[0]
     n_exog = exog.shape[2]
     rows = range(7, n_days)
     blocks = []
     for lag in PRICE_LAG_DAYS:
-        blocks.append(prices[[d - lag for d in rows], :])
+        block = prices[[d - lag for d in rows], :]
+        if gate_safe and lag == 1:
+            block[:, 22:] = prices[[d - 2 for d in rows], 22:]
+        blocks.append(block)
     for j in range(n_exog):
         for lag in EXOG_LAG_DAYS:
             blocks.append(exog[[d - lag for d in rows], :, j])
@@ -81,6 +89,7 @@ def forecast_day(
     exog: np.ndarray,
     dayofweek: np.ndarray,
     hinge_quantiles: tuple[float, float] | None = None,
+    gate_safe_prices: bool = False,
 ) -> np.ndarray:
     """Fit on all complete days and predict the last day (whose price row is unused).
 
@@ -89,9 +98,10 @@ def forecast_day(
 
     `hinge_quantiles` adds same-day (lag 0) hinge terms on residual load
     exog[..., 0] - exog[..., 1] (i.e. exog must be [load, res]); see
-    hinge_features. None reproduces plain LEAR exactly.
+    hinge_features. None reproduces plain LEAR exactly. `gate_safe_prices` is
+    passed to build_xy.
     """
-    x_all, y_all = build_xy(prices, exog, dayofweek)
+    x_all, y_all = build_xy(prices, exog, dayofweek, gate_safe_prices)
     n_unscaled = 7  # day-of-week dummies
     if hinge_quantiles is not None:
         hinges = hinge_features(exog[:, :, 0] - exog[:, :, 1], hinge_quantiles)
@@ -151,8 +161,11 @@ def rolling_forecast(
 
     `gate_safe_prices`: UTC hours 22-23 of the day before the target belong to
     the target's LOCAL delivery day, i.e. to the very auction being forecast.
-    Plain LEAR sees them as lag-1 prices; production cannot, and heals them
-    from 24h-lag (daily_forecast.lear_forecast). True mirrors that healing.
+    Plain LEAR sees them as lag-1 prices (and as the last training target);
+    production cannot, and heals them from 24h-lag for the forecast day only
+    (daily_forecast.lear_forecast) — a train/test mismatch. True heals that
+    day AND defines lag-1 hours 22-23 as d-2 on every row (build_xy), so the
+    model never learns to lean on prices it will not have at the gate.
     """
     daily_index = pd.DatetimeIndex(sorted({t.normalize() for t in df.index}))
     test_days = daily_index[daily_index >= test_start.normalize()]
@@ -183,7 +196,9 @@ def rolling_forecast(
         if gate_safe_prices:
             prices_window = prices_window.copy()
             prices_window[-2, 22:] = prices_window[-3, 22:]
-        return forecast_day(prices_window, exog_window, dow_all[sl], hinge_quantiles)
+        return forecast_day(
+            prices_window, exog_window, dow_all[sl], hinge_quantiles, gate_safe_prices
+        )
 
     if n_jobs == 1:
         preds = []

@@ -195,6 +195,17 @@ low-only base does **not** beat GBM on high-only (MAE ≥ 13.45): trees already 
 floor the low hinge gives LEAR, while the high hinge supplies the one thing trees lack —
 linear extrapolation above the knot.
 
+**Registered (2026-09-23, before the long run): consistent gate-safe LEAR.** The first
+`gate_safe_prices` run healed only the forecast day (production's scheme) and scored rMAE
+0.532 vs 0.409 (hour 0: 3.7 → 19.3) — a train/test mismatch: every training row still
+carried the target-auction hours, so the model leaned on them and then met stale values.
+Redefined (commit after ee88ca8): lag-1 hours 22–23 come from d−2 on EVERY row. September
+check (window 371, official inputs): MAE 29.40 vs leaky 23.28 vs **live 29.74**; hours
+0–3 at 20–22 vs leaky 5–8 vs live 24–30. Predictions for the long tier: (17) consistent
+gate-safe plain lands at rMAE 0.46–0.51 — worse than every published backtest number,
+better than the production-style mismatch (0.532); (18) the high-only hinge's gain
+survives it (≥ 0.005 rMAE, DM p < 0.05).
+
 **Decision rule.** 1–3 met → hinge-LEAR becomes the linear baseline that step 3 (gradient-
 boosted correction of LEAR's out-of-sample error) must beat. 1 met, 3 not → kept as an
 ablation. 1 missed → the zero regime needs more than a hinge; recorded as such.
