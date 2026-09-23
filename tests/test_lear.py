@@ -115,17 +115,17 @@ class TestRollingForecast:
 
 
 class TestGateSafePrices:
-    def test_lag1_late_hours_come_from_d_minus_2_on_every_row(self):
+    def test_lag1_late_hours_are_dropped_on_every_row(self):
         n_days = 20
         prices = np.arange(n_days * 24, dtype=float).reshape(n_days, 24)
         exog = prices[:, :, None] * 10
         dow = np.arange(n_days) % 7
         x_plain, y_plain = build_xy(prices, exog, dow)
         x_safe, y_safe = build_xy(prices, exog, dow, gate_safe=True)
+        assert x_safe.shape[1] == x_plain.shape[1] - 2
         for row, d in enumerate(range(7, n_days)):
             assert np.array_equal(x_safe[row, :22], prices[d - 1, :22])
-            assert np.array_equal(x_safe[row, 22:24], prices[d - 2, 22:])
-        assert np.array_equal(x_safe[:, 24:], x_plain[:, 24:])
+        assert np.array_equal(x_safe[:, 22:], x_plain[:, 24:])
         assert np.array_equal(y_safe, y_plain)
 
     def test_target_auction_hours_cannot_move_the_forecast(self):
