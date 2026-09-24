@@ -320,6 +320,19 @@ window). Predictions on the 2026 holdout: (33) 80 % coverage lands in 78–82 % 
 coverage in 97–99 %; (34) mean pinball is not worse than 4.72 + 0.02, since recalibration
 should cost pinball only if the past year misleads.
 
+**Result** (`runs/qnn-de-20260923-182551-cal`, `_scratch/phase2_nonlinear/calibrate_run.py`):
+
+| span | pinball raw → cal | 80 % cov | 98 % cov | worst level error |
+|---|---|---|---|---|
+| 2021–2026-09-21 | 5.349 → 5.352 | 76.4 → **80.0 %** | 96.6 → **97.8 %** | 4.6 → 1.2 pp |
+| holdout 2026 | 4.723 → **4.625** | 77.2 → 84.3 % | 96.3 → **98.6 %** | 11.2 → 2.9 pp |
+| Sept 2026 | 5.713 → 5.837 | 80.6 → 85.7 % | 98.6 → 100 % | 7.9 → 8.5 pp |
+
+**(33) half:** 98 % coverage in range, 80 % overshoots to 84.3 %. 2026 was calmer than its
+trailing year, so the widening learned in 2025 is a bit too much. **(34) met:** pinball
+improves by 0.10. Over 2021–26 the percentiles are now within ~1 pp of nominal. The
+recalibrated run is the reference for the fan-chart page.
+
 **Outage validation (2026-09-23, before G3): the registered approximation fails.** Exact
 pre-gate unavailability was reconstructed from real revision timestamps (617 of 625
 multi-revision DE messages complete, nothing pending) for Nov–Dec 2025 (DE) and Nov
