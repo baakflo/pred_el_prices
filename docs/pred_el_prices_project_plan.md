@@ -341,6 +341,33 @@ data repo for how many days are archived. Plan:
 - Win condition: an earlier forecast slot (ICON 00Z is out about 2 h before ENS), with
   the RES MAE no worse. Re-score the price model with the new RES.
 
+*First check (2026-09-24, `_scratch/phase2_nonlinear/icon_vs_ecmwf.py`).* ICON-EU-EPS vs
+ECMWF ENS, both 00Z ensemble means, 53 delivery days 2026-07-31..09-22, the same ridge per
+source (wind: mean speed and mean cubed speed; solar: GHI; hour of day), leave-one-week-out
+CV against SMARD actuals. MAE in MW:
+
+| source | wind | wind 00–06 UTC | solar |
+|---|---|---|---|
+| ICON-EU-EPS (10 m only) | 4,021 | 4,585 | **1,682** |
+| ECMWF ENS 100 m | **2,975** | **3,030** | – |
+| ECMWF ENS 10 m | 3,584 | 3,769 | 2,793 |
+| TSO day-ahead (reference) | 1,399 | 1,274 | 742 |
+
+Wind: ECMWF wins even like-for-like at 10 m (DM 3.2; night 4.9). Solar: ICON wins clearly
+(DM −14), plausibly because it is hourly with direct and diffuse radiation, while ECMWF's
+`ssrd` is 3-hourly and interpolated. Note: ICON's radiation fields are means since run start,
+not instantaneous. **Verdict: no wholesale switch.** Candidate: ICON for solar, ECMWF for
+wind, until ICON-D2/ICON-EU model-level winds (37–93 m) have a few months of archive. Caveat:
+late summer only, no winter storms or snow.
+
+*Archiver (2026-09-24).* `pipeline/dwd_det.py`, CLI `archive-weather-det`: ICON-D2 and
+ICON-EU deterministic, 00Z and 03Z, single-level u/v 10 m, aswdir_s, aswdifd_s, t_2m, clct,
+plus u/v on the two model levels above 10 m (D2: ~37 m and ~76 m; EU: ~41 m and ~93 m),
+1-degree cell means (ICON-EU over lon 2–20 E, lat 45–57 N, so the neighbours are included).
+About 1.4 GB downloaded per day, about 2 MB stored. Wired into `archive-weather.yml`, with
+gap detection for the 00Z files. The daily job runs from the public repo, so the archive
+starts once this change reaches it.
+
 **5. Owed from 2026-09-23.** Ablation of fuel scaling (above). Daily 10:00 UTC outage
 snapshots for a clean outage re-test in a year. The production path for the network
 (weekly retrain job, publishing fans on the website, where the page's fan chart and the

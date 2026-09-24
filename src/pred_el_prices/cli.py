@@ -24,6 +24,27 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
     )
 
+    archive_det = sub.add_parser(
+        "archive-weather-det",
+        help="Archive today's ICON-D2 + ICON-EU deterministic runs (00Z/03Z, regional "
+        "aggregates + hub-height wind)",
+    )
+    archive_det.add_argument(
+        "--date",
+        type=date.fromisoformat,
+        default=datetime.now(UTC).date(),
+        help="Run date in UTC (default: today)",
+    )
+    archive_det.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/weather"), help="Output directory"
+    )
+    archive_det.add_argument(
+        "--run",
+        choices=["00", "03"],
+        default=None,
+        help="Archive only this run hour (default: both 00Z and 03Z)",
+    )
+
     pegel = sub.add_parser(
         "archive-pegel",
         help="Archive PEGELONLINE gauge readings (Rhine at Kaub; rolling ~31-day API window)",
@@ -99,9 +120,7 @@ def main() -> None:
         "fetch-outages",
         help="Backfill ENTSO-E REMIT generation-unit outage documents (resumes where it left off)",
     )
-    outages.add_argument(
-        "--zones", nargs="+", default=["DE_LU", "FR"], help="entsoe-py area codes"
-    )
+    outages.add_argument("--zones", nargs="+", default=["DE_LU", "FR"], help="entsoe-py area codes")
     outages.add_argument("--start", default="2018-12-01", help="UTC start date")
     outages.add_argument("--end", default=None, help="UTC end date (default: now)")
     outages.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
@@ -235,6 +254,12 @@ def main() -> None:
         from pred_el_prices.pipeline.dwd import archive_run
 
         archive_run(args.date, args.archive_dir)
+    elif args.command == "archive-weather-det":
+        from pred_el_prices.pipeline.dwd_det import archive_today
+
+        runs = (int(args.run),) if args.run else (0, 3)
+        written = archive_today(args.archive_dir, args.date, runs=runs)
+        print(f"archive-weather-det: {len(written)} file(s) written")
     elif args.command == "archive-pegel":
         from pred_el_prices.pipeline.pegel import archive_window
 
