@@ -111,11 +111,13 @@ def run(
     refit: str = "month",
     fuel_scale: bool = False,
     save_seeds: bool = False,
+    head: str = "quantile",
 ) -> dict:
     """`window_days`: rolling training window (None = expanding). `refit`: "month" or
     "week". `fuel_scale`: prices (target and lags) in units of that day's gas-plant
     marginal cost (fuel_cost); a positive per-day factor, so percentiles scale back
-    exactly. `save_seeds`: also write seeds.npz (see backtest).
+    exactly. `save_seeds`: also write seeds.npz (see backtest). `head`: "quantile"
+    (99 non-crossing outputs) or a distribution, "jsu" / "normal" (models.qnn).
     """
     config = QNNConfig(
         hidden=hidden or [256, 256],
@@ -125,6 +127,7 @@ def run(
         batch_size=batch_size,
         max_epochs=max_epochs,
         patience=patience,
+        head=head,
     )
     qdf = backtest(
         dataset_path,

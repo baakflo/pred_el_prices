@@ -10,9 +10,16 @@ Output head: for every hour, the median plus softplus steps cumulated outwards
 over percentiles and hours, in the scaled target space. The target scaler is a
 monotone map per hour, and quantiles commute with monotone maps, so the inverse
 transform of a scaled percentile is the same percentile in EUR/MWh.
+
+Distributional heads (`head="jsu"` or `"normal"`, Marcjasz et al. 2023): per hour
+the parameters of a Johnson's SU (location, scale, skew, tail weight) or a Normal,
+trained by negative log-likelihood in the scaled space; the 99 percentiles are the
+distribution's exact quantiles, mapped back the same way.
 """
 
+import math
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 import numpy as np
 import torch
@@ -33,6 +40,7 @@ class QNNConfig:
     max_epochs: int = 400
     patience: int = 30
     val_share: float = 0.15
+    head: str = "quantile"  # "quantile", "jsu" or "normal"
 
 
 class QuantileMLP(nn.Module):
@@ -60,7 +68,9 @@ class QuantileMLP(nn.Module):
         raw = self.head(self.body(x)).view(-1, 24, self.n_q)
         median = raw[..., self.mid : self.mid + 1]
         steps = nn.functional.softplus(raw)
-        below = median - torch.flip(torch.cumsum(torch.flip(steps[..., : self.mid], [-1]), -1), [-1])
+        below = median - torch.flip(
+            torch.cumsum(torch.flip(steps[..., : self.mid], [-1]), -1), [-1]
+        )
         above = median + torch.cumsum(steps[..., self.mid + 1 :], -1)
         return torch.cat([below, median, above], dim=-1)
 
@@ -69,6 +79,71 @@ def pinball_loss(pred: torch.Tensor, y: torch.Tensor, q: torch.Tensor) -> torch.
     """Mean pinball loss; pred (n, 24, n_q), y (n, 24), q (n_q,)."""
     diff = y.unsqueeze(-1) - pred
     return torch.maximum(q * diff, (q - 1) * diff).mean()
+
+
+class DistMLP(nn.Module):
+    """Same body as QuantileMLP; head gives per-hour distribution parameters.
+
+    jsu: (xi, lambda, gamma, delta), normal: (mu, sigma); scale-like parameters
+    through softplus. Biases start at the standard shape (scale 1, delta 1).
+    """
+
+    N_PARAMS: ClassVar[dict[str, int]] = {"jsu": 4, "normal": 2}
+
+    def __init__(self, n_in: int, hidden: list[int], dropout: float, dist: str):
+        super().__init__()
+        layers: list[nn.Module] = []
+        width = n_in
+        for h in hidden:
+            layers += [nn.Linear(width, h), nn.ELU(), nn.Dropout(dropout)]
+            width = h
+        self.body = nn.Sequential(*layers)
+        self.dist = dist
+        self.n_p = self.N_PARAMS[dist]
+        self.head = nn.Linear(width, 24 * self.n_p)
+        with torch.no_grad():
+            bias = self.head.bias.view(24, self.n_p)
+            bias.zero_()
+            bias[:, 1] = math.log(math.e - 1)  # softplus -> 1
+            if dist == "jsu":
+                bias[:, 3] = math.log(math.e - 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        raw = self.head(self.body(x)).view(-1, 24, self.n_p)
+        loc = raw[..., 0]
+        scale = nn.functional.softplus(raw[..., 1]) + 1e-3
+        if self.dist == "normal":
+            return torch.stack([loc, scale], dim=-1)
+        tail = nn.functional.softplus(raw[..., 3]) + 1e-3
+        return torch.stack([loc, scale, raw[..., 2], tail], dim=-1)
+
+
+def dist_nll(params: torch.Tensor, y: torch.Tensor, dist: str) -> torch.Tensor:
+    """Mean negative log-likelihood; params (n, 24, p), y (n, 24)."""
+    z = (y - params[..., 0]) / params[..., 1]
+    if dist == "normal":
+        return (torch.log(params[..., 1]) + 0.5 * z**2).mean() + 0.5 * math.log(2 * math.pi)
+    gamma, delta = params[..., 2], params[..., 3]
+    log_pdf = (
+        torch.log(delta)
+        - torch.log(params[..., 1])
+        - 0.5 * math.log(2 * math.pi)
+        - 0.5 * torch.log1p(z**2)
+        - 0.5 * (gamma + delta * torch.asinh(z)) ** 2
+    )
+    return -log_pdf.mean()
+
+
+def dist_quantiles(params: np.ndarray, dist: str, taus: np.ndarray = QUANTILES) -> np.ndarray:
+    """Exact quantiles (n, 24, len(taus)) of the fitted distributions."""
+    from scipy.stats import norm
+
+    u = norm.ppf(taus)
+    loc, scale = params[..., :1], params[..., 1:2]
+    if dist == "normal":
+        return loc + scale * u
+    gamma, delta = params[..., 2:3], params[..., 3:4]
+    return loc + scale * np.sinh((u - gamma) / delta)
 
 
 def fit_predict(
@@ -103,7 +178,17 @@ def fit_predict(
     n_val = max(1, round(config.val_share * n))
     val_idx, tr_idx = perm[:n_val], perm[n_val:]
 
-    model = QuantileMLP(xs.shape[1], config.hidden, config.dropout)
+    if config.head == "quantile":
+        model = QuantileMLP(xs.shape[1], config.hidden, config.dropout)
+
+        def loss_fn(out, y):
+            return pinball_loss(out, y, q)
+    else:
+        model = DistMLP(xs.shape[1], config.hidden, config.dropout, config.head)
+
+        def loss_fn(out, y):
+            return dist_nll(out, y, config.head)
+
     opt = torch.optim.AdamW(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     best, best_state, stale = float("inf"), None, 0
@@ -113,12 +198,12 @@ def fit_predict(
         for i in range(0, len(order), config.batch_size):
             b = order[i : i + config.batch_size]
             opt.zero_grad()
-            loss = pinball_loss(model(xs[b]), ys[b], q)
+            loss = loss_fn(model(xs[b]), ys[b])
             loss.backward()
             opt.step()
         model.eval()
         with torch.no_grad():
-            val = pinball_loss(model(xs[val_idx]), ys[val_idx], q).item()
+            val = loss_fn(model(xs[val_idx]), ys[val_idx]).item()
         if val < best - 1e-6:
             best, stale = val, 0
             best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -130,7 +215,9 @@ def fit_predict(
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        out = model(xp).numpy()  # (n_pred, 24, n_q), scaled space
+        out = model(xp).numpy()  # (n_pred, 24, n_q) or parameters, scaled space
+    if config.head != "quantile":
+        out = dist_quantiles(out.astype(np.float64), config.head)
     # inverse-transform hour by hour: the scaler is per hour column
     n_pred, _, n_q = out.shape
     flat = out.transpose(0, 2, 1).reshape(n_pred * n_q, 24)

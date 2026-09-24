@@ -7,7 +7,14 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from pred_el_prices.experiments import qnn_de
-from pred_el_prices.models.qnn import QUANTILES, QNNConfig, QuantileMLP, fit_predict
+from pred_el_prices.models.qnn import (
+    QUANTILES,
+    QNNConfig,
+    QuantileMLP,
+    dist_nll,
+    dist_quantiles,
+    fit_predict,
+)
 
 
 def _days(n: int, seed: int = 0):
@@ -25,6 +32,22 @@ class TestHead:
         out = model(torch.randn(50, 10))
         assert out.shape == (50, 24, len(QUANTILES))
         assert (out.diff(dim=-1) > 0).all()
+
+    def test_jsu_quantiles_match_scipy(self):
+        from scipy.stats import johnsonsu
+
+        params = np.array([[[1.5, 2.0, -0.4, 1.3]]])
+        got = dist_quantiles(params, "jsu")[0, 0]
+        want = johnsonsu.ppf(QUANTILES, a=-0.4, b=1.3, loc=1.5, scale=2.0)
+        np.testing.assert_allclose(got, want, rtol=1e-8)
+
+    def test_jsu_nll_matches_scipy(self):
+        from scipy.stats import johnsonsu
+
+        params = torch.tensor([[[1.5, 2.0, -0.4, 1.3]] * 24], dtype=torch.float64)
+        y = torch.full((1, 24), 3.0, dtype=torch.float64)
+        want = -johnsonsu.logpdf(3.0, a=-0.4, b=1.3, loc=1.5, scale=2.0)
+        assert abs(dist_nll(params, y, "jsu").item() - want) < 1e-10
 
 
 class TestDesign:
@@ -102,6 +125,19 @@ class TestSeeds:
 
 
 class TestFit:
+    @pytest.mark.parametrize("head", ["jsu", "normal"])
+    def test_distribution_heads_learn_the_median(self, head):
+        prices, exog, fuels, days = _days(200, seed=1)
+        x, y, _ = qnn_de.design(prices, exog, fuels, days)
+        cfg = QNNConfig(hidden=[32], max_epochs=40, patience=10, batch_size=32, head=head)
+        out = fit_predict(x[:-10], y[:-10], x[-10:], 7, cfg, seed=0)
+        assert out.shape == (10, 24, len(QUANTILES))
+        assert (np.diff(out, axis=-1) > 0).all()
+        assert abs(np.median(out[..., 49]) - 50) < 5
+        # prices are N(50, 10): 10-90 span 25.6; noise inputs on 160 days widen it
+        # (the quantile head gives ~56 here)
+        assert 15 < np.median(out[..., 89] - out[..., 9]) < 70
+
     def test_learns_a_shifted_median_and_sorted_output(self):
         prices, exog, fuels, days = _days(200, seed=1)
         x, y, _ = qnn_de.design(prices, exog, fuels, days)

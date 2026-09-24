@@ -166,6 +166,22 @@ and smoother tails; the price is that the shape is fixed per hour, which may mis
 hours (zero-price vs gas-set). Optional third arm: head outputs both, with the quantile
 head regularised toward the JSU.
 
+*Registered (2026-09-24, before the run).* `qnn-de --set head="jsu"` and `head="normal"`
+(`models.qnn.DistMLP`, NLL in the scaled space, early stopping on validation NLL,
+percentiles = exact quantiles of the fitted distribution). Everything else as in the tuned
+run `182551` (body, optimiser settings, weekly refit, 1460-day window, fuel scaling,
+4 seeds, Vincentized), but first fit 2024-01-01 to save pod time; compared with
+`182551` on the same days (2024-01..2026-09-21) and on the 2026 holdout, with
+`qnn_compare.py`. Handicap to keep in mind: the body's hyperparameters were tuned for the
+quantile head.
+- **P39.** JSU beats Normal on mean pinball over 2024-01..2026-09, DM on daily pinball > 2
+  (prices are skewed and heavy-tailed even after asinh scaling).
+- **P40.** JSU vs the quantile head: overall pinball within ±2 %, no significant DM on the
+  2026 holdout; JSU is better in the tails (mean pinball of q01–q05 and q95–q99) and worse
+  or equal in the body (q25–q75).
+- **P41.** Before recalibration, JSU's 80 % band coverage is closer to 80 % than the quantile
+  head's (the quantile head sat at 75.6 %).
+
 **3. 15-minute products (a plan, since only ~1 year of 15-minute prices exists).**
 SDAC went to 15-minute MTU for day-ahead on 2025-10-01; the ENTSO-E cache keeps native
 resolution, so the history is 2025-10 onward (verify in the cache). Our hourly target is
