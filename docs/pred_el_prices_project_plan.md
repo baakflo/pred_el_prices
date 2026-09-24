@@ -146,6 +146,35 @@ mean pinball; fit pinball(k) = L∞ + c/k.
 - **P37.** Four seeds (today's setting) are within 1 % of 16: more seeds are a cheap
   cleanup, not a big lever.
 
+*Result (run `qnn-de-20260924-074708`, 2025, 8,760 h).* Mean pinball of k-seed
+ensembles (50 random subsets each), gap to 16 seeds, median DM of the subset vs all 16:
+
+| k | pinball | gap to 16 | subset sd | DM vs 16 |
+|---|---|---|---|---|
+| 1 | 4.587 | +4.86 % | 0.062 | 4.9 |
+| 2 | 4.472 | +2.22 % | 0.041 | 3.7 |
+| 4 | 4.417 | +0.98 % | 0.028 | 2.4 |
+| 6 | 4.405 | +0.69 % | 0.018 | 2.3 |
+| 7 | 4.393 | +0.44 % | 0.021 | 1.5 |
+| 8 | 4.385 | +0.25 % | 0.017 | 1.1 |
+| 10 | 4.381 | +0.15 % | 0.010 | 0.9 |
+| 12 | 4.380 | +0.13 % | 0.009 | 1.2 |
+| 16 | 4.374 | 0 | – | – |
+
+Fit pinball(k) = 4.361 + 0.226/k, so 16 seeds are still 0.31 % above the infinite
+ensemble and 12 seeds 0.44 %. Single seeds range 4.511–4.721.
+- P35 **holds**: the smallest k within 0.5 % is 7.
+- P36 **half holds**: the single-seed spread is 4.8 % (> 1 %), but the 16-seed ensemble beats
+  the average single seed by 4.6 %, above the predicted 1–3 %.
+- P37 **holds on the number, not in spirit**: 4 seeds sit 0.98 % above 16, just inside 1 %,
+  but the gap is DM-significant (median DM 2.4). The DM drops below 2 from k = 7 on and
+  near 1 from k = 8. Caveat: for large k the subsets share most seeds with the 16, so the
+  DM column flatters them.
+
+**Decision: 12 seeds** for weekly production refits and for future backtests where compute
+allows (8 is the floor). This matches the user's 9–12 and costs 3× today's fits, which is
+still minutes per week.
+
 **Fuel-scaling ablation (item 5), queued on the same pod.** The tuned run `182551`
 exactly, with `fuel_scale=false` (weekly, 2020-01..2026-09-21, 4 seeds). Scored with
 `qnn_compare.py` against `182551`.

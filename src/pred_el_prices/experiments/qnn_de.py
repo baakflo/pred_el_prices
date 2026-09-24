@@ -226,7 +226,9 @@ def backtest(
             seed_parts.append(per_seed.reshape(len(preds), -1, len(QUANTILES)))
     qdf = pd.concat(parts)
     if seed_path is not None:
-        np.savez_compressed(seed_path, q=np.concatenate(seed_parts, axis=1), index=qdf.index.asi8)
+        np.savez_compressed(
+            seed_path, q=np.concatenate(seed_parts, axis=1), index=qdf.index.as_unit("ns").asi8
+        )
     if test_end is not None:
         qdf = qdf[qdf.index < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)]
     qdf["actual"] = pd.Series(prices.reshape(-1), index=hours).reindex(qdf.index)

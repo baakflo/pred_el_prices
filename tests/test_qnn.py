@@ -119,7 +119,9 @@ class TestSeeds:
         )  # fmt: skip
         saved = np.load(path)
         assert saved["q"].shape == (3, len(qdf), len(QUANTILES))
-        np.testing.assert_array_equal(saved["index"], qdf.index.asi8)
+        np.testing.assert_array_equal(
+            pd.DatetimeIndex(saved["index"], tz="UTC"), qdf.index.as_unit("ns")
+        )
         np.testing.assert_allclose(saved["q"].mean(axis=0), qdf[qnn_de.Q_COLS].to_numpy())
         assert not np.allclose(saved["q"][0], saved["q"][2])
 
