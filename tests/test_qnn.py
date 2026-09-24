@@ -125,6 +125,23 @@ class TestSeeds:
         np.testing.assert_allclose(saved["q"].mean(axis=0), qdf[qnn_de.Q_COLS].to_numpy())
         assert not np.allclose(saved["q"][0], saved["q"][2])
 
+    def test_first_seed_shifts_the_seed_range(self, monkeypatch):
+        prices, exog, fuels, days = _days(80)
+        hours = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in days for h in range(24)])
+        monkeypatch.setattr(qnn_de, "load_days", lambda *a: (prices, exog, fuels, days, hours))
+        seen = set()
+
+        def spy(x_train, y_train, x_pred, n_unscaled, config, seed):
+            seen.add(seed)
+            return np.zeros((len(x_pred), 24, len(QUANTILES)))
+
+        monkeypatch.setattr(qnn_de, "fit_predict", spy)
+        qnn_de.backtest(
+            "unused", "2024-01-01", [], QNNConfig(), "2024-02-15", None, "4weeks",
+            None, False, 3, 1, verbose=0, first_seed=4,
+        )  # fmt: skip
+        assert seen == {4, 5, 6}
+
     def test_percentiles_are_clipped_to_the_auction_price_limits(self, monkeypatch):
         prices, exog, fuels, days = _days(80)
         hours = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in days for h in range(24)])

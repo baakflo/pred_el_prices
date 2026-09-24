@@ -254,6 +254,16 @@ limits [−500, 4000] after the fact; 17 of 23,904 hours were outside, one JSU q
 head, blended, 12 seeds, recalibrated. Open check: the blend vs a single head at the same
 total network count, which settles the caveat above.
 
+*Registered (2026-09-24, before the run): equal-network check.* Two new runs from 2024-01-01
+with `first_seed=4` (seeds 4–7): quantile head and JSU head, otherwise as `182551` and
+`075415`. Averaged with the existing seed 0–3 runs they give 8-seed single heads (Q8, J8).
+Compared on the calibrated 2026 holdout and 2025 against the 4+4 blend (B8) and the
+8+8 blend (B16).
+- **P46.** At equal network count the blend still beats the better 8-seed single head,
+  but by less than 1 % and without a significant DM (< 2) on the holdout: most of the blend's
+  gain is ensemble size, a little is diversity between heads.
+- **P47.** B16 beats B8 by 0.2–0.6 % (in line with the seed curve's 8 → 16 step).
+
 **3. 15-minute products (a plan, since only ~1 year of 15-minute prices exists).**
 SDAC went to 15-minute MTU for day-ahead on 2025-10-01; the ENTSO-E cache keeps native
 resolution, so the history is 2025-10 onward (verify in the cache). Our hourly target is

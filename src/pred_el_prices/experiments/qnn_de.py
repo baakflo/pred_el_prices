@@ -114,6 +114,7 @@ def run(
     fuel_scale: bool = False,
     save_seeds: bool = False,
     head: str = "quantile",
+    first_seed: int = 0,
 ) -> dict:
     """`window_days`: rolling training window (None = expanding). `refit`: "month" or
     "week". `fuel_scale`: prices (target and lags) in units of that day's gas-plant
@@ -144,6 +145,7 @@ def run(
         n_seeds,
         n_jobs,
         seed_path=out_dir / "seeds.npz" if save_seeds else None,
+        first_seed=first_seed,
     )
     qdf.to_parquet(out_dir / "quantiles.parquet")
     qdf[["q50", "actual"]].rename(columns={"q50": "qnn_median"}).to_parquet(
@@ -162,6 +164,7 @@ def run(
             "refit": refit,
             "fuel_scale": fuel_scale,
             "save_seeds": save_seeds,
+            "first_seed": first_seed,
         },
         "overall": probabilistic_metrics(qdf, prices_all),
         "by_year": {},
@@ -189,8 +192,12 @@ def backtest(
     n_jobs: int,
     verbose: int = 10,
     seed_path: Path | None = None,
+    first_seed: int = 0,
 ) -> pd.DataFrame:
     """Percentile forecasts q01..q99 plus `actual`, hourly, from first_fit to test_end.
+
+    Seeds are first_seed .. first_seed + n_seeds - 1, so a second run with first_seed=4
+    adds four new networks to a 4-seed run (average the two runs for 8 seeds).
 
     `seed_path`: also save each seed's percentiles (EUR/MWh, before averaging) as an
     npz with `q` (n_seeds, n_hours, 99) and `index` (UTC ns), untrimmed by test_end.
@@ -203,7 +210,8 @@ def backtest(
     last = row_days.max() if test_end is None else pd.Timestamp(test_end, tz="UTC")
     starts = pd.date_range(pd.Timestamp(first_fit, tz="UTC"), last, freq=REFIT_FREQ[refit])
     ends = [*starts[1:], last + pd.Timedelta(days=1)]
-    jobs = [(s, e, k) for s, e in zip(starts, ends, strict=True) for k in range(n_seeds)]
+    seeds = range(first_seed, first_seed + n_seeds)
+    jobs = [(s, e, k) for s, e in zip(starts, ends, strict=True) for k in seeds]
     if verbose:
         print(f"{len(starts)} refits x {n_seeds} seeds = {len(jobs)} fits, X {x.shape}", flush=True)
     results = Parallel(n_jobs=n_jobs, verbose=verbose)(
