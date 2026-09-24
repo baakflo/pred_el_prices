@@ -1,0 +1,460 @@
+<title>DE-LU Production Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --ground: #F2F5F8; --surface: #FFFFFF; --ink: #16202B; --ink-2: #3C4855; --muted: #5F6B79;
+  --rule: #D8DEE5; --rule-soft: #E7EBF0;
+  --net: #2A5DB0; --net-deep: #173F7A; --cmp: #B86A00; --site: #6B7785;
+  --band98: #DCE6F6; --band80: #B3C9EC; --band50: #7C9FDA;
+  --heat: 91, 63, 160; --focus: #2A5DB0; --chip: #E9EEF5; --good: #2E7D4F; --bad: #B23B3B;
+  --font-display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0E1318; --surface: #141A21; --ink: #E5EAF0; --ink-2: #C3CCD6; --muted: #93A0AF;
+    --rule: #28323D; --rule-soft: #1D252E; --net: #5B87D4; --net-deep: #A9C4F2; --cmp: #C4862C; --site: #8C99A8;
+    --band98: #1B2940; --band80: #26406A; --band50: #3A5F9E; --heat: 157, 132, 230; --focus: #7FA6E8; --chip: #1E2731;
+    --good: #5BB585; --bad: #E07A7A;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0E1318; --surface: #141A21; --ink: #E5EAF0; --ink-2: #C3CCD6; --muted: #93A0AF;
+  --rule: #28323D; --rule-soft: #1D252E; --net: #5B87D4; --net-deep: #A9C4F2; --cmp: #C4862C; --site: #8C99A8;
+  --band98: #1B2940; --band80: #26406A; --band50: #3A5F9E; --heat: 157, 132, 230; --focus: #7FA6E8; --chip: #1E2731;
+  --good: #5BB585; --bad: #E07A7A;
+}
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; padding-inline: 16px; padding-block: 28px 64px; }
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 52px; }
+h1, h2, h3 { font-family: var(--font-display); font-stretch: 80%; text-wrap: balance; margin: 0; color: var(--ink); }
+h1 { font-size: clamp(34px, 6vw, 56px); font-weight: 800; letter-spacing: -0.01em; line-height: 1.02; }
+h2 { font-size: 28px; font-weight: 750; }
+h3 { font-size: 19px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; color: var(--ink-2); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+header { display: grid; gap: 18px; }
+.facts { display: flex; flex-wrap: wrap; gap: 10px 28px; padding-top: 14px; border-top: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+.fact { display: grid; gap: 2px; }
+.fact b { font-family: var(--font-display); font-stretch: 85%; font-size: 24px; font-weight: 700; }
+.fact span { font-size: 12.5px; color: var(--muted); max-width: 30ch; }
+section { display: grid; gap: 20px; }
+.sec-head { display: grid; gap: 8px; }
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 18px 14px; display: grid; gap: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+table.t { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+table.t th, table.t td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--rule-soft); white-space: nowrap; }
+table.t th:first-child, table.t td:first-child { text-align: left; white-space: normal; }
+table.t th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+table.t tr.hl td { font-weight: 600; color: var(--ink); }
+table.t td.na { color: var(--muted); }
+.tablewrap { overflow-x: auto; }
+.note { font-size: 13px; color: var(--muted); }
+.inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.inp { border: 1px solid var(--rule-soft); border-radius: 5px; padding: 12px 14px; display: grid; gap: 4px; background: var(--ground); }
+.inp b { font-size: 14px; }
+.inp span { font-size: 13px; color: var(--ink-2); }
+.inp .tag { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+.tag.ok { color: var(--good); } .tag.swap { color: var(--cmp); }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button { font: 600 13px var(--font-body); background: var(--surface); color: var(--muted); border: 0; padding: 7px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--net); color: var(--surface); }
+.seg button:focus-visible, .daybar:focus-visible, .chipbtn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.daystrip { display: grid; grid-template-columns: repeat(60, 1fr); gap: 2px; align-items: end; height: 84px; }
+.daybar { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; border: 0; background: none; cursor: pointer; gap: 2px; }
+.daybar i { display: block; width: 100%; background: var(--band80); border-radius: 2px 2px 0 0; min-height: 3px; }
+.daybar em { display: block; width: 100%; height: 4px; border-radius: 1px; }
+.daybar:hover i { background: var(--band50); }
+.daybar[aria-pressed="true"] i { background: var(--net); }
+.axisnote { display: flex; justify-content: space-between; gap: 10px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); display: inline-block; box-shadow: 0 0 0 2px var(--surface); }
+.dash { width: 16px; height: 0; border-top: 2px dashed var(--cmp); display: inline-block; }
+.dots { width: 16px; height: 0; border-top: 2px dotted var(--site); display: inline-block; }
+.line { width: 16px; height: 0; border-top: 2px solid var(--net-deep); display: inline-block; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipbtn { font: 500 13px var(--font-mono); border: 1px solid var(--rule); background: var(--chip); color: var(--ink-2); padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+.chipbtn[aria-pressed="true"] { background: var(--net); color: var(--surface); border-color: var(--net); }
+.heat { display: grid; grid-template-columns: 44px repeat(24, 1fr); gap: 2px; align-items: stretch; font-variant-numeric: tabular-nums; }
+.heat .lab { font-family: var(--font-mono); font-size: 11px; color: var(--muted); align-self: center; }
+.heat .c { height: 34px; border-radius: 3px; position: relative; display: grid; place-items: center; font-family: var(--font-mono); font-size: 10.5px; }
+.heat .c.hit::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1.5px var(--surface); }
+.heat .h { font-family: var(--font-mono); font-size: 10px; color: var(--muted); text-align: center; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 600; }
+.twocol { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) {
+  .twocol { grid-template-columns: 1fr; }
+  .heat .c { font-size: 0; }
+  .daystrip { height: 64px; gap: 1px; }
+}
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45; box-shadow: 0 6px 20px rgba(0,0,0,0.12); font-variant-numeric: tabular-nums; min-width: 160px; }
+.tip .t { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+.tip .r { display: flex; justify-content: space-between; gap: 14px; }
+.tip .r span:first-child { color: var(--muted); }
+footer { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 14px; display: grid; gap: 6px; }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">pred_el_prices · production replay · gate-available inputs only</div>
+  <h1>DE-LU Production Replay</h1>
+  <p id="lede"></p>
+  <div class="facts" id="facts"></div>
+</header>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">What each forecast could see</div>
+    <h2>Only inputs that exist at 12:00 CET the day before</h2>
+    <p>The backtests fed the delivery day's official wind/solar forecast, which the grid operators publish at 18:00, six hours after the auction. This replay swaps every such input for what production actually has at the gate.</p>
+  </div>
+  <div class="inputs">
+    <div class="inp"><span class="tag swap">swapped</span><b>Wind + solar, Germany</b><span>Our own forecast from the ECMWF ENS 00Z run, retrained daily, exactly as the live site does. Not the TSO forecast (18:00).</span></div>
+    <div class="inp"><span class="tag swap">swapped</span><b>Neighbours</b><span>Load forecast of FR NL BE AT PL CZ CH DK1 DK2 only. Their wind/solar also publishes at 18:00, so load minus wind/solar is out.</span></div>
+    <div class="inp"><span class="tag ok">kept, trimmed</span><b>Load forecast, Germany</b><span>TSO day-ahead forecast, published before the gate. Hours 22–23 UTC belong to the next local day: filled from 24 h earlier.</span></div>
+    <div class="inp"><span class="tag ok">kept</span><b>Prices, gas, carbon</b><span>Cleared prices up to the day before (without its last two UTC hours); TTF and EUA settlements lagged two days.</span></div>
+  </div>
+  <p class="note" id="gapnote"></p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">Scorecard</div>
+    <h2>Old against new</h2>
+    <p><b>Old</b> = the tuned quantile network as on the architecture page: 4 networks. <b>New</b> = 12 quantile-head + 12 Johnson's-SU networks, averaged, plus the quarter-hour shape model. Both are recalibrated the same way and trained on identical data each week.</p>
+  </div>
+  <div class="panel">
+    <div class="tablewrap"><table class="t" id="score"></table></div>
+    <p class="note" id="scorenote"></p>
+  </div>
+  <div class="panel">
+    <h3>What the 60 days say</h3>
+    <p><b>Both networks are far ahead of what the site shows today.</b> The live LEAR forecast missed by 28 €/MWh on median over its days; either network by about 17.</p>
+    <p><b>Old and new tie hourly.</b> The long backtest found more networks worth about 1 % pinball. Sixty days can't resolve a gain that small; it drowns in day-to-day noise.</p>
+    <p><b>The 15-minute layer is the clear win.</b> Predicting each quarter-hour's deviation from its hour cuts 15-minute pinball by about 15 %, with inputs production has, and the fans stay calibrated.</p>
+    <p><b>The biggest remaining gap is the wind/solar forecast.</b> Feeding the grid operators' own forecast (published after the auction, so impossible live) would be 8 % better. ICON's hourly solar beat ECMWF's in the 53-day check, so that is the next lever.</p>
+  </div>
+</section>
+
+<section id="fan">
+  <div class="sec-head">
+    <div class="eyebrow" id="fanEyebrow"></div>
+    <h2>Fan charts, one day at a time</h2>
+    <p>Pick a day in the strip: bar height is the day's highest hourly price; the thin mark under it is green where the new model scored better that day, red where the old did.</p>
+  </div>
+  <div class="panel">
+    <div class="row">
+      <h3 id="dayTitle">—</h3>
+      <div class="stats" id="dayStats"></div>
+    </div>
+    <div class="daystrip" id="strip" role="group" aria-label="Days, bar height = daily maximum price"></div>
+    <div class="axisnote"><span id="stripStart"></span><span>daily max price · mark = which model won the day</span><span id="stripEnd"></span></div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Model"><button data-m="new" aria-pressed="true">New</button><button data-m="old" aria-pressed="false">Old</button></div>
+      <div class="seg" role="group" aria-label="Resolution"><button data-r="q" aria-pressed="true">15 min</button><button data-r="h" aria-pressed="false">Hourly</button></div>
+      <label class="toggle"><input type="checkbox" id="otherToggle" checked> other model's median</label>
+      <label class="toggle"><input type="checkbox" id="siteToggle" checked> live site forecast</label>
+    </div>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--band98)"></i>1–99 %</span>
+      <span><i class="sw" style="background:var(--band80)"></i>10–90 %</span>
+      <span><i class="sw" style="background:var(--band50)"></i>25–75 %</span>
+      <span><i class="line"></i>median</span>
+      <span><i class="dot"></i>cleared price</span>
+      <span><i class="dash"></i><span id="otherLab">old median</span></span>
+      <span><i class="dots"></i>live site (LEAR)</span>
+    </div>
+    <div class="chart" id="fanChart"></div>
+    <div class="row">
+      <h3>Chance the hourly price clears above …</h3>
+      <div class="chips" id="chips" role="group" aria-label="Price threshold"></div>
+    </div>
+    <div class="heat" id="heat"></div>
+    <p class="note">From the selected model's 99 calibrated hourly percentiles. A dot marks hours whose cleared price did exceed the threshold. Hours are UTC; local summer time is UTC+2.</p>
+  </div>
+</section>
+
+<section>
+  <div class="twocol">
+    <div class="panel">
+      <h3>Running score gap</h3>
+      <p class="note">Cumulative daily pinball, old minus new (€/MWh·days). Rising = new pulling ahead; a steady climb means the gain is broad, not one lucky day.</p>
+      <div class="chart" id="cumChart"></div>
+    </div>
+    <div class="panel">
+      <h3>Do the percentiles mean what they say?</h3>
+      <p class="note">Share of prices below each forecast percentile over the 60 days. On the diagonal = honest.</p>
+      <div class="chart" id="relChart"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--cmp)"></i>old, hourly</span>
+        <span><i class="sw" style="background:var(--net)"></i>new, hourly</span>
+        <span><i class="sw" style="background:var(--net-deep)"></i>new, 15 min</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer id="footer"></footer>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = /*DATA*/;
+const S = DATA.scores, days = DATA.days;
+const fmt = (v, d = 1) => v == null ? "–" : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+const pct = v => fmt(100 * v, 1) + " %";
+const gain = (a, b) => fmt(100 * (1 - b / a), 1) + " %";
+
+document.getElementById("lede").textContent =
+  `How the old and the new network would have forecast the last ${S.days} delivery days, run the way production runs: weekly retraining, and for every day only the inputs that existed before that day's auction. The new model also forecasts each quarter-hour, since the auction clears in 15-minute products.`;
+document.getElementById("facts").innerHTML = [
+  [`${fmt(S.new.pinball, 2)} vs ${fmt(S.old.pinball, 2)}`, `hourly pinball, new vs old: a tie over 60 days (DM ${fmt(S.dm_hourly_new_vs_old, 2)})`],
+  [`−${gain(S.q15_new_repeated.pinball, S.q15_new.pinball)}`, `15-min pinball from the shape model vs repeating the hourly forecast`],
+  [`${fmt(S.new_mae_on_site_days, 1)} vs ${fmt(S.site_mae, 1)}`, `median MAE €/MWh, network vs the live site, on its ${S.site_days} days`],
+  [`+${fmt(100 * (S.new.pinball / S.new_tso.pinball - 1), 1)} %`, `pinball cost of gate-available inputs (own wind/solar forecast)`],
+].map(([b, s]) => `<div class="fact"><b>${b}</b><span>${s}</span></div>`).join("");
+document.getElementById("gapnote").textContent =
+  "Five days (12–15 and 17 Aug) are skipped: the ECMWF archive has a gap there, so production had no weather forecast and published nothing. The window runs 20 Jul – 22 Sep to keep 60 scored days.";
+
+const rows = [
+  ["Old · 4 quantile networks", S.old, S.q15_old],
+  ["New · 12 + 12 networks, shape model", S.new, S.q15_new, true],
+  ["New, fed the post-gate TSO forecasts (not possible live)", S.new_tso, null],
+];
+document.getElementById("score").innerHTML =
+  `<thead><tr><th>model (production inputs unless noted)</th><th>pinball</th><th>median MAE</th><th>80 % band</th><th>98 % band</th><th>15-min pinball</th><th>15-min MAE</th></tr></thead><tbody>` +
+  rows.map(([n, h, q, hl]) => `<tr${hl ? ' class="hl"' : ""}><td>${n}</td><td>${fmt(h.pinball, 3)}</td><td>${fmt(h.mae, 2)}</td><td>${pct(h.cov80)}</td><td>${pct(h.cov98)}</td>` +
+    (q ? `<td>${fmt(q.pinball, 3)}</td><td>${fmt(q.mae, 2)}</td>` : `<td class="na">–</td><td class="na">–</td>`) + `</tr>`).join("") +
+  `<tr><td>Live site forecast (LEAR, point only), on its ${S.site_days} days</td><td class="na">–</td><td>${fmt(S.site_mae, 2)}</td><td class="na">–</td><td class="na">–</td><td class="na">–</td><td class="na">–</td></tr></tbody>`;
+document.getElementById("scorenote").innerHTML =
+  `Pinball in €/MWh, averaged over 99 percentiles; lower is better. Diebold–Mariano on daily pinball, new vs old: hourly <b>${fmt(S.dm_hourly_new_vs_old, 2)}</b>, 15-min <b>${fmt(S.dm_q15_new_vs_old, 2)}</b> (above 2 ≈ significant). ` +
+  `Shape model vs hourly repeated: DM <b>${fmt(S.dm_q15_shaped_vs_repeated, 1)}</b>. On the ${S.site_days} days the live site has a forecast, median MAE is ${fmt(S.old_mae_on_site_days, 2)} (old) and ${fmt(S.new_mae_on_site_days, 2)} (new) against the site's ${fmt(S.site_mae, 2)}.`;
+document.getElementById("fanEyebrow").textContent = `Forecasts · ${days[0].date} – ${days[days.length - 1].date} · calibrated · production inputs`;
+document.getElementById("footer").innerHTML =
+  `<div>Replay run qnn-replay-20260924-120302: weekly retraining from 20 Jul 2026, each week trained on days up to two days before it, 1,460-day window, fuel-cost scaling, percentiles clipped to the auction limits (−500 / 4,000 €/MWh). Recalibration: rolling 365-day PIT, seeded with each model's backtest history before the window, as a launch would be.</div>` +
+  `<div>Quarter-hour shape: gradient-boosted model of each quarter's deviation from its hour, from the 15-min TSO load forecast and our hourly wind/solar interpolated to quarters; trained on the 15-min auctions since 1 Oct 2025, refit weekly. Full record: docs/pred_el_prices_project_plan.md.</div>`;
+
+/* ---------------- fan ---------------- */
+const tip = document.getElementById("tip");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let left = x + 14, top = y + 14;
+  if (left + r.width > innerWidth - 8) left = x - r.width - 14;
+  if (top + r.height > innerHeight - 8) top = y - r.height - 14;
+  tip.style.left = Math.max(8, left) + "px"; tip.style.top = Math.max(8, top) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+let cur = days.length - 1, model = "new", res = "q", thr = "200";
+const strip = document.getElementById("strip");
+strip.style.gridTemplateColumns = `repeat(${days.length}, 1fr)`;
+const maxOfMax = Math.max(...days.map(d => d.max));
+days.forEach((d, i) => {
+  const b = document.createElement("button");
+  b.className = "daybar";
+  const better = d.new.pb < d.old.pb;
+  b.setAttribute("aria-label", `${d.date}, max ${fmt(d.max)} €/MWh, ${better ? "new" : "old"} better`);
+  b.innerHTML = `<i style="height:${Math.max(4, 88 * Math.max(0, d.max) / maxOfMax)}%"></i><em style="background:var(${better ? "--good" : "--bad"})"></em>`;
+  b.addEventListener("click", () => { cur = i; renderDay(); });
+  b.addEventListener("mousemove", e => showTip(`<div class="t">${d.date}</div>
+    <div class="r"><span>max price</span><span>${fmt(d.max)}</span></div>
+    <div class="r"><span>pinball new</span><span>${fmt(d.new.pb, 2)}</span></div>
+    <div class="r"><span>pinball old</span><span>${fmt(d.old.pb, 2)}</span></div>
+    ${d.site ? `<div class="r"><span>site forecast</span><span>live</span></div>` : ""}`, e.clientX, e.clientY));
+  b.addEventListener("mouseleave", hideTip);
+  strip.appendChild(b);
+});
+document.getElementById("stripStart").textContent = days[0].date.slice(5);
+document.getElementById("stripEnd").textContent = days[days.length - 1].date.slice(5);
+
+document.querySelectorAll("[data-m]").forEach(b => b.addEventListener("click", () => { model = b.dataset.m; renderDay(); }));
+document.querySelectorAll("[data-r]").forEach(b => b.addEventListener("click", () => { res = b.dataset.r; renderDay(); }));
+document.getElementById("otherToggle").addEventListener("change", renderFan);
+document.getElementById("siteToggle").addEventListener("change", renderFan);
+const chips = document.getElementById("chips");
+DATA.thresholds.forEach(t => {
+  const b = document.createElement("button");
+  b.className = "chipbtn"; b.textContent = t + " €"; b.dataset.t = t;
+  b.addEventListener("click", () => { thr = String(t); renderHeat(); });
+  chips.appendChild(b);
+});
+
+function niceTicks(lo, hi, n = 5) {
+  if (hi - lo < 1) { hi = lo + 1; }
+  const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n + 0.5);
+  const ticks = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(Math.round(v * 100) / 100);
+  return {ticks, lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step};
+}
+
+function renderDay() {
+  const d = days[cur];
+  strip.querySelectorAll(".daybar").forEach((b, i) => b.setAttribute("aria-pressed", String(i === cur)));
+  document.querySelectorAll("[data-m]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.m === model)));
+  const hasQ = !!(d[model].q && d.actual15);
+  if (!hasQ && res === "q") res = "h";
+  document.querySelectorAll("[data-r]").forEach(b => { b.setAttribute("aria-pressed", String(b.dataset.r === res)); b.disabled = b.dataset.r === "q" && !hasQ; });
+  document.getElementById("otherLab").textContent = (model === "new" ? "old" : "new") + " median";
+  const date = new Date(d.date + "T00:00:00Z");
+  document.getElementById("dayTitle").textContent = date.toLocaleDateString("en-GB", {weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC"});
+  document.getElementById("dayStats").innerHTML =
+    `<span>max <b>${fmt(d.max)}</b></span><span>pinball new <b>${fmt(d.new.pb, 2)}</b> · old <b>${fmt(d.old.pb, 2)}</b></span>` +
+    (d.new.pb15 != null ? `<span>15-min new <b>${fmt(d.new.pb15, 2)}</b></span>` : "") +
+    `<span>MAE new <b>${fmt(d.new.mae, 2)}</b> · old <b>${fmt(d.old.mae, 2)}</b></span>`;
+  renderFan(); renderHeat();
+}
+
+function renderFan() {
+  const d = days[cur], host = document.getElementById("fanChart");
+  const other = model === "new" ? "old" : "new";
+  const showOther = document.getElementById("otherToggle").checked;
+  const showSite = document.getElementById("siteToggle").checked && d.site;
+  const B = res === "q" ? d[model].q : d[model].h;
+  const n = B.q50.length, per = n / 24;
+  const act = res === "q" ? d.actual15 : d.actual;
+  const rep = s => res === "q" ? s.flatMap(v => [v, v, v, v]) : s;
+  const oth = res === "q" && d[other].q ? d[other].q.q50 : rep(d[other].h.q50);
+  const site = showSite ? rep(d.site) : null;
+  const W = Math.max(320, host.clientWidth), H = W < 560 ? 270 : 340;
+  const m = {l: 46, r: 12, t: 10, b: 30}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const vals = [...B.q01, ...B.q99, ...act, ...(showOther ? oth : []), ...(site || [])];
+  const nt = niceTicks(Math.min(...vals), Math.max(...vals));
+  const x = i => m.l + (i + 0.5) * iw / n, y = v => m.t + ih - (v - nt.lo) / (nt.hi - nt.lo) * ih;
+  const area = (lo, hi) => "M" + lo.map((v, i) => `${x(i)},${y(v)}`).join("L") + "L" + hi.map((v, i) => `${x(n - 1 - i)},${y(hi[n - 1 - i])}`).join("L") + "Z";
+  const line = s => "M" + s.map((v, i) => `${x(i)},${y(v)}`).join("L");
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Fan chart for ${d.date}">`;
+  nt.ticks.forEach(t => {
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" style="stroke:var(--rule-soft)" stroke-width="1"/>`;
+    svg += `<text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" style="fill:var(--muted);font:11px var(--font-mono)">${t}</text>`;
+  });
+  if (nt.lo < 0 && nt.hi > 0) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--muted)" stroke-width="1"/>`;
+  svg += `<path d="${area(B.q01, B.q99)}" style="fill:var(--band98)"/>`;
+  svg += `<path d="${area(B.q10, B.q90)}" style="fill:var(--band80)"/>`;
+  svg += `<path d="${area(B.q25, B.q75)}" style="fill:var(--band50)"/>`;
+  svg += `<path d="${line(B.q50)}" fill="none" style="stroke:var(--net-deep)" stroke-width="2" stroke-linejoin="round"/>`;
+  if (showOther) svg += `<path d="${line(oth)}" fill="none" style="stroke:var(--cmp)" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>`;
+  if (site) svg += `<path d="${line(site)}" fill="none" style="stroke:var(--site)" stroke-width="2" stroke-dasharray="1.5 3.5" stroke-linecap="round"/>`;
+  const r = res === "q" ? 2.6 : 4.2;
+  act.forEach((v, i) => { svg += `<circle cx="${x(i)}" cy="${y(v)}" r="${r}" style="fill:var(--ink);stroke:var(--surface)" stroke-width="${res === "q" ? 1 : 2}"/>`; });
+  for (let h = 0; h < 24; h += (W < 560 ? 3 : 2)) svg += `<text x="${m.l + h * iw / 24 + iw / 48}" y="${H - 10}" text-anchor="middle" style="fill:var(--muted);font:11px var(--font-mono)">${String(h).padStart(2, "0")}</text>`;
+  svg += `<text x="${W - m.r}" y="${H - 10}" text-anchor="end" style="fill:var(--muted);font:11px var(--font-mono)">h UTC</text>`;
+  svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" style="stroke:var(--muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/></svg><div class="note" style="margin-top:2px">€/MWh · ${res === "q" ? "96 quarter-hours" : "24 hours"}</div>`;
+  host.innerHTML = svg;
+  const s = host.querySelector("svg"), xh = s.querySelector("#xh");
+  s.querySelector("#hit").addEventListener("mousemove", e => {
+    const rr = s.getBoundingClientRect(), px = (e.clientX - rr.left) * W / rr.width;
+    const i = Math.min(n - 1, Math.max(0, Math.floor((px - m.l) / (iw / n))));
+    xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.setAttribute("visibility", "visible");
+    const hh = Math.floor(i / per), mm = res === "q" ? (i % 4) * 15 : 0;
+    showTip(`<div class="t">${d.date} · ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")} UTC</div>
+      <div class="r"><span>cleared</span><span><b>${fmt(act[i])}</b></span></div>
+      <div class="r"><span>99th</span><span>${fmt(B.q99[i])}</span></div>
+      <div class="r"><span>90th</span><span>${fmt(B.q90[i])}</span></div>
+      <div class="r"><span>median</span><span>${fmt(B.q50[i])}</span></div>
+      <div class="r"><span>10th</span><span>${fmt(B.q10[i])}</span></div>
+      <div class="r"><span>1st</span><span>${fmt(B.q01[i])}</span></div>
+      ${showOther ? `<div class="r"><span>${other} median</span><span>${fmt(oth[i])}</span></div>` : ""}
+      ${site ? `<div class="r"><span>live site</span><span>${fmt(site[i])}</span></div>` : ""}`, e.clientX, e.clientY);
+  });
+  s.querySelector("#hit").addEventListener("mouseleave", () => { xh.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+function renderHeat() {
+  const d = days[cur], p = d[model].exceed[thr], heat = document.getElementById("heat");
+  chips.querySelectorAll(".chipbtn").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === thr)));
+  const rgb = css("--heat");
+  let html = `<div class="lab">P(&gt;${thr})</div>`;
+  p.forEach((v, h) => {
+    const hit = d.actual[h] > Number(thr);
+    html += `<div class="c${hit ? " hit" : ""}" data-h="${h}" style="background:rgba(${rgb},${0.06 + 0.94 * v});color:${v >= 0.5 ? "var(--surface)" : "var(--ink-2)"}">${Math.round(v * 100)}</div>`;
+  });
+  html += `<div></div>` + Array.from({length: 24}, (_, h) => `<div class="h">${h % 3 === 0 ? String(h).padStart(2, "0") : ""}</div>`).join("");
+  heat.innerHTML = html;
+  heat.querySelectorAll(".c").forEach(c => {
+    const h = +c.dataset.h;
+    c.addEventListener("mousemove", e => showTip(`<div class="t">${String(h).padStart(2, "0")}:00 UTC · ${model}</div>
+      <div class="r"><span>P(price &gt; ${thr} €)</span><span><b>${(p[h] * 100).toFixed(1)} %</b></span></div>
+      <div class="r"><span>cleared</span><span>${fmt(d.actual[h])}</span></div>`, e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+  });
+}
+
+/* ---------------- cumulative gap ---------------- */
+function renderCum() {
+  const host = document.getElementById("cumChart");
+  let acc = 0; const cum = days.map(d => (acc += d.old.pb - d.new.pb));
+  const W = Math.max(280, host.clientWidth), H = 240, m = {l: 44, r: 12, t: 10, b: 28}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const nt = niceTicks(Math.min(0, ...cum), Math.max(0, ...cum), 4);
+  const x = i => m.l + (i + 0.5) * iw / days.length, y = v => m.t + ih - (v - nt.lo) / (nt.hi - nt.lo) * ih;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Cumulative pinball gap">`;
+  nt.ticks.forEach(t => {
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" style="stroke:${t === 0 ? "var(--muted)" : "var(--rule-soft)"}"/>`;
+    svg += `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end" style="fill:var(--muted);font:11px var(--font-mono)">${t}</text>`;
+  });
+  svg += `<path d="M${cum.map((v, i) => `${x(i)},${y(v)}`).join("L")}" fill="none" style="stroke:var(--net)" stroke-width="2" stroke-linejoin="round"/>`;
+  [0, Math.floor(days.length / 2), days.length - 1].forEach(i => svg += `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" style="fill:var(--muted);font:11px var(--font-mono)">${days[i].date.slice(5)}</text>`);
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="chit"/></svg>`;
+  host.innerHTML = svg;
+  const s = host.querySelector("svg");
+  s.querySelector("#chit").addEventListener("mousemove", e => {
+    const rr = s.getBoundingClientRect(), px = (e.clientX - rr.left) * W / rr.width;
+    const i = Math.min(days.length - 1, Math.max(0, Math.floor((px - m.l) / (iw / days.length))));
+    showTip(`<div class="t">${days[i].date}</div><div class="r"><span>day: old − new</span><span>${fmt(days[i].old.pb - days[i].new.pb, 2)}</span></div><div class="r"><span>running total</span><span><b>${fmt(cum[i], 1)}</b></span></div>`, e.clientX, e.clientY);
+  });
+  s.querySelector("#chit").addEventListener("mouseleave", hideTip);
+}
+
+/* ---------------- reliability ---------------- */
+function renderRel() {
+  const host = document.getElementById("relChart"), R = DATA.reliability;
+  const W = Math.max(280, host.clientWidth), H = Math.min(W, 320);
+  const m = {l: 40, r: 12, t: 10, b: 34}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const x = v => m.l + v * iw, y = v => m.t + ih - v * ih;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Reliability diagram">`;
+  [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+    svg += `<line x1="${x(0)}" x2="${x(1)}" y1="${y(t)}" y2="${y(t)}" style="stroke:var(--rule-soft)"/>`;
+    svg += `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end" style="fill:var(--muted);font:11px var(--font-mono)">${Math.round(t * 100)}</text>`;
+    svg += `<text x="${x(t)}" y="${H - 16}" text-anchor="middle" style="fill:var(--muted);font:11px var(--font-mono)">${Math.round(t * 100)}</text>`;
+  });
+  svg += `<text x="${x(0.5)}" y="${H - 2}" text-anchor="middle" style="fill:var(--muted);font-size:11px">forecast percentile</text>`;
+  svg += `<line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" style="stroke:var(--muted)" stroke-dasharray="4 4"/>`;
+  const path = s => "M" + s.map((v, i) => `${x(R.levels[i])},${y(v)}`).join("L");
+  svg += `<path d="${path(R.old)}" fill="none" style="stroke:var(--cmp)" stroke-width="2"/>`;
+  svg += `<path d="${path(R.new)}" fill="none" style="stroke:var(--net)" stroke-width="2"/>`;
+  svg += `<path d="${path(R.new15)}" fill="none" style="stroke:var(--net-deep)" stroke-width="2" stroke-dasharray="4 3"/>`;
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="rhit"/></svg>`;
+  host.innerHTML = svg;
+  const s = host.querySelector("svg");
+  s.querySelector("#rhit").addEventListener("mousemove", e => {
+    const rr = s.getBoundingClientRect(), px = (e.clientX - rr.left) * W / rr.width;
+    const i = Math.min(98, Math.max(0, Math.round((px - m.l) / iw * 100) - 1));
+    showTip(`<div class="t">${i + 1}th percentile</div>
+      <div class="r"><span>should be</span><span>${i + 1} %</span></div>
+      <div class="r"><span>old, hourly</span><span>${(R.old[i] * 100).toFixed(1)} %</span></div>
+      <div class="r"><span>new, hourly</span><span>${(R.new[i] * 100).toFixed(1)} %</span></div>
+      <div class="r"><span>new, 15 min</span><span>${(R.new15[i] * 100).toFixed(1)} %</span></div>`, e.clientX, e.clientY);
+  });
+  s.querySelector("#rhit").addEventListener("mouseleave", hideTip);
+}
+
+renderDay(); renderCum(); renderRel();
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderFan(); renderCum(); renderRel(); }, 120); });
+</script>

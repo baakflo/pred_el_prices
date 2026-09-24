@@ -375,6 +375,34 @@ the SDAC limits.
 - **P52.** Both networks beat the published site forecast (LEAR, live log from 2026-08-16)
   on median MAE over the days both exist.
 
+*Results (replay `qnn-replay-20260924-120302`, page data `replay_page_data.py`; step 1
+`qh_step1.py`).*
+- P49 **holds**: with gate-available inputs the shape model still cuts 15-minute pinball
+  by 15.1 % against repeated hourly (5.793 → 4.918, DM 23.7; cov80 80.8 %). With the
+  post-gate TSO inputs it was 15.9 %. Almost nothing is lost.
+- On the 60 replay days, calibrated, production inputs:
+
+| | hourly pinball | median MAE | cov80 | 15-min pinball |
+|---|---|---|---|---|
+| old (4 quantile nets) | 5.417 | 15.25 | 84.0 % | 5.715 |
+| new (12 + 12 nets) | 5.413 | 15.15 | 83.3 % | 5.721 |
+| new, fed TSO RES (not possible live) | 5.008 | 13.90 | 83.8 % | – |
+| new, hourly repeated ×4 | – | – | – | 6.710 |
+
+- P50 **fails narrowly**: gate-available inputs cost 8.1 % pinball (5.008 → 5.413, DM −2.0),
+  just above the 3–8 % registered. Our own RES forecast is the biggest remaining gap, larger
+  than any model change tried today.
+- P51 **fails**: new and old tie on these 60 days (DM 0.08 hourly, −0.09 at 15 min). The
+  backtest's +1.25 % from more networks does not show in 60 days of production inputs; it is
+  within noise here.
+- P52 **holds by a wide margin**: on the 37 days the live site (LEAR, as it really ran,
+  including evening editions and load surrogates) has a forecast, its median MAE is 28.1 vs
+  17.1 (old) and 17.0 (new). The live log includes a 93.8 €/MWh MAE day (09-22).
+- The 15-minute layer is the clear production win: 6.710 → 5.721 (−14.7 %, DM 15.9).
+- **Levers, in order:** (1) the RES forecast (8 % on the table; ICON's better solar, P from
+  the 53-day check, is the obvious first move), (2) the 15-minute shape (done, −15 %),
+  (3) network count (real in the long backtest, invisible in 60 days).
+
 **4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
 (open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
 (~2 km, German domain). DWD open data keeps only about 24 h, so there is **no history
