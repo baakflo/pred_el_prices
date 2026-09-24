@@ -312,6 +312,14 @@ percentile is undercut 1.5 % of the time, the 99th exceeded 2.2 %, the 90th 12.7
 network.** Next: a small calibration step (conformal widening per hour, fitted on a
 trailing window) for the last ~3–5 pp of coverage, then the fan-chart page.
 
+**Registered (2026-09-24, before the run): rolling PIT recalibration** (`models/recalibrate.py`)
+of `182551`. Weekly: fit on the PIT values of the forecast hours of days up to S−2, trailing
+365 days, all hours pooled. Serve level τ from the model's level G⁻¹(τ), with exponential
+tails beyond the 1st/99th percentiles. First applied 2021-01-01 (2020 is the first
+window). Predictions on the 2026 holdout: (33) 80 % coverage lands in 78–82 % and 98 %
+coverage in 97–99 %; (34) mean pinball is not worse than 4.72 + 0.02, since recalibration
+should cost pinball only if the past year misleads.
+
 **Outage validation (2026-09-23, before G3): the registered approximation fails.** Exact
 pre-gate unavailability was reconstructed from real revision timestamps (617 of 625
 multi-revision DE messages complete, nothing pending) for Nov–Dec 2025 (DE) and Nov
