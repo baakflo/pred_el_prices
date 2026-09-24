@@ -183,6 +183,14 @@ exactly, with `fuel_scale=false` (weekly, 2020-01..2026-09-21, 4 seeds). Scored 
   in favour of scaling. The rolling window and weekly refits alone do not close the 2022
   gap.
 
+*Result (run `qnn-de-20260924-080200`, fuel_scale=false, vs `182551`).* P38 **holds
+clearly.** Over 2020–26 pinball is 5.752 without scaling vs 4.784 with, DM 9.38. The 2022
+median MAE is 42.25 vs 27.76 (+14.5 €/MWh), and 2021 is 16.01 vs 11.20. Scaling wins
+significantly in 2021, 2022, 2023, 2024 and Sept 2026. In calm-price years it costs a
+little but not significantly: 2020 pinball 1.523 unscaled vs 1.560, 2025 4.273 vs 4.354
+(DM −1.3 and −1.25). The level fix's gain in 2021–22 comes from fuel scaling, not from the
+window or the refit rate.
+
 **2. Distributional head (DDNN), the parameter route.** Same inputs and body, head
 256 → 24 × 4. Per hour it outputs the parameters of a Johnson's SU distribution (location
 ξ, scale λ > 0 via softplus, skew γ, tail weight δ > 0 via softplus), trained by negative
