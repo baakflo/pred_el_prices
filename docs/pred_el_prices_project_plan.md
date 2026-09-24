@@ -211,6 +211,41 @@ quantile head.
 - **P41.** Before recalibration, JSU's 80 % band coverage is closer to 80 % than the quantile
   head's (the quantile head sat at 75.6 %).
 
+*Registered after seeing the JSU result, before computing it (so weaker evidence):*
+- **P42.** A 50/50 Vincentized blend of the JSU and quantile heads (average percentile by
+  percentile, then recalibrate) beats both single heads on 2026 holdout pinball, after
+  recalibration, by at least 1 % against the better one.
+
+*Result.* Runs: JSU `qnn-de-20260924-075415` (`-clip`: percentiles clipped to the SDAC
+limits [−500, 4000] after the fact; 17 of 23,904 hours were outside, one JSU q99 reached
+113,038 €/MWh through the sinh inverse; the clip is now in `backtest`), Normal
+`qnn-de-20260924-080723`, blend `blend-qnn-jsu`. Reference: quantile head `182551`.
+
+| 2024-01..2026-09-21, raw | pinball | median MAE | cov80 | tail pb | body pb |
+|---|---|---|---|---|---|
+| quantile head | 4.434 | 12.10 | 75.0 % | 1.355 | 5.613 |
+| JSU | **4.380** | **11.74** | 80.3 % | 1.344 | 5.522 |
+| Normal | 4.465 | 11.99 | 81.7 % | 1.360 | 5.636 |
+
+| 2026 holdout, recalibrated | pinball | DM vs quantile-cal |
+|---|---|---|
+| quantile head | 4.625 | – |
+| JSU | 4.598 | 0.43 |
+| blend JSU + quantile | **4.559** | **2.07** |
+
+- P39 **holds**: JSU beats Normal, DM 4.39 over 2024–26.
+- P40 **holds on the numbers, not on the mechanism**: JSU is within 2 % (1.2 % better raw,
+  DM 2.28 over 2024–26; holdout DM 0.95, not significant). But it wins in the body
+  (q25–q75), not in the tails, which are equal.
+- P41 **holds**: raw JSU coverage 80.3 % vs 75.0 %.
+- P42 **half holds**: the blend beats both heads, but by 0.85 % against JSU-cal (DM 1.32),
+  below the 1 % bar. Caveat: the blend averages 8 networks vs 4 per head, and the seed
+  curve puts 4→8 seeds at about 0.7 %, so part of the gain is ensemble size.
+
+**Decision (user, 2026-09-24):** the production candidate is the JSU head plus the quantile
+head, blended, 12 seeds, recalibrated. Open check: the blend vs a single head at the same
+total network count, which settles the caveat above.
+
 **3. 15-minute products (a plan, since only ~1 year of 15-minute prices exists).**
 SDAC went to 15-minute MTU for day-ahead on 2025-10-01; the ENTSO-E cache keeps native
 resolution, so the history is 2025-10 onward (verify in the cache). Our hourly target is

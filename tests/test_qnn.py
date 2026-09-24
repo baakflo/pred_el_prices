@@ -115,7 +115,7 @@ class TestSeeds:
         path = tmp_path / "seeds.npz"
         qdf = qnn_de.backtest(
             "unused", "2024-01-01", [], QNNConfig(), "2024-02-15", None, "4weeks",
-            None, True, 3, 1, verbose=0, seed_path=path,
+            None, False, 3, 1, verbose=0, seed_path=path,
         )  # fmt: skip
         saved = np.load(path)
         assert saved["q"].shape == (3, len(qdf), len(QUANTILES))
@@ -124,6 +124,24 @@ class TestSeeds:
         )
         np.testing.assert_allclose(saved["q"].mean(axis=0), qdf[qnn_de.Q_COLS].to_numpy())
         assert not np.allclose(saved["q"][0], saved["q"][2])
+
+    def test_percentiles_are_clipped_to_the_auction_price_limits(self, monkeypatch):
+        prices, exog, fuels, days = _days(80)
+        hours = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in days for h in range(24)])
+        monkeypatch.setattr(qnn_de, "load_days", lambda *a: (prices, exog, fuels, days, hours))
+
+        def wild_fit(x_train, y_train, x_pred, n_unscaled, config, seed):
+            spread = np.linspace(-1e5, 1e5, len(QUANTILES))
+            return np.broadcast_to(spread, (len(x_pred), 24, len(QUANTILES))).copy()
+
+        monkeypatch.setattr(qnn_de, "fit_predict", wild_fit)
+        qdf = qnn_de.backtest(
+            "unused", "2024-01-01", [], QNNConfig(), "2024-02-15", None, "4weeks",
+            None, True, 1, 1, verbose=0,
+        )  # fmt: skip
+        q = qdf[qnn_de.Q_COLS].to_numpy()
+        assert q.min() == -500.0 and q.max() == 4000.0
+        assert (np.diff(q, axis=1) >= 0).all()
 
 
 class TestFit:

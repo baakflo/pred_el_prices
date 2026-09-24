@@ -29,6 +29,8 @@ NEIGHBOUR_COLS = [
     "rl_cz_mw", "rl_ch_mw", "rl_dk_1_mw", "rl_dk_2_mw",
 ]  # fmt: skip
 Q_COLS = [f"q{round(q * 100):02d}" for q in QUANTILES]
+# SDAC harmonised min/max clearing prices, EUR/MWh: no percentile can lie outside
+PRICE_BOUNDS = (-500.0, 4000.0)
 
 
 def load_days(dataset_path: str, train_start: str, exog_extra: list[str]):
@@ -217,7 +219,9 @@ def backtest(
         end = ends[list(starts).index(start)]
         in_period = (row_days >= start) & (row_days < end)
         q = np.sort(np.mean(preds, axis=0), axis=-1)  # (n_days, 24, 99), Vincentized
-        q = q * row_scale[in_period][:, None, None]
+        # clipping is monotone, so percentiles stay sorted; it bounds the sinh blow-up
+        # of heavy distribution tails (a JSU q99 reached 113,000 EUR/MWh unclipped)
+        q = np.clip(q * row_scale[in_period][:, None, None], *PRICE_BOUNDS)
         test_days = row_days[in_period]
         idx = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in test_days for h in range(24)])
         parts.append(pd.DataFrame(q.reshape(-1, len(QUANTILES)), index=idx, columns=Q_COLS))
