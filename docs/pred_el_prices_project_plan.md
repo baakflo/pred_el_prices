@@ -292,6 +292,13 @@ construction). Monthly refits on days ≤ month start − 2, expanding from 2025
 - Next: the comonotone shift keeps the hourly band width, but quarter-hours are more volatile
   than their hourly mean; recalibrate at 15-min resolution (window < 365 days, since there
   are only 12 months), and try the shape model with quantile loss per quarter-hour.
+- **P45 (registered before the run).** Rolling PIT recalibration of the shaped 15-minute
+  percentiles (90-day window, weekly steps, scored 2026-04-01..09-21) brings 80 % coverage
+  within 3 pp of 80 % and lowers pinball against the uncalibrated shaped forecast.
+  *Result: fails, usefully.* On 16,704 quarter-hours the shaped percentiles (built from the
+  already recalibrated hourly blend) are calibrated as they stand: cov80 81.6 %, cov98 98.7 %,
+  worst level error 1.1 pp. Recalibrating again adds noise: pinball 5.355 → 5.392, DM −2.09.
+  No 15-minute recalibration step; the hourly one carries over.
 
 **4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
 (open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
