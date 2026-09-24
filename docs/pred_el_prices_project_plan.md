@@ -358,7 +358,8 @@ ENS 00Z, `daily_forecast.own_res_forecast`, replayed daily: `own_res_history.py`
 load forecast with the UTC 22–23 hours filled from 24 h earlier, and, for the networks,
 neighbour **load** (pre-gate) instead of neighbour residual load (whose wind/solar part is
 post-gate). `qnn-replay` trains as the backtest does on history, neighbours as load, and
-predicts every day of 2026-07-25..09-22 (60 days) from production inputs and, for
+predicts every day of 2026-07-20..09-22 except the ENS archive gap (08-12..15, 08-17: no
+production inputs existed, so no forecast), i.e. 60 days, from production inputs and, for
 reference, from TSO inputs. New = 12 JSU + 12 quantile networks; old = quantile networks
 0–3 (the tuned model's setup). Recalibration seeded with the backtest history before the
 window (`182551` for old, `b16` for new), as a launch would be. Percentiles clipped to

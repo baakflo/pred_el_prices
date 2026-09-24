@@ -35,7 +35,7 @@ def _fit(x, y, row_days, x_pred, start, config, seed, window_days):
 
 def run(
     out_dir: Path,
-    start: str = "2026-07-25",
+    start: str = "2026-07-20",
     end: str = "2026-09-22",
     own_res_path: str = "runs/own-res/own_res.parquet",
     dataset_path: str = "data/dataset/hourly.parquet",
@@ -59,14 +59,17 @@ def run(
     own = pd.read_parquet(own_res_path)["own_res_mw"]
     window = pd.date_range(start, end, freq="D", tz="UTC")
     window = window[window.isin(days)]
+    # a day without the ENS archive had no production forecast at all: skip it
+    has_own = [own.reindex(pd.date_range(d, periods=24, freq="1h")).notna().all() for d in window]
+    skipped = [f"{d:%Y-%m-%d}" for d, ok in zip(window, has_own, strict=True) if not ok]
+    window = window[np.array(has_own)]
+    if skipped:
+        print(f"no own RES forecast (ENS archive gap), skipped: {skipped}", flush=True)
     x_prod = np.empty((len(window), x_tso.shape[1]))
     for i, d in enumerate(window):
         k = days.get_loc(d)
         e = exog.copy()
-        own_d = own.reindex(pd.date_range(d, periods=24, freq="1h")).to_numpy()
-        if np.isnan(own_d).any():
-            raise RuntimeError(f"own RES forecast missing for {d:%Y-%m-%d}")
-        e[k, :, 1] = own_d
+        e[k, :, 1] = own.reindex(pd.date_range(d, periods=24, freq="1h")).to_numpy()
         e[k, 22:24, 0] = exog[k - 1, 22:24, 0]  # DE load: next local day, not yet published
         e[k, 22:24, 2] = exog[k - 1, 22:24, 2]  # neighbour load: same
         x_all, _, _ = design(prices_s, e, fuels, days)
@@ -117,4 +120,9 @@ def run(
         index=idx.as_unit("ns").asi8,
         actual=actual,
     )
-    return {"window": [str(window[0]), str(window[-1])], "days": n, "fits": len(jobs)}
+    return {
+        "window": [str(window[0]), str(window[-1])],
+        "days": n,
+        "skipped_days": skipped,
+        "fits": len(jobs),
+    }
