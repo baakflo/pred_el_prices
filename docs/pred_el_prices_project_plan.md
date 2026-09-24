@@ -105,6 +105,87 @@ Train naive-features model vs structured model (explicit residual load + fuel/ca
 5. Pipeline runs end-to-end unattended for the daily forecast.
 ---
 
+## Roadmap (2026-09-24): after the quantile network
+
+State: the best model is the tuned, recalibrated quantile network (`qnn-de-20260923-182551`,
+`-cal`). Report page `reports/qnn_architecture/` (published as an artifact). Five work items
+from the user, in suggested order. Every experiment is registered here before its run.
+
+**Q&A behind the items.**
+- *Why scale by a gas plant's cost?* In the hours that set the German price, the
+  marginal plant is mostly gas, sometimes coal, and its bid is roughly fuel plus carbon
+  cost. When gas went up 10× in 2021–22, the whole price curve scaled with it
+  multiplicatively. A network trained in € learns patterns at its training window's
+  level and trails a level shift: v1 lagged 2022 by −26 €/MWh. In units of gas cost the
+  target is closer to stationary. An evening at 1.3× gas cost and a solar noon at 0.2× look
+  the same whether gas costs 20 or 200. In renewable-surplus hours (price near or below
+  zero) gas is not marginal and the scaling carries no meaning, but it does no harm there
+  either: small numbers stay small. Caveat: the level fix changed three things at once
+  (rolling window, weekly refits, fuel scaling). **Ablation owed:** tuned network without
+  fuel scaling.
+- *How many seeds?* Seed noise in an averaged forecast shrinks like σ/√n. Going from 4 to 9
+  seeds removes a third of it, 4 to 16 half. There is no universal number: the papers
+  use 4 (Lago et al. 2021, Marcjasz et al. 2023), set by compute, not measurement.
+  Measure it (item 1).
+
+**1. Seed count, measured.** On 2025 (validation), 16 seeds per 4-week refit with the
+tuned configuration, per-seed percentiles saved. For k = 1…16, the pinball of 50 random
+k-subsets averaged, giving a curve of mean pinball and its spread over k. Pick the smallest k
+whose expected pinball is within 0.5 % of k = 16 and whose subset spread is below the
+DM-detectable difference. Expectation: the knee lies at 8–12. Cost ≈ 16 × 14 fits, about 20
+min on a pod. Production cost of k = 12 weekly: 12 fits × ~2 min, parallel, so trivial.
+
+**2. Distributional head (DDNN), the parameter route.** Same inputs and body, head
+256 → 24 × 4. Per hour it outputs the parameters of a Johnson's SU distribution (location
+ξ, scale λ > 0 via softplus, skew γ, tail weight δ > 0 via softplus), trained by negative
+log-likelihood in the scaled space (Marcjasz, Narajewski, Weron, Ziel 2023). The 99
+percentiles are then read off the fitted distribution, so it is scored on exactly the same
+pinball, coverage and DM as the quantile head. Arms: JSU and Normal (the simple baseline),
+each with the tuned body, the same weekly backtest and 4 seeds (or k from item 1).
+Hypotheses to register before the run: fewer outputs (96 vs 2,376) means less overfitting
+and smoother tails; the price is that the shape is fixed per hour, which may miss bimodal
+hours (zero-price vs gas-set). Optional third arm: head outputs both, with the quantile
+head regularised toward the JSU.
+
+**3. 15-minute products (a plan, since only ~1 year of 15-minute prices exists).**
+SDAC went to 15-minute MTU for day-ahead on 2025-10-01; the ENTSO-E cache keeps native
+resolution, so the history is 2025-10 onward (verify in the cache). Our hourly target is
+already the mean of four quarter-hours.
+- Data: prices at 15 min from the cache. TSO load and wind/solar day-ahead forecasts are
+  published at 15 min for DE (check neighbours). Everything before 2025-10 stays hourly.
+- Model: *hourly level + quarter-hour shape.* The hourly network keeps its long history.
+  A second, small model predicts the four quarter-hour deviations from the hourly value
+  (they sum to zero), driven by within-hour ramps of solar and load and the hour of day.
+  It trains on the ~1 year that exists; shapes are mostly physical (ramps), so a year is
+  plausible. Alternative once there is more data: one network with a 96 × 99 head,
+  pretrained on hourly history (targets repeated ×4) and fine-tuned on 15-minute data.
+- Percentiles: add the shape to each hourly percentile (a comonotone assumption), then
+  recalibrate at 15-minute resolution. Score: 15-minute pinball vs the baseline
+  "hourly forecast repeated ×4"; hourly aggregates must not get worse.
+- Leakage check: the gate logic is unchanged (the same auction), but the UTC 22–23 exclusion
+  becomes 8 quarter-hours.
+
+**4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
+(open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
+(~2 km, German domain). DWD open data keeps only about 24 h, so there is **no history
+except what we archive**. An ICON-EU-EPS archiver exists (`pep archive-weather`, daily cron
+in the public repo), but locally there is one file (2026-07-30). First step: check the
+data repo for how many days are archived. Plan:
+- Start archiving ICON-D2 (and ICON-EU deterministic) now, alongside ICON-EU-EPS.
+- Train res-de on ICON features where the archive allows, otherwise use a bridge. Map
+  ICON features onto the ECMWF-trained model's inputs (same aggregates: capacity-weighted
+  wind at hub height, GHI over the solar regions), fit a linear bridge on the overlap
+  days, and switch only when the bridged RES forecast beats ECMWF on the overlap
+  (MAE vs TSO actuals, hours 00–06 separately: the night-wind problem).
+- Win condition: an earlier forecast slot (ICON 00Z is out about 2 h before ENS), with
+  the RES MAE no worse. Re-score the price model with the new RES.
+
+**5. Owed from 2026-09-23.** Ablation of fuel scaling (above). Daily 10:00 UTC outage
+snapshots for a clean outage re-test in a year. The production path for the network
+(weekly retrain job, publishing fans on the website, where the page's fan chart and the
+"chance above X €" row are the natural UI). Site `history.json` backfill days 07-25..08-17
+(leaky). The `promo/peaks-*` re-derivation. The both-hinges anomaly.
+
 ## Status addendum (2026-09-23, afternoon): scarcity inputs for the tree correction — registered
 
 **Why.** The best honest model (GBM on low-hinge gate-safe LEAR, `lear-gbm-de-…094701`)
