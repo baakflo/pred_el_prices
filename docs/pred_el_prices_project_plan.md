@@ -264,6 +264,31 @@ Compared on the calibrated 2026 holdout and 2025 against the 4+4 blend (B8) and 
   gain is ensemble size, a little is diversity between heads.
 - **P47.** B16 beats B8 by 0.2–0.6 % (in line with the seed curve's 8 → 16 step).
 
+*Result (runs `qnn-de-20260924-093154` JSU seeds 4–7, `-094259` quantile seeds 4–7;
+combined as `runs/q8`, `jsu8`, `b16`; all recalibrated from 2025-01-01).*
+
+| recalibrated | 2025 pinball | 2026 holdout pinball | holdout tail pb |
+|---|---|---|---|
+| Q8 (quantile head, 8 nets) | 4.296 | 4.533 | **1.349** |
+| J8 (JSU head, 8 nets) | 4.260 | 4.533 | 1.429 |
+| B8 (4 + 4 blend) | 4.263 | 4.559 | 1.406 |
+| B16 (8 + 8 blend) | **4.250** | **4.502** | 1.371 |
+
+- P46 **mostly holds, and says more than I guessed**: at equal network count the blend
+  shows no diversity gain. On the holdout B8 is behind Q8 (DM −1.19, not significant); in 2025
+  it is ahead (DM 2.36). Q8 and J8 tie on the holdout (DM −0.01). So the blend's earlier
+  edge over the 4-seed quantile head was ensemble size.
+- P47 **holds on 2025, not on the holdout**: B16 vs B8 is −0.3 % in 2025 (DM 1.52), in line
+  with the seed curve, but −1.25 % on the holdout (DM 4.01). 2026 is noisier and gains more
+  from averaging.
+- The quantile head keeps the better tails (holdout tail pinball 1.349 vs JSU 1.429); JSU
+  is a little better in the body and trains about 3× faster (early stopping on NLL).
+
+**Decision update:** 12 networks in total, blended 6 JSU + 6 quantile. There is no measured
+diversity gain, but at the same cost the blend hedges the JSU's weaker tails and the
+quantile head's weaker body. The main lever is network count: 16 beats 8 clearly on the
+holdout, so if compute is spare, more networks beat any other change tried today.
+
 **3. 15-minute products (a plan, since only ~1 year of 15-minute prices exists).**
 SDAC went to 15-minute MTU for day-ahead on 2025-10-01; the ENTSO-E cache keeps native
 resolution, so the history is 2025-10 onward (verify in the cache). Our hourly target is
