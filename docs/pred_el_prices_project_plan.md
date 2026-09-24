@@ -264,6 +264,35 @@ already the mean of four quarter-hours.
 - Leakage check: the gate logic is unchanged (the same auction), but the UTC 22–23 exclusion
   becomes 8 quarter-hours.
 
+*Checked (2026-09-24).* The ENTSO-E cache has DE prices at 15 min from 2025-10-01 (hourly
+before), and load and wind/solar day-ahead forecasts at 15 min throughout.
+
+*Registered (2026-09-24, before the run): first shape experiment.* Script
+`_scratch/phase2_nonlinear/qh_shape.py`. Target: quarter-hour price minus its hourly mean.
+Inputs per quarter-hour: quarter index, UTC hour, weekday; the quarter-hour's deviation from
+its hourly mean of load, solar and wind forecasts; the ramp of hourly load, solar and
+residual load (next hour minus previous); the hourly forecast median and its ramp (from the
+blend `blend-qnn-jsu-cal`). Model: HistGradientBoosting with absolute-error loss,
+predictions centred to sum to zero within each hour (so hourly means are untouched by
+construction). Monthly refits on days ≤ month start − 2, expanding from 2025-10-01; test
+2026-01-01..2026-09-21. Quarter-hour percentiles = hourly percentile + predicted deviation
+(comonotone). Baseline: hourly percentiles repeated ×4.
+- **P43.** The shape is large: the MAE between quarter-hour prices and their own hourly mean
+  (an oracle that knows the hourly price) is at least 5 €/MWh on the test span.
+- **P44.** The shape model cuts 15-minute pinball against the repeated baseline by at least
+  3 %, DM > 2, and captures at least half of the oracle shape MAE (MAE of predicted vs actual
+  deviations at most half of P43's number).
+
+*Result (`runs/qh-shape/result.json`, 25,344 quarter-hours, 2026-01..09-21).*
+- P43 **holds**: the oracle shape MAE is 8.1 €/MWh. By UTC hour it runs from 1.3 at night to
+  13.6–13.7 in the morning ramp (06–07) and 17.6–17.9 in the evening ramp (15–16).
+- P44 **holds**: 15-minute pinball 5.80 → 4.88 (−15.9 %), DM 25.1. Shape error MAE 4.3
+  (53 % of the oracle shape captured). Median MAE 15.5 → 13.1 €/MWh. The biggest remaining
+  errors are in the evening ramp (7.7–8.7 €/MWh in 15–17 UTC).
+- Next: the comonotone shift keeps the hourly band width, but quarter-hours are more volatile
+  than their hourly mean; recalibrate at 15-min resolution (window < 365 days, since there
+  are only 12 months), and try the shape model with quantile loss per quarter-hour.
+
 **4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
 (open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
 (~2 km, German domain). DWD open data keeps only about 24 h, so there is **no history
