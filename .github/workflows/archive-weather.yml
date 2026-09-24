@@ -126,6 +126,39 @@ jobs:
           echo "::error::benchmark push failed after 3 merge retries"
           exit 1
 
+      # TSO EEG marketing forecast (netztransparenz.de): does it exist before
+      # the gate? Polled at every slot; the first complete snapshot per
+      # delivery day wins and its fetched_at answers the question. Private
+      # benchmarks repo: redistribution terms of the data are unchecked.
+      - name: Archive netztransparenz marketing forecast (private repo)
+        env:
+          NETZTRANZPARENZ_CLIENT_ID: ${{ secrets.NETZTRANZPARENZ_CLIENT_ID }}
+          NETZTRANZPARENZ_CLIENT_SECRET: ${{ secrets.NETZTRANZPARENZ_CLIENT_SECRET }}
+        run: |
+          if [ -z "$NETZTRANZPARENZ_CLIENT_ID" ] || [ -z "$NETZTRANZPARENZ_CLIENT_SECRET" ]; then
+            echo "::warning::netztransparenz credentials not set; snapshot NOT archived"
+            exit 0
+          fi
+          git clone --depth 1 \
+            "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_benchmarks.git" \
+            nt_repo
+          uv run python -m pred_el_prices.cli archive-netztransparenz --archive-dir nt_repo
+          cd nt_repo
+          git config user.name "archive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "no new netztransparenz snapshot"
+            exit 0
+          fi
+          git commit -m "netztransparenz $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::netztransparenz push failed after 3 merge retries"
+          exit 1
+
       # ENTSO-E serves only the latest submitted forecast version, so the
       # pre-auction vintage must be snapshotted daily. Written only once
       # both series are published; earlier slots retry via later slots.
