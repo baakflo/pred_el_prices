@@ -55,7 +55,7 @@ FORECAST_SOURCES = {
 # Their day-ahead residual load follows the same TSO-forecast convention as DE's.
 NEIGHBOUR_ZONES = ["FR", "NL", "BE", "AT", "PL", "CZ", "CH", "DK_1", "DK_2"]
 
-FUEL_COLUMNS =["ttf_gas_eur_mwh", "api2_coal_usd_t", "eua_proxy_usd"]
+FUEL_COLUMNS = ["ttf_gas_eur_mwh", "api2_coal_usd_t", "eua_proxy_usd"]
 FUEL_SETTLEMENT_LAG_DAYS = 2
 
 
@@ -122,6 +122,9 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
             else 0.0
         )
         out[f"rl_{zone.lower()}_mw"] = (load_mw - res_mw).reindex(index)
+        # load alone is published pre-gate (EU 543/2013 art. 6.1(b)); wind/solar
+        # forecasts only at 18:00 D-1, so production can use this, not the RL
+        out[f"load_{zone.lower()}_mw"] = load_mw.reindex(index)
 
     if (cache_root / "outages" / "DE_LU" / "latest").exists():
         # registered approximation of pre-gate unavailability; validation on

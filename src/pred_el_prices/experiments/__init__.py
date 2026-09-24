@@ -23,6 +23,12 @@ def _qnn_tune(**params) -> dict:
     return qnn_tune.run(**params)
 
 
+def _qnn_replay(**params) -> dict:
+    from pred_el_prices.experiments import qnn_replay
+
+    return qnn_replay.run(**params)
+
+
 def run(name: str, params: dict, runs_root: Path = Path("runs")) -> dict:
     from pred_el_prices.experiments import lear_de, lear_gbm_de, load_de, res_de
 
@@ -31,6 +37,7 @@ def run(name: str, params: dict, runs_root: Path = Path("runs")) -> dict:
         "lear-gbm-de": lear_gbm_de.run,
         "qnn-de": _qnn_run,
         "qnn-tune": _qnn_tune,
+        "qnn-replay": _qnn_replay,
         "res-de": res_de.run,
         "load-de": load_de.run,
     }

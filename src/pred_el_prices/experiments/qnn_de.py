@@ -33,16 +33,26 @@ Q_COLS = [f"q{round(q * 100):02d}" for q in QUANTILES]
 PRICE_BOUNDS = (-500.0, 4000.0)
 
 
-def load_days(dataset_path: str, train_start: str, exog_extra: list[str]):
-    """Contiguous full UTC days: prices (n, 24), exog (n, 24, k), fuels (n, 2), day index."""
+def load_days(dataset_path: str, train_start: str, exog_extra: list[str], neighbours: str = "rl"):
+    """Contiguous full UTC days: prices (n, 24), exog (n, 24, k), fuels (n, 2), day index.
+
+    `neighbours`: "rl" = summed neighbour residual load (load minus wind/solar
+    forecasts; the wind/solar part publishes only at 18:00 D-1, so it is not
+    available at the gate), "load" = summed neighbour load forecasts only (pre-gate).
+    """
     ds = pd.read_parquet(dataset_path)
     ds = ds[ds.index >= pd.Timestamp(train_start, tz="UTC")]
     frame = pd.DataFrame(index=ds.index)
     frame["price"] = ds[PRICE_COL]
     frame["load"] = ds["load_forecast_mw"]
     frame["res"] = ds[RES_COLS].sum(axis=1, min_count=len(RES_COLS))
+    cols = (
+        NEIGHBOUR_COLS
+        if neighbours == "rl"
+        else [c.replace("rl_", "load_") for c in NEIGHBOUR_COLS]
+    )
     # 0.6 % of neighbour hours are missing: carry the last published value forward
-    frame["rl_neighbours"] = ds[NEIGHBOUR_COLS].ffill().sum(axis=1, min_count=len(NEIGHBOUR_COLS))
+    frame["rl_neighbours"] = ds[cols].ffill().sum(axis=1, min_count=len(cols))
     for c in exog_extra:
         frame[c] = ds[c].ffill()
     frame["ttf"] = ds["ttf_gas_eur_mwh"].ffill()

@@ -351,6 +351,29 @@ construction). Monthly refits on days ≤ month start − 2, expanding from 2025
   −0.36 %, DM −6.04; cov80 81.3 % → 80.4 %. Five separately fitted quantile models add
   noise to the percentile spacing and no information. **Keep the single median shape.**
 
+**Production-input replay (registered 2026-09-24, before the runs).** The backtests so far
+fed the delivery day's TSO wind/solar forecast, which publishes at 18:00 D−1, after the
+gate (the known convention caveat). Production instead uses its own RES forecast (ECMWF
+ENS 00Z, `daily_forecast.own_res_forecast`, replayed daily: `own_res_history.py`), the TSO
+load forecast with the UTC 22–23 hours filled from 24 h earlier, and, for the networks,
+neighbour **load** (pre-gate) instead of neighbour residual load (whose wind/solar part is
+post-gate). `qnn-replay` trains as the backtest does on history, neighbours as load, and
+predicts every day of 2026-07-25..09-22 (60 days) from production inputs and, for
+reference, from TSO inputs. New = 12 JSU + 12 quantile networks; old = quantile networks
+0–3 (the tuned model's setup). Recalibration seeded with the backtest history before the
+window (`182551` for old, `b16` for new), as a launch would be. Percentiles clipped to
+the SDAC limits.
+- **P49 (step 1, 15-min with production inputs).** Shape model with RES deviations from
+  hourly RES linearly interpolated to 15 min (TSO in training, own RES at prediction), load
+  from the 15-min TSO forecast: keeps at least two thirds of its gain, i.e. ≥ 10 %
+  15-minute pinball gain against repeated hourly on 2026-01..09-21 (was 15.9 %).
+- **P50.** Production inputs cost the new model 3–8 % hourly pinball against TSO inputs over
+  the 60 days.
+- **P51.** With production inputs, new beats old by 1–3 % hourly pinball over the 60 days;
+  DM may not reach 2 on 60 days.
+- **P52.** Both networks beat the published site forecast (LEAR, live log from 2026-08-16)
+  on median MAE over the days both exist.
+
 **4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
 (open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
 (~2 km, German domain). DWD open data keeps only about 24 h, so there is **no history
