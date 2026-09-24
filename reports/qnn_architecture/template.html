@@ -1,0 +1,563 @@
+<title>DE-LU Quantile Network</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --ground: #F2F5F8;
+  --surface: #FFFFFF;
+  --ink: #16202B;
+  --ink-2: #3C4855;
+  --muted: #5F6B79;
+  --rule: #D8DEE5;
+  --rule-soft: #E7EBF0;
+  --net: #2A5DB0;
+  --net-deep: #173F7A;
+  --cmp: #B86A00;
+  --band98: #DCE6F6;
+  --band80: #B3C9EC;
+  --band50: #7C9FDA;
+  --heat: 91, 63, 160;
+  --focus: #2A5DB0;
+  --chip: #E9EEF5;
+  --good: #2E7D4F;
+  --font-display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0E1318; --surface: #141A21; --ink: #E5EAF0; --ink-2: #C3CCD6; --muted: #93A0AF;
+    --rule: #28323D; --rule-soft: #1D252E; --net: #5B87D4; --net-deep: #A9C4F2; --cmp: #C4862C;
+    --band98: #1B2940; --band80: #26406A; --band50: #3A5F9E; --heat: 157, 132, 230; --focus: #7FA6E8; --chip: #1E2731; --good: #5BB585;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0E1318; --surface: #141A21; --ink: #E5EAF0; --ink-2: #C3CCD6; --muted: #93A0AF;
+  --rule: #28323D; --rule-soft: #1D252E; --net: #5B87D4; --net-deep: #A9C4F2; --cmp: #C4862C;
+  --band98: #1B2940; --band80: #26406A; --band50: #3A5F9E; --heat: 157, 132, 230; --focus: #7FA6E8; --chip: #1E2731; --good: #5BB585;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--ground); color: var(--ink); font-family: var(--font-body);
+  font-size: 15px; line-height: 1.55; padding-inline: 16px; padding-block: 28px 64px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--font-display); font-stretch: 80%; text-wrap: balance; margin: 0; color: var(--ink); }
+h1 { font-size: clamp(34px, 6vw, 56px); font-weight: 800; letter-spacing: -0.01em; line-height: 1.02; }
+h2 { font-size: 28px; font-weight: 750; letter-spacing: -0.005em; }
+h3 { font-size: 19px; font-weight: 700; }
+p { margin: 0; max-width: 68ch; color: var(--ink-2); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+svg text.mono { font-size: 11px; }
+header { display: grid; gap: 18px; }
+.facts { display: flex; flex-wrap: wrap; gap: 10px 28px; padding-top: 14px; border-top: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+.fact { display: grid; gap: 2px; }
+.fact b { font-family: var(--font-display); font-stretch: 85%; font-size: 24px; font-weight: 700; color: var(--ink); }
+.fact span { font-size: 12.5px; color: var(--muted); }
+section { display: grid; gap: 20px; }
+.sec-head { display: grid; gap: 8px; }
+/* tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--rule); }
+.tab { font: 600 14px var(--font-body); color: var(--muted); background: none; border: 0; padding: 10px 14px; border-bottom: 2px solid transparent; cursor: pointer; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--net); }
+.tab:focus-visible, .node:focus-visible, .daybar:focus-visible, .chipbtn:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* flow */
+.flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 6px 2px 10px; }
+.node {
+  flex: 1 0 118px; display: grid; gap: 6px; align-content: start; text-align: left;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 12px 12px 10px;
+  cursor: pointer; color: var(--ink); font: inherit; position: relative;
+}
+.node:hover { border-color: var(--net); }
+.node[aria-pressed="true"] { border-color: var(--net); box-shadow: inset 0 -3px 0 var(--net); }
+.node .k { font-family: var(--font-display); font-stretch: 85%; font-weight: 700; font-size: 16px; line-height: 1.15; }
+.node .shape { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); }
+.node .act { font-family: var(--font-mono); font-size: 11px; color: var(--net); }
+.arrow { flex: 0 0 22px; display: grid; place-items: center; color: var(--muted); font-family: var(--font-mono); }
+.stackbar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; gap: 1px; }
+.stackbar i { display: block; background: var(--net); opacity: 0.35; }
+.stackbar i:nth-child(odd) { opacity: 0.6; }
+.detail { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 20px 22px; display: grid; gap: 14px; }
+.detail h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.detail h3 .mono { color: var(--muted); font-weight: 400; font-size: 13px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; color: var(--ink); }
+.groups { display: grid; gap: 6px; }
+details.grp { border: 1px solid var(--rule-soft); border-radius: 5px; background: var(--ground); }
+details.grp summary { cursor: pointer; list-style: none; display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 10px 12px; font-weight: 600; }
+details.grp summary::-webkit-details-marker { display: none; }
+details.grp summary::before { content: "+"; font-family: var(--font-mono); color: var(--net); margin-right: 8px; }
+details.grp[open] summary::before { content: "–"; }
+details.grp summary { grid-template-columns: auto 1fr auto; }
+details.grp summary .cnt { font-family: var(--font-mono); font-weight: 400; color: var(--muted); font-size: 13px; }
+details.grp .body { padding: 0 12px 12px 32px; display: grid; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.lagrow { display: grid; grid-template-columns: 70px 1fr; gap: 8px; align-items: center; font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.cells { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+.cells i { height: 12px; border-radius: 2px; background: var(--net); opacity: 0.55; }
+.cells i.off { background: none; outline: 1px dashed var(--muted); outline-offset: -1px; opacity: 0.7; }
+.formula { font-family: var(--font-mono); font-size: 13px; background: var(--ground); border: 1px solid var(--rule-soft); border-radius: 5px; padding: 10px 12px; overflow-x: auto; color: var(--ink); white-space: pre; }
+.note { font-size: 13px; color: var(--muted); }
+table.params { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+table.params th, table.params td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+table.params th { font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+table.params td:nth-child(2) { font-family: var(--font-mono); font-size: 13px; color: var(--ink); white-space: nowrap; }
+.tablewrap { overflow-x: auto; }
+/* fan section */
+.panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 18px 14px; display: grid; gap: 14px; }
+.row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+.daystrip { display: grid; grid-template-columns: repeat(60, 1fr); gap: 2px; align-items: end; height: 84px; }
+.daybar { height: 100%; display: flex; align-items: flex-end; padding: 0; border: 0; background: none; cursor: pointer; }
+.daybar i { display: block; width: 100%; background: var(--band80); border-radius: 2px 2px 0 0; min-height: 3px; }
+.daybar:hover i { background: var(--band50); }
+.daybar[aria-pressed="true"] i { background: var(--net); }
+.axisnote { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink); display: inline-block; box-shadow: 0 0 0 2px var(--surface); }
+.dash { width: 16px; height: 0; border-top: 2px dashed var(--cmp); display: inline-block; }
+.line { width: 16px; height: 0; border-top: 2px solid var(--net-deep); display: inline-block; }
+.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chipbtn { font: 500 13px var(--font-mono); border: 1px solid var(--rule); background: var(--chip); color: var(--ink-2); padding: 5px 10px; border-radius: 999px; cursor: pointer; }
+.chipbtn[aria-pressed="true"] { background: var(--net); color: var(--surface); border-color: var(--net); }
+.heat { display: grid; grid-template-columns: 44px repeat(24, 1fr); gap: 2px; align-items: stretch; font-variant-numeric: tabular-nums; }
+.heat .lab { font-family: var(--font-mono); font-size: 11px; color: var(--muted); align-self: center; }
+.heat .c { height: 34px; border-radius: 3px; position: relative; display: grid; place-items: center; font-family: var(--font-mono); font-size: 10.5px; }
+.heat .c.hit::after { content: ""; position: absolute; bottom: 3px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 1.5px var(--surface); }
+.heat .h { font-family: var(--font-mono); font-size: 10px; color: var(--muted); text-align: center; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 13.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 600; }
+.twocol { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 760px) {
+  .twocol { grid-template-columns: 1fr; }
+  .flow { flex-direction: column; overflow-x: visible; }
+  .node { flex: 0 0 auto; }
+  .arrow { flex: 0 0 18px; transform: rotate(90deg); }
+  .heat .c { font-size: 0; }
+  .daystrip { height: 64px; gap: 1px; }
+}
+.tip {
+  position: fixed; z-index: 10; pointer-events: none; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 6px; padding: 8px 10px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12); font-variant-numeric: tabular-nums; min-width: 150px;
+}
+.tip .t { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+.tip .r { display: flex; justify-content: space-between; gap: 14px; }
+.tip .r span:first-child { color: var(--muted); }
+footer { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 14px; display: grid; gap: 6px; }
+@media (prefers-reduced-motion: no-preference) { .daybar i, .node { transition: background-color .12s, border-color .12s; } }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">pred_el_prices · Phase 2 · run qnn-de-20260923-182551 + PIT recalibration</div>
+  <h1>DE-LU Quantile Network</h1>
+  <p>One small feed-forward network forecasts the whole next day at once: 24 delivery hours × 99 percentiles of the German-Luxembourg day-ahead price, from inputs that exist before the 12:00 CET auction gate. Click any block below to see what it does; the fan charts further down show 60 days of its forecasts against what cleared.</p>
+  <div class="facts">
+    <div class="fact"><b>13.16</b><span>median MAE, €/MWh, 2020–26 (G2 trees: 14.18)</span></div>
+    <div class="fact"><b>4.63</b><span>mean pinball, 2026 holdout (untuned: 5.02)</span></div>
+    <div class="fact"><b>80.0 / 97.8 %</b><span>80 % / 98 % band coverage, 2021–26</span></div>
+    <div class="fact"><b>822,600</b><span>parameters · CPU only · ~2 min per refit</span></div>
+  </div>
+</header>
+
+<section id="architecture">
+  <div class="sec-head">
+    <div class="eyebrow">Architecture</div>
+    <h2>From 313 numbers to 2,376 percentiles</h2>
+  </div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-net" aria-selected="true" aria-controls="pane-net">Network</button>
+    <button class="tab" role="tab" id="tab-train" aria-selected="false" aria-controls="pane-train">Training</button>
+  </div>
+  <div id="pane-net" role="tabpanel" aria-labelledby="tab-net" style="display:grid;gap:14px">
+    <div class="flow" id="flow"></div>
+    <div class="detail" id="detail" aria-live="polite"></div>
+  </div>
+  <div id="pane-train" role="tabpanel" aria-labelledby="tab-train" hidden>
+    <div class="detail" id="train"></div>
+  </div>
+</section>
+
+<section id="fan">
+  <div class="sec-head">
+    <div class="eyebrow">Forecasts · 24 Jul – 21 Sep 2026 · calibrated</div>
+    <h2>Fan charts, one day at a time</h2>
+    <p>Each forecast was made with data available before the gate of its day. Pick a day in the strip: bar height is that day's highest cleared price, so the spike days stand out.</p>
+  </div>
+  <div class="panel">
+    <div class="row">
+      <h3 id="dayTitle">—</h3>
+      <div class="stats" id="dayStats"></div>
+    </div>
+    <div class="daystrip" id="strip" role="group" aria-label="Days, bar height = daily maximum price"></div>
+    <div class="axisnote"><span id="stripStart"></span><span>daily max price · click a day</span><span id="stripEnd"></span></div>
+    <div class="row">
+      <div class="legend">
+        <span><i class="sw" style="background:var(--band98)"></i>1–99 %</span>
+        <span><i class="sw" style="background:var(--band80)"></i>10–90 %</span>
+        <span><i class="sw" style="background:var(--band50)"></i>25–75 %</span>
+        <span><i class="line"></i>median</span>
+        <span><i class="dot"></i>cleared price</span>
+        <span id="g2leg"><i class="dash"></i>G2 point forecast</span>
+      </div>
+      <label class="toggle" for="g2toggle"><input type="checkbox" id="g2toggle" checked> show G2</label>
+    </div>
+    <div class="chart" id="fanChart"></div>
+    <div class="row">
+      <h3>Chance the price clears above …</h3>
+      <div class="chips" id="chips" role="group" aria-label="Price threshold"></div>
+    </div>
+    <div class="heat" id="heat"></div>
+    <p class="note">Probability read off the 99 calibrated percentiles, hour by hour. A dot marks hours where the cleared price did exceed the threshold. Hours are UTC; local summer time is UTC+2.</p>
+  </div>
+
+  <div class="twocol">
+    <div class="panel">
+      <h3>Do the percentiles mean what they say?</h3>
+      <p class="note">2026 holdout, never seen in tuning. Each point: how often the price came in below the forecast percentile. On the diagonal = honest.</p>
+      <div class="chart" id="relChart"></div>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--cmp)"></i>network output</span>
+        <span><i class="sw" style="background:var(--net)"></i>after recalibration</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Scorecard</h3>
+      <div class="tablewrap">
+      <table class="params">
+        <thead><tr><th>measure</th><th>raw</th><th>calibrated</th></tr></thead>
+        <tbody>
+          <tr><td>80 % band covers, 2021–26</td><td>76.4 %</td><td>80.0 %</td></tr>
+          <tr><td>98 % band covers, 2021–26</td><td>96.6 %</td><td>97.8 %</td></tr>
+          <tr><td>worst percentile off by, 2021–26</td><td>4.6 pp</td><td>1.2 pp</td></tr>
+          <tr><td>80 % band covers, 2026</td><td>77.2 %</td><td>84.3 %</td></tr>
+          <tr><td>98 % band covers, 2026</td><td>96.3 %</td><td>98.6 %</td></tr>
+          <tr><td>mean pinball, 2026</td><td>4.723</td><td>4.625</td></tr>
+          <tr><td>median MAE, 2026</td><td>12.66</td><td>12.50</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="note">2026 came in calmer than the trailing year the recalibration learns from, so its 80 % band runs a little wide there (84 %).</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>Backtest 2020-01-01 → 2026-09-21, weekly refits, each trained only on days up to two days before its week. Recalibration from 2021 on, fitted on the trailing 365 days. G2 = LEAR with a gradient-boosted correction and neighbour residual load, the best non-neural model.</div>
+  <div>Inputs: ENTSO-E day-ahead forecasts (DE and 9 neighbours), EPEX prices, TTF gas and EUA carbon settlements (lagged two days). Full record: docs/pred_el_prices_project_plan.md, addendum 2026-09-23.</div>
+</footer>
+</div>
+
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = /*DATA*/;
+
+/* ---------------- architecture ---------------- */
+const LAGS = [
+  {name: "Price", unit: "€/MWh", note: "EPEX day-ahead, UTC days", lags: [["d−1", 22], ["d−2", 24], ["d−3", 24], ["d−7", 24]], fuel: true},
+  {name: "Load forecast DE", unit: "MW", note: "TSO day-ahead forecast", lags: [["d", 24], ["d−1", 22], ["d−7", 24]]},
+  {name: "Wind + solar forecast DE", unit: "MW", note: "onshore + offshore + solar, TSO day-ahead", lags: [["d", 24], ["d−1", 22], ["d−7", 24]]},
+  {name: "Neighbour residual load", unit: "MW", note: "load − wind − solar, summed over FR NL BE AT PL CZ CH DK1 DK2", lags: [["d", 24], ["d−1", 22], ["d−7", 24]]},
+];
+const count = g => g.lags.reduce((s, l) => s + l[1], 0);
+
+const NODES = [
+  {id: "in", k: "Inputs", shape: "313", act: "asinh-scaled", bar: true},
+  {id: "l1", k: "Dense 1", shape: "313 → 256", act: "ELU · dropout .28"},
+  {id: "l2", k: "Dense 2", shape: "256 → 256", act: "ELU · dropout .28"},
+  {id: "l3", k: "Dense 3", shape: "256 → 256", act: "ELU · dropout .28"},
+  {id: "head", k: "Head", shape: "256 → 2,376", act: "linear"},
+  {id: "mono", k: "Non-crossing", shape: "24 × 99", act: "softplus steps"},
+  {id: "inv", k: "Back to €/MWh", shape: "24 × 99", act: "sinh · × fuel cost"},
+  {id: "ens", k: "Seeds + recalibration", shape: "24 × 99", act: "average · PIT remap"},
+];
+
+function inputsDetail() {
+  const groups = LAGS.map(g => `
+    <details class="grp">
+      <summary><span>${g.name}</span><span class="cnt">${count(g)} values</span></summary>
+      <div class="body">
+        <div>${g.note}. Unit before scaling: ${g.unit}.${g.fuel ? " Divided by that day's gas-plant cost before anything else (see “Back to €/MWh”)." : ""}</div>
+        ${g.lags.map(([lag, n]) => `<div class="lagrow"><span>${lag} · ${n}</span><div class="cells">${
+          Array.from({length: 24}, (_, h) => `<i class="${h >= n ? "off" : ""}" title="hour ${h} UTC${h >= n ? " — dropped" : ""}"></i>`).join("")}</div></div>`).join("")}
+        ${g.lags.some(l => l[1] === 22) ? `<div class="note">Dashed cells: hours 22–23 UTC of the previous day are 00–01 local time of the delivery day — they clear in the very auction being forecast, so they are unknown at the gate and dropped from every row.</div>` : ""}
+      </div>
+    </details>`).join("");
+  return `
+    <h3>Inputs <span class="mono">one row per delivery day · 313 values</span></h3>
+    <p>Everything the network sees about day <i>d</i> is known before the 12:00 CET gate on <i>d−1</i>. Expand a group to see which hours enter.</p>
+    <div class="groups">${groups}
+      <details class="grp"><summary><span>Fuel and carbon</span><span class="cnt">2 values</span></summary>
+        <div class="body"><div>TTF front-month gas (€/MWh) and an EUA carbon proxy, daily settlements shifted by two days — the freshest prices surely known at the gate. EUA counts 0 before its source begins (2021-10); no back-filling.</div></div></details>
+      <details class="grp"><summary><span>Weekday</span><span class="cnt">7 values</span></summary>
+        <div class="body"><div>One-hot Monday…Sunday of the delivery day. Passed through unscaled.</div></div></details>
+    </div>
+    <div class="formula">x_scaled = asinh( (x − median_window) / MAD_window )     per column, MAD = median|x − median| / 0.6745</div>
+    <p class="note">Median and MAD are fitted on the training window of each refit only (the last 1,460 days), so a 2022 price spike does not squash the scale of calm years and the scale follows the market. asinh behaves like a straight line near zero and like a logarithm for extremes — spikes and negative prices stay in range without clipping.</p>`;
+}
+
+const DETAIL = {
+  in: inputsDetail,
+  l1: () => layerDetail(1, 313, "The first layer mixes all 313 inputs: yesterday's evening prices, tomorrow's wind, France's residual load and the gas price all meet here. 313 × 256 weights + 256 biases = 80,384 parameters."),
+  l2: () => layerDetail(2, 256, "Hidden-to-hidden. Depth lets the network build interactions a linear model cannot, like “high residual load AND expensive gas AND low neighbour slack”. 256 × 256 + 256 = 65,792 parameters."),
+  l3: () => layerDetail(3, 256, "Third hidden layer, same shape. Optuna chose three layers over one or two on 2025 validation pinball. 65,792 parameters."),
+  head: () => `
+    <h3>Head <span class="mono">Linear 256 → 2,376 · no activation</span></h3>
+    <p>One linear layer emits 24 × 99 raw numbers per day: for each delivery hour, one slot for the median and 98 slots that become the gaps between neighbouring percentiles. It holds three quarters of all parameters: 256 × 2,376 + 2,376 = 610,632.</p>
+    <p class="note">The head starts with small gaps (bias −3 → softplus ≈ 0.05 per step) so an untrained network predicts a sane spread; without that, 98 default-size gaps span ±34 in scaled units, which the inverse transform turns into 10¹⁴ €/MWh.</p>`,
+  mono: () => `
+    <h3>Non-crossing percentiles <span class="mono">24 × 99, in scaled units</span></h3>
+    <p>For each hour the network's 50th slot is the median. Every other percentile is built outward from it by adding positive steps, so the 1st is always below the 2nd, … , below the 99th — by construction, not by sorting afterwards.</p>
+    <div class="formula">q50  = raw[50]
+q50+k = q50 + Σ softplus(raw[50+j])   j = 1..k     (upper side)
+q50−k = q50 − Σ softplus(raw[50−j])   j = 1..k     (lower side)
+softplus(z) = ln(1 + eᶻ) &gt; 0</div>
+    <p class="note">Asymmetric by design: the upper steps can grow on a tight evening while the lower side stays narrow — the fan leans upward exactly when scarcity risk is up.</p>`,
+  inv: () => `
+    <h3>Back to €/MWh <span class="mono">sinh · MAD + median · × fuel cost</span></h3>
+    <p>The percentiles come out in the scaled space the target was trained in. Two monotone steps map them back; because both preserve order, a percentile stays the same percentile.</p>
+    <div class="formula">price_rel = sinh(q) · MAD_hour + median_hour        undo asinh, per delivery hour
+price     = price_rel · fuel_cost(d)
+fuel_cost(d) = max(20, 2 · TTF + 0.37 · EUA)      gas plant at 50 % efficiency + carbon</div>
+    <p class="note">Training in units of gas cost is what fixed 2022: a pattern learned when gas cost 20 €/MWh scales up when it costs 200. Without it the first network trailed the crisis by 26 €/MWh on average.</p>`,
+  ens: () => `
+    <h3>Seeds + recalibration <span class="mono">4 networks → 1 fan</span></h3>
+    <p>Four copies with different random seeds are trained per refit; their percentiles are averaged level by level (quantile averaging) and sorted. That smooths out the luck of any single training run.</p>
+    <p>Then a rolling recalibration checks where real prices landed within past fans: over the trailing 365 days (up to two days before the week), the share of prices below each percentile. If the “90th” was beaten 12.7 % of the time, the served 90th is taken from a higher level. Beyond the 1st and 99th percentiles the fan is extended with an exponential tail fitted to the outer percentiles.</p>
+    <p class="note">This moved 2021–26 coverage of the 80 % band from 76.4 % to 80.0 % and cut the worst percentile error from 4.6 to 1.2 points, without touching the median.</p>`,
+};
+
+function layerDetail(i, nIn, text) {
+  return `
+    <h3>Dense ${i} <span class="mono">Linear ${nIn} → 256 · ELU · Dropout 0.28</span></h3>
+    <p>${text}</p>
+    <dl class="kv">
+      <dt>activation</dt><dd>ELU: x for x &gt; 0, eˣ − 1 below — smooth, and never fully dead like ReLU</dd>
+      <dt>dropout</dt><dd>28 % of units zeroed at random in training (off at forecast time); the tuned value — it also widened the fans</dd>
+      <dt>weights</dt><dd>PyTorch default init; AdamW with weight decay 8.5 × 10⁻⁵</dd>
+    </dl>`;
+}
+
+const flow = document.getElementById("flow");
+const detail = document.getElementById("detail");
+NODES.forEach((n, i) => {
+  if (i) { const a = document.createElement("div"); a.className = "arrow"; a.setAttribute("aria-hidden", "true"); a.textContent = "→"; flow.appendChild(a); }
+  const b = document.createElement("button");
+  b.className = "node"; b.id = "node-" + n.id; b.setAttribute("aria-pressed", "false");
+  b.innerHTML = `<span class="k">${n.k}</span><span class="shape">${n.shape}</span><span class="act">${n.act}</span>` +
+    (n.bar ? `<span class="stackbar" aria-hidden="true">${[94, 70, 70, 70, 2, 7].map(v => `<i style="flex:${v}"></i>`).join("")}</span>` : "");
+  b.addEventListener("click", () => select(n.id));
+  flow.appendChild(b);
+});
+function select(id) {
+  NODES.forEach(n => document.getElementById("node-" + n.id).setAttribute("aria-pressed", String(n.id === id)));
+  detail.innerHTML = DETAIL[id]();
+}
+select("in");
+
+document.getElementById("train").innerHTML = `
+  <h3>Training <span class="mono">tuned by Optuna, 60 trials on 2025</span></h3>
+  <div class="tablewrap"><table class="params">
+    <thead><tr><th>parameter</th><th>value</th><th>why / how chosen</th></tr></thead>
+    <tbody>
+      <tr><td>loss</td><td>pinball, mean over 24 × 99</td><td>proper scoring rule for percentiles; averaged over all 99 it approximates half the CRPS</td></tr>
+      <tr><td>optimizer</td><td>AdamW</td><td>decoupled weight decay</td></tr>
+      <tr><td>learning rate</td><td>4.98 × 10⁻⁴</td><td>Optuna, log range 10⁻⁴ – 3 × 10⁻³</td></tr>
+      <tr><td>weight decay</td><td>8.5 × 10⁻⁵</td><td>Optuna, log range 10⁻⁶ – 10⁻²</td></tr>
+      <tr><td>dropout</td><td>0.28</td><td>Optuna, 0 – 0.4</td></tr>
+      <tr><td>layers × width</td><td>3 × 256</td><td>Optuna, 1–3 layers of 64–512</td></tr>
+      <tr><td>batch size</td><td>32 days</td><td>Optuna, 16 – 128</td></tr>
+      <tr><td>training window</td><td>1,460 days, rolling</td><td>Optuna, 1–4 years; every top trial chose 4</td></tr>
+      <tr><td>epochs</td><td>≤ 400, early stop</td><td>patience 30 on a random 15 % of the window's days; best epoch restored</td></tr>
+      <tr><td>refit</td><td>weekly</td><td>trained on days up to two days before the week (UTC 22–23 of the day before belong to the auction being forecast)</td></tr>
+      <tr><td>seeds</td><td>4 per refit</td><td>percentiles averaged level by level</td></tr>
+      <tr><td>target units</td><td>price ÷ fuel cost</td><td>fixed the 2021–22 rally (bias −26 → +2 €/MWh)</td></tr>
+      <tr><td>hardware</td><td>CPU, 32 vCPU pod</td><td>1,404 fits (351 weeks × 4 seeds) in ~35 min; one fit ≈ 1–2 min on one core</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">Tuning saw only 2025; 2026 stayed untouched. On that holdout the tuned network beats the untuned one on pinball (5.02 → 4.72, Diebold–Mariano 3.6, p = 0.0002).</p>`;
+
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", String(x === t)));
+  document.getElementById("pane-net").hidden = t.id !== "tab-net";
+  document.getElementById("pane-train").hidden = t.id !== "tab-train";
+}));
+
+/* ---------------- fan charts ---------------- */
+const tip = document.getElementById("tip");
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = v => (Math.round(v * 10) / 10).toLocaleString("en-US", {minimumFractionDigits: 1, maximumFractionDigits: 1});
+function showTip(html, x, y) {
+  tip.innerHTML = html; tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let left = x + 14, top = y + 14;
+  if (left + r.width > window.innerWidth - 8) left = x - r.width - 14;
+  if (top + r.height > window.innerHeight - 8) top = y - r.height - 14;
+  tip.style.left = Math.max(8, left) + "px"; tip.style.top = Math.max(8, top) + "px";
+}
+const hideTip = () => { tip.hidden = true; };
+
+const days = DATA.days;
+let cur = days.length - 1;
+let thr = "200";
+const strip = document.getElementById("strip");
+const maxOfMax = Math.max(...days.map(d => d.max_actual));
+days.forEach((d, i) => {
+  const b = document.createElement("button");
+  b.className = "daybar"; b.setAttribute("aria-label", `${d.date}, max ${fmt(d.max_actual)} €/MWh`);
+  b.innerHTML = `<i style="height:${Math.max(4, 100 * Math.max(0, d.max_actual) / maxOfMax)}%"></i>`;
+  b.addEventListener("click", () => { cur = i; renderDay(); });
+  b.addEventListener("mousemove", e => showTip(`<div class="t">${d.date}</div>
+    <div class="r"><span>max price</span><span>${fmt(d.max_actual)}</span></div>
+    <div class="r"><span>MAE network</span><span>${fmt(d.mae)}</span></div>
+    <div class="r"><span>MAE G2</span><span>${fmt(d.mae_g2)}</span></div>
+    <div class="r"><span>in 80 % band</span><span>${Math.round(d.cov80 * 24)}/24 h</span></div>`, e.clientX, e.clientY));
+  b.addEventListener("mouseleave", hideTip);
+  strip.appendChild(b);
+});
+document.getElementById("stripStart").textContent = days[0].date.slice(5);
+document.getElementById("stripEnd").textContent = days[days.length - 1].date.slice(5);
+
+const chips = document.getElementById("chips");
+DATA.thresholds.forEach(t => {
+  const b = document.createElement("button");
+  b.className = "chipbtn"; b.textContent = t + " €"; b.dataset.t = t;
+  b.addEventListener("click", () => { thr = String(t); renderHeat(); });
+  chips.appendChild(b);
+});
+document.getElementById("g2toggle").addEventListener("change", renderFan);
+
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => span / s <= n + 0.5);
+  const ticks = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) ticks.push(Math.round(v * 100) / 100);
+  return {ticks, lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step};
+}
+
+function renderDay() {
+  const d = days[cur];
+  strip.querySelectorAll(".daybar").forEach((b, i) => b.setAttribute("aria-pressed", String(i === cur)));
+  const date = new Date(d.date + "T00:00:00Z");
+  document.getElementById("dayTitle").textContent = date.toLocaleDateString("en-GB", {weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC"});
+  document.getElementById("dayStats").innerHTML =
+    `<span>max <b>${fmt(d.max_actual)}</b> €/MWh</span><span>MAE network <b>${fmt(d.mae)}</b></span><span>MAE G2 <b>${fmt(d.mae_g2)}</b></span><span>in 80 % band <b>${Math.round(d.cov80 * 24)}/24</b> h</span>`;
+  renderFan(); renderHeat();
+}
+
+function renderFan() {
+  const d = days[cur], host = document.getElementById("fanChart");
+  const showG2 = document.getElementById("g2toggle").checked;
+  document.getElementById("g2leg").style.opacity = showG2 ? 1 : 0.4;
+  const W = Math.max(320, host.clientWidth), H = W < 560 ? 260 : 330;
+  const m = {l: 46, r: 12, t: 10, b: 30}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const B = d.bands;
+  const vals = [...B.q01, ...B.q99, ...d.actual, ...(showG2 ? d.g2 : [])];
+  const nt = niceTicks(Math.min(...vals), Math.max(...vals));
+  const x = h => m.l + (h + 0.5) * iw / 24, y = v => m.t + ih - (v - nt.lo) / (nt.hi - nt.lo) * ih;
+  const area = (lo, hi) => "M" + lo.map((v, h) => `${x(h)},${y(v)}`).join("L") + "L" + hi.map((v, h) => `${x(23 - h)},${y(hi[23 - h])}`).join("L") + "Z";
+  const line = s => "M" + s.map((v, h) => `${x(h)},${y(v)}`).join("L");
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Fan chart for ${d.date}">`;
+  nt.ticks.forEach(t => {
+    svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}" style="stroke:var(--rule-soft)" stroke-width="1"/>`;
+    svg += `<text x="${m.l - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" style="fill:var(--muted)" class="mono">${t}</text>`;
+  });
+  if (nt.lo < 0 && nt.hi > 0) svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(0)}" y2="${y(0)}" style="stroke:var(--muted)" stroke-width="1"/>`;
+  svg += `<path d="${area(B.q01, B.q99)}" style="fill:var(--band98)"/>`;
+  svg += `<path d="${area(B.q10, B.q90)}" style="fill:var(--band80)"/>`;
+  svg += `<path d="${area(B.q25, B.q75)}" style="fill:var(--band50)"/>`;
+  svg += `<path d="${line(B.q50)}" fill="none" style="stroke:var(--net-deep)" stroke-width="2" stroke-linejoin="round"/>`;
+  if (showG2) svg += `<path d="${line(d.g2)}" fill="none" style="stroke:var(--cmp)" stroke-width="2" stroke-dasharray="5 4" stroke-linejoin="round"/>`;
+  d.actual.forEach((v, h) => { svg += `<circle cx="${x(h)}" cy="${y(v)}" r="4.2" style="fill:var(--ink)" style="stroke:var(--surface)" stroke-width="2"/>`; });
+  for (let h = 0; h < 24; h += (W < 560 ? 3 : 2)) svg += `<text x="${x(h)}" y="${H - 10}" text-anchor="middle" font-size="11" style="fill:var(--muted)" class="mono">${String(h).padStart(2, "0")}</text>`;
+  svg += `<text x="${W - m.r}" y="${H - 10}" text-anchor="end" font-size="11" style="fill:var(--muted)" class="mono">h UTC</text>`;
+  svg += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t + ih}" style="stroke:var(--muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/>`;
+  svg += `</svg><div class="note" style="margin-top:2px">€/MWh</div>`;
+  host.innerHTML = svg;
+  const s = host.querySelector("svg"), xh = s.querySelector("#xh");
+  s.querySelector("#hit").addEventListener("mousemove", e => {
+    const r = s.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    const h = Math.min(23, Math.max(0, Math.floor((px - m.l) / (iw / 24))));
+    xh.setAttribute("x1", x(h)); xh.setAttribute("x2", x(h)); xh.setAttribute("visibility", "visible");
+    const inside = d.actual[h] >= B.q10[h] && d.actual[h] <= B.q90[h];
+    showTip(`<div class="t">${d.date} · ${String(h).padStart(2, "0")}:00 UTC</div>
+      <div class="r"><span>cleared</span><span><b>${fmt(d.actual[h])}</b></span></div>
+      <div class="r"><span>99th</span><span>${fmt(B.q99[h])}</span></div>
+      <div class="r"><span>90th</span><span>${fmt(B.q90[h])}</span></div>
+      <div class="r"><span>median</span><span>${fmt(B.q50[h])}</span></div>
+      <div class="r"><span>10th</span><span>${fmt(B.q10[h])}</span></div>
+      <div class="r"><span>1st</span><span>${fmt(B.q01[h])}</span></div>
+      ${showG2 ? `<div class="r"><span>G2</span><span>${fmt(d.g2[h])}</span></div>` : ""}
+      <div class="r"><span>in 80 % band</span><span>${inside ? "yes" : "no"}</span></div>`, e.clientX, e.clientY);
+  });
+  s.querySelector("#hit").addEventListener("mouseleave", () => { xh.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+function renderHeat() {
+  const d = days[cur], p = d.exceed[thr], heat = document.getElementById("heat");
+  chips.querySelectorAll(".chipbtn").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === thr)));
+  const rgb = css("--heat");
+  let html = `<div class="lab">P(&gt;${thr})</div>`;
+  p.forEach((v, h) => {
+    const hit = d.actual[h] > Number(thr);
+    const txt = v >= 0.5 ? "var(--surface)" : "var(--ink-2)";
+    html += `<div class="c${hit ? " hit" : ""}" data-h="${h}" style="background:rgba(${rgb},${0.06 + 0.94 * v});color:${txt}">${Math.round(v * 100)}</div>`;
+  });
+  html += `<div></div>` + Array.from({length: 24}, (_, h) => `<div class="h">${h % 3 === 0 ? String(h).padStart(2, "0") : ""}</div>`).join("");
+  heat.innerHTML = html;
+  heat.querySelectorAll(".c").forEach(c => {
+    const h = +c.dataset.h;
+    c.addEventListener("mousemove", e => showTip(`<div class="t">${String(h).padStart(2, "0")}:00 UTC</div>
+      <div class="r"><span>P(price &gt; ${thr} €)</span><span><b>${(p[h] * 100).toFixed(1)} %</b></span></div>
+      <div class="r"><span>cleared</span><span>${fmt(d.actual[h])}</span></div>`, e.clientX, e.clientY));
+    c.addEventListener("mouseleave", hideTip);
+  });
+}
+
+/* ---------------- reliability ---------------- */
+function renderRel() {
+  const host = document.getElementById("relChart"), R = DATA.reliability;
+  const W = Math.max(280, host.clientWidth), H = Math.min(W, 340);
+  const m = {l: 40, r: 12, t: 10, b: 34}, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const x = v => m.l + v * iw, y = v => m.t + ih - v * ih;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Reliability diagram">`;
+  [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+    svg += `<line x1="${x(0)}" x2="${x(1)}" y1="${y(t)}" y2="${y(t)}" style="stroke:var(--rule-soft)"/>`;
+    svg += `<text x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" style="fill:var(--muted)" class="mono">${Math.round(t * 100)}</text>`;
+    svg += `<text x="${x(t)}" y="${H - 16}" text-anchor="middle" font-size="11" style="fill:var(--muted)" class="mono">${Math.round(t * 100)}</text>`;
+  });
+  svg += `<text x="${x(0.5)}" y="${H - 2}" text-anchor="middle" font-size="11" style="fill:var(--muted)">forecast percentile</text>`;
+  svg += `<line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" style="stroke:var(--muted)" stroke-dasharray="4 4"/>`;
+  const path = s => "M" + s.map((v, i) => `${x(R.levels[i])},${y(v)}`).join("L");
+  svg += `<path d="${path(R.raw)}" fill="none" style="stroke:var(--cmp)" stroke-width="2"/>`;
+  svg += `<path d="${path(R.cal)}" fill="none" style="stroke:var(--net)" stroke-width="2"/>`;
+  svg += `<line id="rx" y1="${m.t}" y2="${m.t + ih}" style="stroke:var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>`;
+  svg += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="rhit"/></svg>`;
+  svg += `<div class="note">% of hours priced below the percentile</div>`;
+  host.innerHTML = svg;
+  const s = host.querySelector("svg"), rx = s.querySelector("#rx");
+  s.querySelector("#rhit").addEventListener("mousemove", e => {
+    const r = s.getBoundingClientRect(), px = (e.clientX - r.left) * W / r.width;
+    const i = Math.min(98, Math.max(0, Math.round((px - m.l) / iw * 100) - 1));
+    rx.setAttribute("x1", x(R.levels[i])); rx.setAttribute("x2", x(R.levels[i])); rx.setAttribute("visibility", "visible");
+    showTip(`<div class="t">${i + 1}th percentile</div>
+      <div class="r"><span>should be</span><span>${i + 1} %</span></div>
+      <div class="r"><span>network output</span><span>${(R.raw[i] * 100).toFixed(1)} %</span></div>
+      <div class="r"><span>recalibrated</span><span>${(R.cal[i] * 100).toFixed(1)} %</span></div>`, e.clientX, e.clientY);
+  });
+  s.querySelector("#rhit").addEventListener("mouseleave", () => { rx.setAttribute("visibility", "hidden"); hideTip(); });
+}
+
+renderDay(); renderRel();
+let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { renderFan(); renderRel(); }, 120); });
+</script>
