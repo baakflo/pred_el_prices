@@ -317,6 +317,14 @@ construction). Monthly refits on days ≤ month start − 2, expanding from 2025
   already recalibrated hourly blend) are calibrated as they stand: cov80 81.6 %, cov98 98.7 %,
   worst level error 1.1 pp. Recalibrating again adds noise: pinball 5.355 → 5.392, DM −2.09.
   No 15-minute recalibration step; the hourly one carries over.
+- **P48 (registered before the run).** Level-specific shapes: the same shape model fitted
+  with quantile loss at τ = 0.05, 0.25, 0.5, 0.75, 0.95 (each centred within the hour),
+  interpolated linearly to the 99 levels (held flat outside 0.05–0.95) and added to the
+  hourly percentiles. Expectation: a small gain at most, below 1 % in 15-minute pinball against the single
+  median shape, because the shaped forecast is already calibrated; not significant (DM < 2).
+  *Result: worse, significantly.* Pinball 4.8767 (median shape) → 4.8945 (level shapes),
+  −0.36 %, DM −6.04; cov80 81.3 % → 80.4 %. Five separately fitted quantile models add
+  noise to the percentile spacing and no information. **Keep the single median shape.**
 
 **4. Weather: ECMWF ENS → DWD ICON.** Production's own RES forecast uses ECMWF ENS 00Z
 (open data). It is slow to publish and to download, and at 0.25° it is coarser than ICON-EU (~7 km) / ICON-D2
