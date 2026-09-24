@@ -110,11 +110,12 @@ def run(
     window_days: int | None = None,
     refit: str = "month",
     fuel_scale: bool = False,
+    save_seeds: bool = False,
 ) -> dict:
     """`window_days`: rolling training window (None = expanding). `refit`: "month" or
     "week". `fuel_scale`: prices (target and lags) in units of that day's gas-plant
     marginal cost (fuel_cost); a positive per-day factor, so percentiles scale back
-    exactly.
+    exactly. `save_seeds`: also write seeds.npz (see backtest).
     """
     config = QNNConfig(
         hidden=hidden or [256, 256],
@@ -137,6 +138,7 @@ def run(
         fuel_scale,
         n_seeds,
         n_jobs,
+        seed_path=out_dir / "seeds.npz" if save_seeds else None,
     )
     qdf.to_parquet(out_dir / "quantiles.parquet")
     qdf[["q50", "actual"]].rename(columns={"q50": "qnn_median"}).to_parquet(
@@ -154,6 +156,7 @@ def run(
             "window_days": window_days,
             "refit": refit,
             "fuel_scale": fuel_scale,
+            "save_seeds": save_seeds,
         },
         "overall": probabilistic_metrics(qdf, prices_all),
         "by_year": {},
@@ -180,8 +183,13 @@ def backtest(
     n_seeds: int,
     n_jobs: int,
     verbose: int = 10,
+    seed_path: Path | None = None,
 ) -> pd.DataFrame:
-    """Percentile forecasts q01..q99 plus `actual`, hourly, from first_fit to test_end."""
+    """Percentile forecasts q01..q99 plus `actual`, hourly, from first_fit to test_end.
+
+    `seed_path`: also save each seed's percentiles (EUR/MWh, before averaging) as an
+    npz with `q` (n_seeds, n_hours, 99) and `index` (UTC ns), untrimmed by test_end.
+    """
     prices, exog, fuels, days, hours = load_days(dataset_path, train_start, exog_extra)
     scale = fuel_cost(fuels) if fuel_scale else np.ones(len(days))
     x, y, row_days = design(prices / scale[:, None], exog, fuels, days)
@@ -200,8 +208,8 @@ def backtest(
     by_start: dict = {}
     for start, pred in results:
         if pred is not None:
-            by_start.setdefault(start, []).append(pred)
-    parts = []
+            by_start.setdefault(start, []).append(pred)  # seed order kept by Parallel
+    parts, seed_parts = [], []
     for start, preds in sorted(by_start.items()):
         end = ends[list(starts).index(start)]
         in_period = (row_days >= start) & (row_days < end)
@@ -210,7 +218,12 @@ def backtest(
         test_days = row_days[in_period]
         idx = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in test_days for h in range(24)])
         parts.append(pd.DataFrame(q.reshape(-1, len(QUANTILES)), index=idx, columns=Q_COLS))
+        if seed_path is not None:
+            per_seed = np.asarray(preds) * row_scale[in_period][None, :, None, None]
+            seed_parts.append(per_seed.reshape(len(preds), -1, len(QUANTILES)))
     qdf = pd.concat(parts)
+    if seed_path is not None:
+        np.savez_compressed(seed_path, q=np.concatenate(seed_parts, axis=1), index=qdf.index.asi8)
     if test_end is not None:
         qdf = qdf[qdf.index < pd.Timestamp(test_end, tz="UTC") + pd.Timedelta(days=1)]
     qdf["actual"] = pd.Series(prices.reshape(-1), index=hours).reindex(qdf.index)

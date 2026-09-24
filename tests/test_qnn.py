@@ -78,6 +78,29 @@ class TestDesign:
         np.testing.assert_allclose(cost, np.maximum(20, 2 * fuels[:, 0] + 0.37 * fuels[:, 1]))
 
 
+class TestSeeds:
+    def test_saved_seeds_average_to_the_forecast(self, monkeypatch, tmp_path):
+        prices, exog, fuels, days = _days(80)
+        hours = pd.DatetimeIndex([d + pd.Timedelta(hours=h) for d in days for h in range(24)])
+        monkeypatch.setattr(qnn_de, "load_days", lambda *a: (prices, exog, fuels, days, hours))
+
+        def fake_fit(x_train, y_train, x_pred, n_unscaled, config, seed):
+            base = np.broadcast_to(QUANTILES * 100, (len(x_pred), 24, len(QUANTILES)))
+            return base + 10.0 * seed
+
+        monkeypatch.setattr(qnn_de, "fit_predict", fake_fit)
+        path = tmp_path / "seeds.npz"
+        qdf = qnn_de.backtest(
+            "unused", "2024-01-01", [], QNNConfig(), "2024-02-15", None, "4weeks",
+            None, True, 3, 1, verbose=0, seed_path=path,
+        )  # fmt: skip
+        saved = np.load(path)
+        assert saved["q"].shape == (3, len(qdf), len(QUANTILES))
+        np.testing.assert_array_equal(saved["index"], qdf.index.asi8)
+        np.testing.assert_allclose(saved["q"].mean(axis=0), qdf[qnn_de.Q_COLS].to_numpy())
+        assert not np.allclose(saved["q"][0], saved["q"][2])
+
+
 class TestFit:
     def test_learns_a_shifted_median_and_sorted_output(self):
         prices, exog, fuels, days = _days(200, seed=1)

@@ -135,6 +135,25 @@ whose expected pinball is within 0.5 % of k = 16 and whose subset spread is belo
 DM-detectable difference. Expectation: the knee lies at 8–12. Cost ≈ 16 × 14 fits, about 20
 min on a pod. Production cost of k = 12 weekly: 12 fits × ~2 min, parallel, so trivial.
 
+*Registered (2026-09-24, before the run).* Run: `qnn-de` with the tuned configuration
+(3×256, dropout .278, lr 4.98e-4, wd 8.55e-5, batch 32, window 1460, fuel scaling), first
+fit 2025-01-01, test end 2025-12-31, refit every 4 weeks, 16 seeds, `save_seeds=true`.
+Scorer `_scratch/phase2_nonlinear/seed_curve.py`: 50 random k-subsets per k, Vincentized,
+mean pinball; fit pinball(k) = L∞ + c/k.
+- **P35.** The smallest k within 0.5 % of the 16-seed pinball is between 6 and 12.
+- **P36.** Single seeds differ: max − min pinball over the 16 exceeds 1 % of the 16-seed
+  pinball, and the 16-seed ensemble beats the average single seed by 1–3 %.
+- **P37.** Four seeds (today's setting) are within 1 % of 16: more seeds are a cheap
+  cleanup, not a big lever.
+
+**Fuel-scaling ablation (item 5), queued on the same pod.** The tuned run `182551`
+exactly, with `fuel_scale=false` (weekly, 2020-01..2026-09-21, 4 seeds). Scored with
+`qnn_compare.py` against `182551`.
+- **P38.** Without fuel scaling the network is worse: 2022 median MAE higher by at least
+  2 €/MWh, overall pinball worse, and DM on daily pinball over 2020–26 significant (|DM| > 2)
+  in favour of scaling. The rolling window and weekly refits alone do not close the 2022
+  gap.
+
 **2. Distributional head (DDNN), the parameter route.** Same inputs and body, head
 256 → 24 × 4. Per hour it outputs the parameters of a Johnson's SU distribution (location
 ξ, scale λ > 0 via softplus, skew γ, tail weight δ > 0 via softplus), trained by negative
