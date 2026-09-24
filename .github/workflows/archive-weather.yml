@@ -7,7 +7,10 @@ on:
   # quota). Slots, daily at UTC times:
   #   0545/0700/0900 - three best-effort attempts; the archiver is
   #     idempotent and exits fast once the day's file exists. 00Z
-  #     ICON-EU-EPS files are complete on DWD's server by ~05:30 UTC.
+  #     ICON-EU-EPS files are complete on DWD's server by ~05:30 UTC. The
+  #     00Z/03Z ICON-D2 and ICON-EU deterministic runs (archive-weather-det)
+  #     are also caught here: ICON-D2 03Z by ~04:30 UTC (05:45 slot), ICON-EU
+  #     03Z by ~06:00-07:00 UTC (07:00/09:00 slots).
   #   0945 - last pre-gate attempt for the ENTSO-E forecast snapshot: gate
   #     is 12:00 CET/CEST = 11:00/10:00 UTC, so 09:45 UTC is pre-gate
   #     year-round. Also takes the _late benchmark snapshot.
@@ -33,7 +36,8 @@ concurrency:
 jobs:
   archive:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 60: the first slot of a day also downloads ~1.4 GB of ICON-D2/ICON-EU
+    timeout-minutes: 60
     env:
       SLOT: ${{ inputs.slot }}
     steps:
@@ -57,6 +61,19 @@ jobs:
 
       - name: Archive today's 00Z run
         run: uv run python -m pred_el_prices.cli archive-weather --archive-dir archive_repo
+
+      # ICON-D2 (~2.2 km, Germany) and ICON-EU (~7 km, Europe) deterministic
+      # runs, 00Z + 03Z: hub-height-ish wind (lowest model levels above
+      # 10 m), radiation, temperature, cloud cover. Unlike the EPS step
+      # above, a missing/not-yet-published run must not block its sibling
+      # combos, so archive-weather-det never raises for an incomplete run -
+      # it logs and continues (see dwd_det.archive_today). ICON-D2 03Z is
+      # complete on DWD's server ~1.5 h after run time (04:30 UTC) - well
+      # before the 05:45 slot. ICON-EU 03Z takes ~3-4 h (06:00-07:00 UTC) -
+      # the 05:45 slot may miss it, but 07:00 and 09:00 catch it via the
+      # same idempotent retry as everything else here.
+      - name: Archive ICON-D2 + ICON-EU deterministic runs
+        run: uv run python -m pred_el_prices.cli archive-weather-det --archive-dir archive_repo
 
       # PEGELONLINE keeps a rolling ~31-day raw window, so any day missed
       # here is refilled automatically for a month (unlike the DWD files).
@@ -147,7 +164,9 @@ jobs:
           exit 1
 
       # Silent gaps are unrecoverable (DWD deletes files after ~24h), so a
-      # missing past day must become a loud signal, not a log line.
+      # missing past day must become a loud signal, not a log line. Checks
+      # the 00Z file of all three models; icon-d2/icon-eu 03Z runs are not
+      # gap-checked (00Z is the primary vintage the forecast pipeline uses).
       - name: Gap detection (previous 3 days)
         if: always()
         env:
@@ -157,8 +176,10 @@ jobs:
           missing=""
           for d in 1 2 3; do
             day=$(date -u -d "-$d day" +%Y%m%d)
-            f="icon-eu-eps/${day:0:4}/icon-eu-eps_${day}00.parquet"
-            [ -f "$f" ] || missing="$missing $day"
+            for model in icon-eu-eps icon-d2 icon-eu; do
+              f="$model/${day:0:4}/${model}_${day}00.parquet"
+              [ -f "$f" ] || missing="$missing $model:$day"
+            done
           done
           if [ -n "$missing" ]; then
             open=$(gh issue list --repo "${{ github.repository }}" --state open \
@@ -166,6 +187,6 @@ jobs:
             if [ "$open" = "0" ]; then
               gh issue create --repo "${{ github.repository }}" \
                 --title "Weather archive gap:$missing" \
-                --body "Missing daily ICON-EU-EPS parquet for:$missing. These days are likely unrecoverable (DWD keeps ~24h). Check workflow runs and fix before the gap grows."
+                --body "Missing daily 00Z parquet for:$missing. These days are likely unrecoverable (DWD keeps ~24h). Check workflow runs and fix before the gap grows."
             fi
           fi

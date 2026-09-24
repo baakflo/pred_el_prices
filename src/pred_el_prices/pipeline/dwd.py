@@ -73,6 +73,37 @@ def _as_degrees(coords: np.ndarray) -> np.ndarray:
     return np.degrees(coords) if np.abs(coords).max() <= np.pi else coords
 
 
+def aggregate_cells(
+    lat: np.ndarray,
+    lon: np.ndarray,
+    fields: np.ndarray,
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+) -> pd.DataFrame:
+    """Mean per field row over 1-degree cells within a lat/lon box.
+
+    lat/lon: (points,) coordinates (degrees), any grid layout.
+    fields: (rows, points) values on that grid - one row per ensemble member,
+    model level, etc.
+    Returns columns: cell_lat, cell_lon, row, value.
+    """
+    mask = (lat >= lat_min) & (lat < lat_max) & (lon >= lon_min) & (lon < lon_max)
+    cell_lat = np.floor(lat[mask])
+    cell_lon = np.floor(lon[mask])
+    n_rows, n_points = fields.shape[0], int(mask.sum())
+    df = pd.DataFrame(
+        {
+            "cell_lat": np.tile(cell_lat, n_rows),
+            "cell_lon": np.tile(cell_lon, n_rows),
+            "row": np.repeat(np.arange(n_rows), n_points),
+            "value": fields[:, mask].ravel(),
+        }
+    )
+    return df.groupby(["cell_lat", "cell_lon", "row"], as_index=False)["value"].mean()
+
+
 def aggregate_members(lat: np.ndarray, lon: np.ndarray, fields: np.ndarray) -> pd.DataFrame:
     """Mean per ensemble member over 1-degree cells covering Germany.
 
@@ -80,19 +111,8 @@ def aggregate_members(lat: np.ndarray, lon: np.ndarray, fields: np.ndarray) -> p
     fields: (members, points) values on that grid.
     Returns columns: cell_lat, cell_lon, member, value.
     """
-    mask = (lat >= LAT_MIN) & (lat < LAT_MAX) & (lon >= LON_MIN) & (lon < LON_MAX)
-    cell_lat = np.floor(lat[mask])
-    cell_lon = np.floor(lon[mask])
-    n_members, n_points = fields.shape[0], int(mask.sum())
-    df = pd.DataFrame(
-        {
-            "cell_lat": np.tile(cell_lat, n_members),
-            "cell_lon": np.tile(cell_lon, n_members),
-            "member": np.repeat(np.arange(n_members), n_points),
-            "value": fields[:, mask].ravel(),
-        }
-    )
-    return df.groupby(["cell_lat", "cell_lon", "member"], as_index=False)["value"].mean()
+    df = aggregate_cells(lat, lon, fields, LAT_MIN, LAT_MAX, LON_MIN, LON_MAX)
+    return df.rename(columns={"row": "member"})
 
 
 def archive_run(run_date: date, archive_dir: Path) -> Path:
