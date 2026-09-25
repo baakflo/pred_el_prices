@@ -155,7 +155,7 @@ class TestGateInputs:
         np.testing.assert_allclose(got["load_nb"].to_numpy(), _at_gate(ds, NB_COLS, d))
         # fuels: the settlement of D-2 (day index 12 -> 30 + 12)
         np.testing.assert_allclose(got["fuel"], [42.0, 70.0])
-        assert got["flags"] == {"load_surrogate": False}
+        assert got["flags"] == {"load_surrogate": False, "neighbour_surrogate": False}
 
     def test_unpublished_boundary_hours_are_not_needed(self, tmp_path):
         ds = _dataset(20)
@@ -303,6 +303,70 @@ class TestQuarters:
         out, shaped = nets.quarter_forecast(q_h, d, parts, pd.Series(60.0, hours), qh)
         assert not shaped
         np.testing.assert_array_equal(out.to_numpy(), np.repeat(q_h.to_numpy(), 4, axis=0))
+
+
+class TestEvening:
+    def _setup(self, tmp_path, n_days=60):
+        ds = _dataset(n_days)
+        root = _cache(tmp_path, ds)
+        rng = np.random.default_rng(1)
+        feats = pd.DataFrame(
+            {"t2m_mean": rng.normal(15, 5, len(ds)), "ssrd_mean": rng.normal(200, 50, len(ds))},
+            index=ds.index,
+        )
+        return ds, root, feats
+
+    def test_neighbour_substitute_uses_only_what_exists_at_21_35_on_d_minus_2(self, tmp_path):
+        ds, root, feats = self._setup(tmp_path / "a")
+        d = pd.Timestamp("2024-02-20", tz="UTC")
+        want = nets.neighbour_load_surrogate(feats, root, d)
+        assert len(want) == 24 and want.notna().all()
+        bumped = ds.copy()
+        late = (bumped.index >= d - pd.Timedelta(hours=2)) | (
+            bumped.index.normalize() >= d
+        )  # D-1 UTC 22-23 (local D) and everything from D on: unpublished at 21:35 D-2
+        bumped.loc[late, NB_COLS] += 5000.0
+        got = nets.neighbour_load_surrogate(feats, _cache(tmp_path / "b", bumped), d)
+        pd.testing.assert_series_equal(got, want)
+        known = bumped.copy()
+        known.loc[d - pd.Timedelta(hours=12), NB_COLS] += 5000.0  # D-1 12:00: published
+        moved = nets.neighbour_load_surrogate(feats, _cache(tmp_path / "c", known), d)
+        assert not moved.equals(want)
+
+    def test_evening_gate_inputs_always_take_the_substitutes(self, tmp_path):
+        _, root, _ = self._setup(tmp_path)
+        d = pd.Timestamp("2024-02-20", tz="UTC")
+        hours = pd.date_range(d, periods=24, freq="1h")
+        de, nb = pd.Series(1.0, index=hours), pd.Series(2.0, index=hours)
+        got = nets.gate_inputs(root, d, de, nb, evening=True)  # the cache HAS day D
+        assert (got["load_de"] == 1.0).all() and (got["load_nb"] == 2.0).all()
+        assert got["flags"] == {"load_surrogate": True, "neighbour_surrogate": True}
+        np.testing.assert_allclose(got["fuel"], nets.gate_inputs(root, d)["fuel"])
+        with pytest.raises(RuntimeError, match="substitutes"):
+            nets.gate_inputs(root, d, de, None, evening=True)
+
+    def test_evening_shape_runs_on_the_interpolated_surrogate(self):
+        rng = np.random.default_rng(0)
+        q_idx = pd.date_range("2025-10-01", "2025-11-30 23:45", freq="15min", tz="UTC")
+        h_idx = pd.date_range("2025-10-01", "2025-11-30 23:00", freq="1h", tz="UTC")
+        d = pd.Timestamp("2025-11-30", tz="UTC")
+        load15 = pd.Series(50000 + 5000 * np.sin(np.arange(len(q_idx)) / 20), index=q_idx)
+        load15 = load15[load15.index < d]  # nothing published for D yet
+        solar = pd.Series(np.clip(np.sin((h_idx.hour - 6) / 12 * np.pi), 0, None) * 2e4, h_idx)
+        wind = pd.Series(1e4 + rng.normal(0, 100, len(h_idx)), index=h_idx)
+        price15 = pd.Series(60 + rng.normal(0, 5, len(q_idx)), index=q_idx)
+        qh = nets.QHInputs(load15, solar, wind, price15)
+        hours = pd.date_range(d, periods=24, freq="1h")
+        q_h = pd.DataFrame(np.tile(np.linspace(40, 80, 99), (24, 1)), index=hours, columns=Q_COLS)
+        parts = pd.DataFrame(0.0, index=hours, columns=list(nets_res_cols()))
+        p_hist = pd.Series(60.0, index=h_idx)
+        _, shaped = nets.quarter_forecast(q_h, d, parts, p_hist, qh)
+        assert not shaped  # without a surrogate: hourly repeated
+        surrogate = pd.Series(np.linspace(40000, 60000, 24), index=hours)
+        out, shaped = nets.quarter_forecast(q_h, d, parts, p_hist, qh, surrogate)
+        assert shaped and len(out) == 96
+        med = out["q50"].groupby(out.index.floor("h")).mean()
+        np.testing.assert_allclose(med.to_numpy(), q_h["q50"].to_numpy(), atol=1e-9)
 
 
 def test_pit_seed_keeps_the_past_window_and_lets_logs_win(tmp_path):

@@ -667,13 +667,17 @@ def refresh_fuels(cache_dir: Path) -> None:
 
 
 def nets_logged(out_dir: Path, delivery: pd.Timestamp) -> bool:
+    """Whether a standing morning (non-evening) nets forecast exists for `delivery`."""
     from pred_el_prices.production import site as nets_site
 
     path = out_dir / nets_site.LOG_DIR
     if not nets_site.log_exists(path):
         return False
     log = nets_site.read_log(path)
-    return bool(((log.index.normalize() == delivery) & (log["kind"] == "h")).any())
+    rows = (log.index.normalize() == delivery) & (log["kind"] == "h")
+    if "evening" in log:
+        rows &= ~log["evening"].eq(True)
+    return bool(rows.any())
 
 
 def nets_step(
@@ -688,11 +692,14 @@ def nets_step(
     weather_vintage: str,
     load_de_fallback: pd.Series | None = None,
     res_parts: pd.DataFrame | None = None,
+    evening: bool = False,
 ) -> bool:
     """Network forecast for `delivery`, appended to the nets log. Never raises.
 
     The PIT history is the seed (`nets_pit_seed.parquet` next to the log, see
-    `pep seed-nets-pit`) plus the log itself.
+    `pep seed-nets-pit`) plus the log itself. `evening`: the 21:35 UTC edition; the
+    neighbour load comes from nets.neighbour_load_surrogate and the DE load from
+    `load_de_fallback` (LEAR's surrogate), both flagged.
     """
     try:
         from pred_el_prices.models.qnn import load_bundle
@@ -702,11 +709,12 @@ def nets_step(
         networks, meta = load_bundle(bundle_path)
         if res_parts is None:
             res_parts = own_res_parts(features, dataset, cache_dir, delivery)
+        nb = nets.neighbour_load_surrogate(features, cache_dir, delivery) if evening else None
         log_path = out_dir / nets_site.LOG_DIR
         history = nets.load_history(out_dir / nets_site.SEED_NAME, log_path)
         hourly, quarters, flags = nets.forecast_day(
             networks, meta, delivery, dataset, cache_dir, res_parts, history, prices,
-            nets.QHInputs.from_cache(cache_dir), load_de_fallback,
+            nets.QHInputs.from_cache(cache_dir), load_de_fallback, nb, evening,
         )  # fmt: skip
         rows = nets_site.log_rows(
             hourly, quarters, {**flags, "weather_vintage": weather_vintage}, generated_utc
@@ -879,9 +887,10 @@ def run_daily(
     prices = site_prices(cache_dir)
     prices_qh = quarter_prices(cache_dir)
     gate = pd.Timestamp(f"{delivery - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
-    # the networks are additive and fail-soft; the evening edition has no neighbour
-    # load forecasts for its day yet, so the morning run brings the nets
-    run_nets = nets_bundle is not None and not evening
+    # the networks are additive and fail-soft; the evening edition runs them on
+    # substitute loads (DE surrogate, neighbour substitute), flagged, and the morning
+    # run replaces them like the LEAR rows
+    run_nets = nets_bundle is not None
 
     def vintage_of(day_hours) -> str:
         day_runs = pd.to_datetime(features.loc[day_hours, "run_date"]).dt.date
@@ -897,7 +906,8 @@ def run_daily(
             if action == "keep":
                 print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
                 # a slot whose nets step failed gets retried by the next pre-gate slot
-                if run_nets and pd.Timestamp(now) <= gate and not nets_logged(out_dir, delivery):
+                retry = run_nets and not evening and pd.Timestamp(now) <= gate
+                if retry and not nets_logged(out_dir, delivery):
                     nets_step(
                         nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
                         now.isoformat(timespec="seconds"),
@@ -985,7 +995,8 @@ def run_daily(
         nets_step(
             nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
             entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
-            load_de_fallback=load_d if load_surrogate else None, res_parts=res_parts,
+            load_de_fallback=load_d if load_surrogate or evening else None,
+            res_parts=res_parts, evening=evening,
         )  # fmt: skip
     write_site_json(out_dir, log_path, prices, prices_qh)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")

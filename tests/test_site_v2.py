@@ -196,6 +196,31 @@ def test_replayed_rows_are_flagged_everywhere(tmp_path):
     assert day["nets"]["replay"] is True
 
 
+def test_evening_substitutes_are_flagged_in_the_nets_blocks(tmp_path):
+    from pred_el_prices.daily_forecast import nets_logged
+
+    lear = _lear_log()
+    lear.to_parquet(tmp_path / "forecast_log.parquet")
+    rows = _nets_log(lear, ["2026-08-01", "2026-08-02", "2026-08-03"])
+    evening = rows.index.normalize() == pd.Timestamp("2026-08-03", tz="UTC")
+    rows["evening"] = evening
+    rows["load_surrogate"] = evening
+    rows["neighbour_surrogate"] = evening
+    site.append_log(tmp_path / site.LOG_DIR, rows)
+    prices, prices_qh = _prices(lear)
+    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh)
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    n = latest["nets"]
+    assert n["evening"] and n["load_surrogate"] and n["neighbour_surrogate"]
+    day = json.loads((tmp_path / "days" / "2026-08-03.json").read_text(encoding="utf-8"))
+    assert day["nets"]["neighbour_surrogate"] is True
+    history = json.loads((tmp_path / "history.json").read_text(encoding="utf-8"))
+    assert all("neighbour_surrogate" not in d["nets"] for d in history["days"])
+    # a standing evening nets forecast does not stop the morning retry
+    assert not nets_logged(tmp_path, pd.Timestamp("2026-08-03", tz="UTC"))
+    assert nets_logged(tmp_path, pd.Timestamp("2026-08-02", tz="UTC"))
+
+
 def test_live_rows_carry_no_replay_flag(tmp_path):
     latest, history = _write(tmp_path)
     assert "replay" not in latest["nets"]

@@ -175,9 +175,19 @@ def by_day(log: pd.DataFrame) -> dict:
     return dict(iter(log.groupby(log.index.normalize())))
 
 
+# log flag -> published key; set only when true. "backfill" rows come from
+# `pep backfill-nets` (a replay, not a live forecast); the others mark substitute inputs.
+NETS_FLAGS = {
+    "backfill": "replay",
+    "evening": "evening",
+    "load_surrogate": "load_surrogate",
+    "neighbour_surrogate": "neighbour_surrogate",
+}
+
+
 def _replay(h: pd.DataFrame) -> dict:
-    """Provenance: rows written by `pep backfill-nets` are a replay, not a live forecast."""
-    return {"replay": True} if "backfill" in h and h["backfill"].eq(True).any() else {}
+    """Provenance and substitute-input flags of one day's hourly rows."""
+    return {key: True for col, key in NETS_FLAGS.items() if col in h and h[col].eq(True).any()}
 
 
 def latest_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:

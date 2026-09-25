@@ -271,6 +271,29 @@ def main() -> None:
     bn.add_argument("--lear-history", type=Path, default=None, help="Published history.json")
     bn.add_argument("--n-jobs", type=int, default=-1)
 
+    ev = sub.add_parser(
+        "evening-nets",
+        help="Replay the nets in the morning and the evening configuration (P53-P55)",
+    )
+    ev.add_argument("--start", required=True)
+    ev.add_argument("--end", required=True)
+    ev.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    ev.add_argument("--features", type=Path, required=True, help="00Z ENS feature table")
+    ev.add_argument("--features-12z", type=Path, required=True, help="12Z ENS feature table")
+    ev.add_argument("--pit-seed", type=Path, required=True)
+    ev.add_argument("--lear-log", type=Path, default=None)
+    ev.add_argument("--out", type=Path, required=True)
+    ev.add_argument("--n-jobs", type=int, default=-1)
+
+    f12 = sub.add_parser(
+        "build-features-12z",
+        help="ENS features from archived 12Z runs (each targets the day after next)",
+    )
+    f12.add_argument("--archive-dir", type=Path, default=Path("data/archive/weather"))
+    f12.add_argument("--start", type=date.fromisoformat, required=True, help="First run date")
+    f12.add_argument("--end", type=date.fromisoformat, required=True, help="Last run date")
+    f12.add_argument("--out", type=Path, required=True)
+
     bs = sub.add_parser(
         "build-site",
         help="Rebuild site JSON (latest, history, days/) from existing nets + LEAR logs",
@@ -509,6 +532,23 @@ def main() -> None:
         )  # fmt: skip
         print(json.dumps(summary["scores"], indent=1))
         print(f"backfill-nets: {time.perf_counter() - t0:.0f} s")
+    elif args.command == "evening-nets":
+        import json
+
+        from pred_el_prices.production.evening_replay import run as evening_nets
+
+        summary = evening_nets(
+            args.start, args.end, args.cache_dir, args.features, args.features_12z,
+            args.pit_seed, args.out, args.lear_log, args.n_jobs,
+        )  # fmt: skip
+        print(json.dumps({k: v for k, v in summary.items() if k != "timing"}, indent=1))
+    elif args.command == "build-features-12z":
+        from pred_el_prices.features.ens_weather import build_features
+
+        feats = build_features(args.archive_dir, args.start, args.end, run_hour=12)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        feats.to_parquet(args.out)
+        print(f"{args.out}: {len(feats)} hours, {feats.index.min()} .. {feats.index.max()}")
     elif args.command == "build-site":
         from pred_el_prices.production.backfill import build_site
 

@@ -131,8 +131,18 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
   (8+8 blend, TSO inputs) for the 400 days before the backfill window, its
   recalibrated median (`b16-cal`, for the shape model), plus the production-path
   backfill's own log (07-27 onward) — the most production-like history there is.
-- **Evening edition:** no nets (neighbour load forecasts for D+2 do not exist yet);
-  the morning run adds them. A pre-gate slot retries a nets step that failed earlier.
+- **Evening edition** (21:35 UTC, target D+2): the nets run on substitute inputs.
+  - Own RES comes from the 12Z ENS run.
+  - DE load comes from the load-de surrogate.
+  - The summed neighbour load comes from `nets.neighbour_load_surrogate`. This is an HGB
+    model per hour on the 9-zone sum, using the same hour 24 h and 7 days earlier,
+    calendar, holidays and ENS weather, trained on days up to D-2.
+  - The 15-min shape runs on the interpolated DE surrogate.
+  - Log and nets blocks carry `evening`, `load_surrogate` and `neighbour_surrogate` (true
+    only).
+  - The morning run replaces the evening rows. A pre-gate morning slot retries a nets
+    step that failed, and a standing evening nets forecast does not count as done.
+  - The cost is registered as P53-P55 in the plan, tested with `pep evening-nets`.
 - **Timing:** one bundle (24 fits) takes 15-17 min wall on a 12-core/16-thread laptop
   (16 workers); the daily nets step ~9 s incl. own RES and the shape model. Estimate
   for a 4-vCPU GitHub runner: 45-90 min (not measured). Bundle file 49 MB.

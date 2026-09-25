@@ -147,7 +147,11 @@ def train_ensemble(
 
 
 def gate_inputs(
-    cache_dir: Path, delivery: pd.Timestamp, load_de_fallback: pd.Series | None = None
+    cache_dir: Path,
+    delivery: pd.Timestamp,
+    load_de_fallback: pd.Series | None = None,
+    load_nb_fallback: pd.Series | None = None,
+    evening: bool = False,
 ) -> dict:
     """Load forecasts (DE, summed neighbours) and fuels for `delivery`, as at its gate.
 
@@ -155,10 +159,23 @@ def gate_inputs(
     the cache has them by now (a backfill must see what the gate saw). Other missing
     hours: up to 2 filled from 24 h earlier; more on DE falls back to
     `load_de_fallback` (the surrogate LEAR used, flagged); more on a neighbour fails.
+
+    `evening` (the edition built at 21:35 UTC on D-2): no TSO load forecast for D exists
+    yet, so both loads always come from the fallbacks (DE surrogate, neighbour
+    substitute), whatever a later cache holds, and both are flagged.
     """
     hours = pd.date_range(delivery - pd.Timedelta(days=1), periods=48, freq="1h", tz="UTC")
     day = hours[24:]
-    flags = {"load_surrogate": False}
+    flags = {"load_surrogate": False, "neighbour_surrogate": False}
+    if evening:
+        if load_de_fallback is None or load_nb_fallback is None:
+            raise RuntimeError("evening nets need the DE and neighbour load substitutes")
+        return {
+            "load_de": load_de_fallback.reindex(day),
+            "load_nb": load_nb_fallback.reindex(day),
+            "fuel": _fuel(cache_dir, delivery),
+            "flags": {"load_surrogate": True, "neighbour_surrogate": True},
+        }
 
     def at_gate(series: pd.Series, name: str) -> pd.Series | None:
         s = series.reindex(hours).copy()
@@ -189,7 +206,11 @@ def gate_inputs(
         if s is None:
             raise RuntimeError(f"{zone} load forecast for {delivery:%Y-%m-%d} missing")
         nb += s
+    return {"load_de": load_de, "load_nb": nb, "fuel": _fuel(cache_dir, delivery), "flags": flags}
 
+
+def _fuel(cache_dir: Path, delivery: pd.Timestamp) -> np.ndarray:
+    """(TTF, EUA) for the delivery day, exactly as the dataset + load_days build them."""
     fuels = cache.load(cache_dir, "fuels_daily")
     lagged = fuels.copy()
     lagged.index = lagged.index + pd.Timedelta(days=FUEL_SETTLEMENT_LAG_DAYS)
@@ -200,8 +221,60 @@ def gate_inputs(
     if pd.isna(ttf):
         ttf = lagged["ttf_gas_eur_mwh"].loc[:delivery].dropna().iloc[-1]
     eua = at["eua_proxy_usd"].iloc[0] if "eua_proxy_usd" in at else np.nan
-    fuel = np.array([ttf, 0.0 if pd.isna(eua) else eua])
-    return {"load_de": load_de, "load_nb": nb, "fuel": fuel, "flags": flags}
+    return np.array([ttf, 0.0 if pd.isna(eua) else eua])
+
+
+def neighbour_load_surrogate(
+    features: pd.DataFrame, cache_dir: Path, delivery: pd.Timestamp
+) -> pd.Series:
+    """Substitute for the summed neighbour load forecast of `delivery` (MW, 24 hours).
+
+    For the evening edition (21:35 UTC on D-2): the neighbours' forecasts for D are not
+    published yet. One HGB model on the 9-zone sum, per hour, with inputs that exist
+    then:
+    - the same hour 24 h earlier (UTC 22-23 of D-1 are the next local day: 48 h earlier);
+    - the same hour 7 days earlier;
+    - hour, weekday of the day and of the day before, day of year, DE holiday shares;
+    - ENS temperature and radiation stats (the delivery day's rows are the evening's
+      12Z run).
+    Trained on target days <= D-2 (fully published by then).
+    """
+    from pred_el_prices.features.holidays import holiday_share
+
+    parts = []
+    for zone in NEIGHBOUR_ZONES:
+        z = cache.load(cache_dir, f"entsoe/{zone}/load_forecast")
+        if z.empty:
+            raise RuntimeError(f"no {zone} load-forecast cache")
+        parts.append(resample_hourly(z[["Forecasted Load"]])["Forecasted Load"].rename(zone))
+    # a zone's missing hour: its last published value, as training's ffill does
+    total = pd.concat(parts, axis=1).ffill().sum(axis=1, min_count=len(parts)).dropna()
+    hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
+    if not hours.isin(features.index).all():
+        raise RuntimeError(f"ENS features for delivery day {delivery:%Y-%m-%d} missing")
+    weather = [c for c in features.columns if c.startswith(("t2m_", "ssrd_"))]
+
+    def design(idx: pd.DatetimeIndex) -> pd.DataFrame:
+        x = features.loc[idx, weather].copy()
+        late = idx.hour >= 22  # the next local day: not published 24 h ahead
+        lag1 = np.where(late, idx - pd.Timedelta(hours=48), idx - pd.Timedelta(hours=24))
+        x["lag1"] = total.reindex(pd.DatetimeIndex(lag1)).to_numpy()
+        x["lag7"] = total.reindex(idx - pd.Timedelta(days=7)).to_numpy()
+        x["hour"] = idx.hour
+        x["weekday"] = idx.dayofweek
+        x["weekday_prev"] = (idx - pd.Timedelta(days=1)).dayofweek
+        x["doy"] = idx.dayofyear
+        for off in (-1, 0, 1):
+            x[f"holiday_{off:+d}"] = holiday_share(idx, off)
+        return x
+
+    train = features.index.intersection(total.index)
+    train = train[train < delivery - pd.Timedelta(days=1)]
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    model = HistGradientBoostingRegressor(random_state=0)
+    model.fit(design(train), total.reindex(train))
+    return pd.Series(model.predict(design(hours)).clip(min=0.0), index=hours)
 
 
 def gate_row(
@@ -337,18 +410,27 @@ def quarter_forecast(
     res_parts: pd.DataFrame,
     p_hist: pd.Series,
     qh: QHInputs,
+    load_hourly: pd.Series | None = None,
 ) -> tuple[pd.DataFrame, bool]:
     """96 quarter-hour percentile rows; (frame, shaped). Without the delivery day's
-    15-min load forecast the hourly percentiles are repeated x4 (shaped=False)."""
+    15-min load forecast the hourly percentiles are repeated x4 (shaped=False).
+
+    `load_hourly` (the evening edition's DE load surrogate): no 15-min TSO load exists
+    for D yet, so the delivery day's quarter-hour load is this hourly series
+    interpolated through the hour centres (as own RES is), held flat at the edges.
+    """
     quarters = pd.date_range(delivery, periods=96, freq="15min")
     p_hour = pd.concat([p_hist[p_hist.index < delivery].dropna(), q_hourly["q50"]])
 
     # gate-time inputs for the delivery day (as replay_page_data.py): the ramps need the
     # hour before and after; UTC 22-23 load from 24 h earlier; own RES held flat outside
     hrs = pd.date_range(delivery - pd.Timedelta(hours=1), periods=26, freq="1h")
-    ld = qh.load15.reindex(pd.date_range(hrs[0], periods=104, freq="15min"))
-    b = ld.index >= delivery + pd.Timedelta(hours=22)
-    ld[b] = qh.load15.reindex(ld.index[b] - pd.Timedelta(days=1)).to_numpy()
+    if load_hourly is not None:
+        ld = qh_shape.interp_quarters(load_hourly.reindex(hrs).ffill().bfill())
+    else:
+        ld = qh.load15.reindex(pd.date_range(hrs[0], periods=104, freq="15min"))
+        b = ld.index >= delivery + pd.Timedelta(hours=22)
+        ld[b] = qh.load15.reindex(ld.index[b] - pd.Timedelta(days=1)).to_numpy()
     solar = res_parts["solar_forecast_mw"].reindex(hrs).ffill().bfill()
     wind = (
         (res_parts["wind_onshore_forecast_mw"] + res_parts["wind_offshore_forecast_mw"])
@@ -388,11 +470,16 @@ def forecast_day(
     prices: pd.Series,
     qh: QHInputs,
     load_de_fallback: pd.Series | None = None,
+    load_nb_fallback: pd.Series | None = None,
+    evening: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Hourly (Q_COLS final + R_COLS raw) and quarter-hour (Q_COLS) percentiles, and flags.
 
     `res_parts`: own RES forecast per target for the delivery day (daily_forecast.
     own_res_parts); `history`: load_history(); `prices`: hourly clearing prices (PIT).
+    `evening`: the 21:35 UTC edition two days ahead; DE load = `load_de_fallback` (the
+    surrogate), neighbour load = `load_nb_fallback` (neighbour_load_surrogate), and the
+    15-minute shape runs on the interpolated DE surrogate.
     """
     from pred_el_prices.daily_forecast import own_res_total
 
@@ -402,7 +489,7 @@ def forecast_day(
             f"bundle trained through {meta['trained_through']}: too late for delivery "
             f"{delivery:%Y-%m-%d} (its targets were not known at the gate)"
         )
-    inputs = gate_inputs(cache_dir, delivery, load_de_fallback)
+    inputs = gate_inputs(cache_dir, delivery, load_de_fallback, load_nb_fallback, evening)
     res = own_res_total(res_parts)
     x, scale = gate_row(
         dataset, delivery, inputs["load_de"], inputs["load_nb"], res, inputs["fuel"]
@@ -411,11 +498,15 @@ def forecast_day(
     q, n_days = recalibrate_day(raw, history, prices, delivery)
     hours = pd.date_range(delivery, periods=24, freq="1h")
     hourly = pd.DataFrame(np.hstack([q, raw]), index=hours, columns=Q_COLS + R_COLS)
-    quarters, shaped = quarter_forecast(hourly[Q_COLS], delivery, res_parts, history["q50"], qh)
+    quarters, shaped = quarter_forecast(
+        hourly[Q_COLS], delivery, res_parts, history["q50"], qh,
+        inputs["load_de"] if evening else None,
+    )  # fmt: skip
     flags = {
         "trained_through": meta["trained_through"],
         "recal_days": n_days,
         "shaped": shaped,
+        "evening": evening,
         **inputs["flags"],
     }
     return hourly, quarters, flags
