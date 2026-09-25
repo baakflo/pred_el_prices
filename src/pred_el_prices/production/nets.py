@@ -431,13 +431,16 @@ def seed_pit(
     before: pd.Timestamp,
     logs: tuple[Path, ...] = (),
 ) -> pd.DataFrame:
-    """PIT/shape history for launch: raw percentiles of a backtest run before `before`
-    (R_COLS) and its recalibrated median (q50, for the shape model's training), plus
+    """PIT/shape history for launch: raw percentiles of a backtest run over the 400 days
+    before `before` (R_COLS) and its recalibrated median (q50, for the shape model's
+    training; the 15-minute history starts 2025-10-01, inside that span), plus
     the hourly rows of any nets logs (e.g. a production-path backfill), which win."""
     from pred_el_prices.production.site import read_log
 
     raw = pd.read_parquet(quantiles_path)
-    raw = raw.loc[raw.index < before, Q_COLS].set_axis(R_COLS, axis=1)
+    # the PIT window is 365 days; a margin covers the weekly-stale start of production
+    keep = (raw.index < before) & (raw.index >= before - pd.Timedelta(days=PIT_WINDOW_DAYS + 35))
+    raw = raw.loc[keep, Q_COLS].set_axis(R_COLS, axis=1)
     raw["q50"] = (
         pd.read_parquet(cal_path)["q50"].reindex(raw.index) if cal_path is not None else np.nan
     )

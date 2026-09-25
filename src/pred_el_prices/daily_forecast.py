@@ -31,6 +31,7 @@ from pred_el_prices.models.lear import forecast_day
 from pred_el_prices.pipeline import cache
 from pred_el_prices.pipeline.capacity import hourly_capacity
 from pred_el_prices.pipeline.entsoe import resample_hourly
+from pred_el_prices.production.site import quarter_prices
 
 MODEL_LABEL = "LEAR(364, academic exog) + own-RES v2"
 NOTE_GATE_OK = "Generated before the 12:00 CET/CEST auction gate."
@@ -280,8 +281,21 @@ def lear_forecast(
     )
 
 
-def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
-    """Derive latest.json and history.json from the forecast log + known prices."""
+def write_site_json(
+    out_dir: Path, log_path: Path, prices: pd.Series, prices_qh: pd.Series | None = None
+) -> None:
+    """Derive latest.json and history.json from the forecast log + known prices.
+
+    Site contract v2 (docs/production_v2.md): the v1 fields carry LEAR; when a
+    network log (`nets_log.parquet` in `out_dir`) covers a day, a `nets` block is
+    added to it. `prices_qh`: 15-minute clearing prices for the quarter-hour actuals.
+    """
+    from pred_el_prices.production import site as nets_site
+
+    nets_path = out_dir / nets_site.LOG_NAME
+    nets_log = nets_site.read_log(nets_path) if nets_path.exists() else None
+    if prices_qh is None:
+        prices_qh = pd.Series(dtype=float, index=pd.DatetimeIndex([], tz="UTC"))
     log = pd.read_parquet(log_path)
     # An evening edition is replaced by the next morning's run: both row sets
     # stay in the append-only log, the LAST appended row per hour stands.
@@ -325,7 +339,13 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
             }
             for t, f, a in zip(hours.index, hours["forecast"], actuals, strict=True)
         ],
+        "schema": 2,
+        "levels": nets_site.SITE_LEVELS,
     }
+    if nets_log is not None:
+        nets_latest = nets_site.latest_nets(nets_log, latest_day, prices, prices_qh)
+        if nets_latest is not None:
+            latest["nets"] = nets_latest
 
     err = (log["forecast"] - prices.reindex(log.index)).abs()
     daily = err.groupby(err.index.normalize()).agg(["mean", "count"])
@@ -385,8 +405,11 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
         if pd.Timestamp(rows["generated_utc"].iloc[0]) > day_gate:
             post_gate.add(f"{day:%Y-%m-%d}")
     history_path = out_dir / "history.json"
+    published_nets: dict[str, dict] = {}
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
+            if "nets" in entry:
+                published_nets[entry["day"]] = entry["nets"]
             if entry["day"] not in days:
                 days[entry["day"]] = entry["mae"]
                 if "partial" in entry:
@@ -401,6 +424,15 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
                 }
                 if merged:
                     day_flags[entry["day"]] = merged
+
+    def nets_for(d: str) -> dict:
+        # the nets log wins; a published block survives a log loss like the curves do
+        block = None
+        if nets_log is not None:
+            block = nets_site.history_nets(nets_log, pd.Timestamp(d, tz="UTC"), prices, prices_qh)
+        block = block or published_nets.get(d)
+        return {"nets": block} if block else {}
+
     history = {
         "days": [
             {
@@ -410,6 +442,7 @@ def write_site_json(out_dir: Path, log_path: Path, prices: pd.Series) -> None:
                 **({"post_gate": True} if d in post_gate else {}),
                 **day_flags.get(d, {}),
                 **({"hours": curves[d]} if d in curves else {}),
+                **nets_for(d),
             }
             for d, m in sorted(days.items())[-60:]
         ]
@@ -555,6 +588,62 @@ def refresh_fuels(cache_dir: Path) -> None:
         print(f"WARN: fuel price refresh failed ({e}); using cached data")
 
 
+def nets_logged(out_dir: Path, delivery: pd.Timestamp) -> bool:
+    from pred_el_prices.production import site as nets_site
+
+    path = out_dir / nets_site.LOG_NAME
+    if not path.exists():
+        return False
+    log = pd.read_parquet(path, columns=["kind"])
+    return bool(((log.index.normalize() == delivery) & (log["kind"] == "h")).any())
+
+
+def nets_step(
+    bundle_path: Path,
+    cache_dir: Path,
+    dataset: pd.DataFrame,
+    features: pd.DataFrame,
+    delivery: pd.Timestamp,
+    out_dir: Path,
+    prices: pd.Series,
+    generated_utc: str,
+    weather_vintage: str,
+    load_de_fallback: pd.Series | None = None,
+    res_parts: pd.DataFrame | None = None,
+) -> bool:
+    """Network forecast for `delivery`, appended to the nets log. Never raises.
+
+    The PIT history is the seed (`nets_pit_seed.parquet` next to the log, see
+    `pep seed-nets-pit`) plus the log itself.
+    """
+    try:
+        from pred_el_prices.models.qnn import load_bundle
+        from pred_el_prices.production import nets
+        from pred_el_prices.production import site as nets_site
+
+        networks, meta = load_bundle(bundle_path)
+        if res_parts is None:
+            res_parts = own_res_parts(features, dataset, cache_dir, delivery)
+        log_path = out_dir / nets_site.LOG_NAME
+        history = nets.load_history(out_dir / nets_site.SEED_NAME, log_path)
+        hourly, quarters, flags = nets.forecast_day(
+            networks, meta, delivery, dataset, cache_dir, res_parts, history, prices,
+            nets.QHInputs.from_cache(cache_dir), load_de_fallback,
+        )  # fmt: skip
+        rows = nets_site.log_rows(
+            hourly, quarters, {**flags, "weather_vintage": weather_vintage}, generated_utc
+        )
+        nets_site.append_log(log_path, rows)
+        print(
+            f"nets: {len(networks)} networks (trained through {meta['trained_through']}), "
+            f"PIT days {flags['recal_days']}, 15-min shape {flags['shaped']}"
+        )
+        return True
+    except Exception as e:  # noqa: BLE001 - additive path: nothing here may cost LEAR the day
+        print(f"::warning::nets step failed ({type(e).__name__}: {e}); LEAR publishes alone")
+        return False
+
+
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
     """Decide what a run does when `delivery` already has logged rows.
 
@@ -591,8 +680,13 @@ def run_daily(
     refresh_only: bool = False,
     evening: bool = False,
     allow_load_surrogate: bool = False,
+    nets_bundle: Path | None = None,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day.
+
+    `nets_bundle`: also forecast with the network ensemble (production/nets.py),
+    logged to nets_log.parquet and published as the v2 `nets` block. Additive and
+    fail-soft: LEAR publishes whatever happens to the networks.
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -647,7 +741,7 @@ def run_daily(
             except requests.RequestException as e:
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
             _refresh_fallback_prices(cache_dir, end)
-        write_site_json(out_dir, log_path, site_prices(cache_dir))
+        write_site_json(out_dir, log_path, site_prices(cache_dir), quarter_prices(cache_dir))
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
 
@@ -705,6 +799,15 @@ def run_daily(
     features = update_features(features_path, archive_dir, run_date, allow_ens_fallback)
     dataset, _ = build_dataset(cache_dir)
     prices = site_prices(cache_dir)
+    prices_qh = quarter_prices(cache_dir)
+    gate = pd.Timestamp(f"{delivery - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
+    # the networks are additive and fail-soft; the evening edition has no neighbour
+    # load forecasts for its day yet, so the morning run brings the nets
+    run_nets = nets_bundle is not None and not evening
+
+    def vintage_of(day_hours) -> str:
+        day_runs = pd.to_datetime(features.loc[day_hours, "run_date"]).dt.date
+        return "00Z" if (day_runs == run_date).all() else "12Z"
 
     if log_path.exists():
         logged = pd.read_parquet(log_path)
@@ -715,14 +818,21 @@ def run_daily(
             action = standing_day_action(day_rows, evening, now, delivery)
             if action == "keep":
                 print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
-                write_site_json(out_dir, log_path, prices)
+                # a slot whose nets step failed gets retried by the next pre-gate slot
+                if run_nets and pd.Timestamp(now) <= gate and not nets_logged(out_dir, delivery):
+                    nets_step(
+                        nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
+                        now.isoformat(timespec="seconds"),
+                        vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
+                    )  # fmt: skip
+                write_site_json(out_dir, log_path, prices, prices_qh)
                 return None
             if action == "keep-late":
                 print(
                     f"evening edition for {delivery:%Y-%m-%d} stands; past the gate, "
                     "a post-gate replacement would downgrade the day"
                 )
-                write_site_json(out_dir, log_path, prices)
+                write_site_json(out_dir, log_path, prices, prices_qh)
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
@@ -779,13 +889,13 @@ def run_daily(
                 dataset.loc[hrs, res_cols[1:]] = 0.0
                 print(f"calibration gap {day:%Y-%m-%d}: RES forecast filled by own-RES")
 
-    own_res = own_res_forecast(features, dataset, cache_dir, delivery)
+    res_parts = own_res_parts(features, dataset, cache_dir, delivery)
+    own_res = own_res_total(res_parts)
     forecast = lear_forecast(dataset, delivery, load_d, own_res)
 
-    day_runs = pd.to_datetime(features.loc[delivery_hours, "run_date"]).dt.date
     entry = forecast.to_frame()
     entry["generated_utc"] = now.isoformat(timespec="seconds")
-    entry["weather_vintage"] = "00Z" if (day_runs == run_date).all() else "12Z"
+    entry["weather_vintage"] = vintage_of(delivery_hours)
     entry["evening"] = evening
     entry["load_surrogate"] = load_surrogate
     if log_path.exists():
@@ -793,6 +903,12 @@ def run_daily(
     out_dir.mkdir(parents=True, exist_ok=True)
     entry.to_parquet(log_path)
 
-    write_site_json(out_dir, log_path, prices)
+    if run_nets:
+        nets_step(
+            nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
+            entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
+            load_de_fallback=load_d if load_surrogate else None, res_parts=res_parts,
+        )  # fmt: skip
+    write_site_json(out_dir, log_path, prices, prices_qh)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

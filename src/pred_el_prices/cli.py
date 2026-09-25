@@ -220,6 +220,57 @@ def main() -> None:
         "the surrogate model instead of failing (flagged; for retry slots)",
     )
 
+    fc.add_argument(
+        "--nets-bundle",
+        type=Path,
+        default=None,
+        help="Network ensemble bundle (pep train-nets): also publish the nets forecast "
+        "(additive; LEAR publishes even if the nets step fails)",
+    )
+
+    tn = sub.add_parser(
+        "train-nets",
+        help="Train the weekly network ensemble (12 JSU + 12 quantile) into one bundle file",
+    )
+    tn.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    tn.add_argument("--out", type=Path, required=True, help="Bundle file to write")
+    tn.add_argument(
+        "--monday",
+        type=date.fromisoformat,
+        default=None,
+        help="Week the bundle serves; trains on days <= monday - 2 "
+        "(default: today if Monday, else the next Monday, UTC)",
+    )
+    tn.add_argument("--n-jobs", type=int, default=-1)
+
+    sp = sub.add_parser(
+        "seed-nets-pit",
+        help="Seed the nets' PIT/median history from backtest quantiles (+ nets logs)",
+    )
+    sp.add_argument("--quantiles", type=Path, required=True, help="Raw quantiles.parquet")
+    sp.add_argument("--cal", type=Path, default=None, help="Recalibrated quantiles.parquet (q50)")
+    sp.add_argument("--before", required=True, help="Use backtest hours before this UTC day")
+    sp.add_argument(
+        "--nets-logs", type=Path, nargs="*", default=[], help="nets_log.parquet files to add"
+    )
+    sp.add_argument("--out", type=Path, required=True, help="Seed parquet to write")
+
+    bn = sub.add_parser(
+        "backfill-nets",
+        help="Replay the production network path over past days (weekly bundles, own RES)",
+    )
+    bn.add_argument("--start", required=True, help="First delivery day (UTC)")
+    bn.add_argument("--end", required=True, help="Last delivery day (UTC)")
+    bn.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    bn.add_argument(
+        "--features", type=Path, required=True, help="Production ENS feature table (own RES)"
+    )
+    bn.add_argument("--pit-seed", type=Path, required=True, help="Seed from seed-nets-pit")
+    bn.add_argument("--out", type=Path, required=True)
+    bn.add_argument("--lear-log", type=Path, default=None, help="LEAR forecast_log.parquet")
+    bn.add_argument("--lear-history", type=Path, default=None, help="Published history.json")
+    bn.add_argument("--n-jobs", type=int, default=-1)
+
     bf = sub.add_parser(
         "backfill-history",
         help="Fill curve-less site history days from backtest runs (flagged post_gate)",
@@ -397,7 +448,56 @@ def main() -> None:
             refresh_only=args.refresh_only,
             evening=args.evening,
             allow_load_surrogate=args.allow_load_surrogate,
+            nets_bundle=args.nets_bundle,
         )
+    elif args.command == "train-nets":
+        import time
+
+        import pandas as pd
+
+        from pred_el_prices.features.dataset import build_dataset
+        from pred_el_prices.models.qnn import save_bundle
+        from pred_el_prices.production.nets import next_monday, train_ensemble
+
+        monday = (
+            pd.Timestamp(args.monday, tz="UTC")
+            if args.monday
+            else next_monday(pd.Timestamp.now(tz="UTC"))
+        )
+        t0 = time.perf_counter()
+        dataset, _ = build_dataset(args.cache_dir)
+        networks, meta = train_ensemble(dataset, monday, n_jobs=args.n_jobs)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        save_bundle(args.out, networks, meta)
+        print(
+            f"bundle {args.out}: {len(networks)} networks, trained {meta['train_first']}.."
+            f"{meta['trained_through']} ({meta['n_train_days']} days), "
+            f"{time.perf_counter() - t0:.0f} s"
+        )
+    elif args.command == "seed-nets-pit":
+        import pandas as pd
+
+        from pred_el_prices.production.nets import seed_pit
+
+        seed = seed_pit(
+            args.quantiles, args.cal, pd.Timestamp(args.before, tz="UTC"), tuple(args.nets_logs)
+        )
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        seed.to_parquet(args.out)
+        print(f"PIT seed {args.out}: {len(seed)} hours, {seed.index.min()} .. {seed.index.max()}")
+    elif args.command == "backfill-nets":
+        import json
+        import time
+
+        from pred_el_prices.production.backfill import run as backfill_nets
+
+        t0 = time.perf_counter()
+        summary = backfill_nets(
+            args.start, args.end, args.cache_dir, args.features, args.out, args.pit_seed,
+            args.lear_log, args.lear_history, args.n_jobs,
+        )  # fmt: skip
+        print(json.dumps(summary["scores"], indent=1))
+        print(f"backfill-nets: {time.perf_counter() - t0:.0f} s")
     elif args.command == "backfill-history":
         from pred_el_prices.daily_forecast import backfill_history
 

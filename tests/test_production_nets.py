@@ -305,6 +305,56 @@ class TestQuarters:
         np.testing.assert_array_equal(out.to_numpy(), np.repeat(q_h.to_numpy(), 4, axis=0))
 
 
+def test_pit_seed_keeps_the_past_window_and_lets_logs_win(tmp_path):
+    from pred_el_prices.production import site
+
+    idx = pd.date_range("2025-01-01", "2026-08-31 23:00", freq="1h", tz="UTC")
+    q = pd.DataFrame(np.tile(np.linspace(0, 98, 99), (len(idx), 1)), index=idx, columns=Q_COLS)
+    q["actual"] = 1.0
+    q.to_parquet(tmp_path / "q.parquet")
+    cal = q.copy()
+    cal["q50"] = 7.0
+    cal.to_parquet(tmp_path / "cal.parquet")
+    day = pd.Timestamp("2026-07-01", tz="UTC")
+    hours = pd.date_range(day, periods=24, freq="1h")
+    hourly = pd.DataFrame(100.0, index=hours, columns=Q_COLS)
+    hourly[R_COLS] = 200.0
+    rows = site.log_rows(hourly, hourly.reindex(pd.date_range(day, periods=96, freq="15min"),
+                                                method="ffill"), {}, "x")  # fmt: skip
+    site.append_log(tmp_path / "log.parquet", rows)
+
+    before = pd.Timestamp("2026-08-01", tz="UTC")
+    seed = nets.seed_pit(
+        tmp_path / "q.parquet", tmp_path / "cal.parquet", before, (tmp_path / "log.parquet",)
+    )
+    assert seed.index.max() == before - pd.Timedelta(hours=1)
+    assert seed.index.min() == before - pd.Timedelta(days=400)
+    assert (seed.loc[hours, R_COLS] == 200.0).all().all()  # the log wins
+    assert (seed.loc[hours, "q50"] == 100.0).all()
+    assert (seed.drop(hours)["q50"] == 7.0).all()
+
+
+def test_backfill_scores_compare_lear_on_full_days_only(tmp_path):
+    from pred_el_prices.production import site
+    from pred_el_prices.production.backfill import scores
+
+    hours = pd.date_range("2026-08-01", periods=48, freq="1h", tz="UTC")
+    hourly = pd.DataFrame(np.tile(np.linspace(40, 60, 99), (48, 1)), index=hours,
+                          columns=Q_COLS)  # fmt: skip
+    hourly[R_COLS] = hourly[Q_COLS].to_numpy()
+    quarters = hourly[Q_COLS].reindex(pd.date_range(hours[0], periods=192, freq="15min"),
+                                      method="ffill")  # fmt: skip
+    site.append_log(tmp_path / "l.parquet", site.log_rows(hourly, quarters, {}, "x"))
+    log = site.read_log(tmp_path / "l.parquet")
+    prices = pd.Series(53.0, index=hours)
+    lear = pd.Series(50.0, index=hours[:30])  # day 2 only partly forecast by LEAR
+    out = scores(log, prices, prices.reindex(quarters.index, method="ffill"), lear)
+    assert out["days"] == 2
+    assert out["hourly"]["mae"] == 3.0 and out["quarter"]["mae"] == 3.0
+    assert out["quarter_repeated_hourly"]["pinball"] == out["quarter"]["pinball"]
+    assert out["vs_lear"] == {"days": 1, "lear_mae": 3.0, "nets_mae": 3.0}
+
+
 def nets_res_cols():
     from pred_el_prices.daily_forecast import RES_TARGETS
 

@@ -21,6 +21,7 @@ SITE_LEVELS = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 SITE_COLS = [f"q{lv:02d}" for lv in SITE_LEVELS]
 NETS_MODEL_LABEL = "24 networks (12 JSU + 12 quantile), recalibrated"
 LOG_NAME = "nets_log.parquet"
+SEED_NAME = "nets_pit_seed.parquet"  # PIT/median history before go-live (pep seed-nets-pit)
 # the 15-minute MTU went live in SDAC on 2025-10-01; before it the cache is hourly
 QH_START = pd.Timestamp("2025-10-01", tz="UTC")
 
@@ -47,11 +48,8 @@ def log_rows(
     h.insert(0, "kind", "h")
     q = quarters[Q_COLS].astype("float32")
     q.insert(0, "kind", "qh")
-    rows = pd.concat([h, q])
+    rows = pd.concat([h, q]).assign(generated_utc=generated_utc, **flags)
     rows.index.name = "t"
-    rows["generated_utc"] = generated_utc
-    for k, v in flags.items():
-        rows[k] = v
     return rows
 
 
