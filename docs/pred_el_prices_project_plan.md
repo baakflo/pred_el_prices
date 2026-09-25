@@ -451,6 +451,41 @@ snapshots for a clean outage re-test in a year. The production path for the netw
 "chance above X €" row are the natural UI). Site `history.json` backfill days 07-25..08-17
 (leaky). The `promo/peaks-*` re-derivation. The both-hinges anomaly.
 
+**6. Networks in the evening edition (registered 2026-09-25, before the run).** The evening
+edition (21:35 UTC on D-2, target D) runs LEAR only today. The networks also need the
+summed neighbour load for D, and the neighbours' ENTSO-E forecasts for D do not exist at
+21:35. New: a neighbour-load substitute, analogous to the DE load surrogate (`load-de`).
+It is one HGB model on the 9-zone sum, per hour, with these inputs, all published by
+21:35 on D-2:
+- the same hour on D-1 (UTC 22-23 from D-2, the next local day);
+- the same hour on D-7;
+- hour, weekday of D and of D-1, day of year and DE holiday shares;
+- ENS temperature and radiation stats.
+It is trained on target days up to D-2, and flagged `neighbour_surrogate`.
+
+The full evening configuration for the nets is:
+- 12Z ENS weather of D-2, which feeds own RES and both surrogates;
+- DE load surrogate;
+- neighbour-load substitute;
+- 15-minute shape with the DE surrogate interpolated to quarters instead of the TSO
+  15-minute load;
+- the same weekly bundle and PIT history as the morning.
+
+Test: `evening-nets` replay on 2026-07-27..09-24 (the 55 days of the production-path
+replay). Each week's bundle is trained once and both configurations predict from it.
+Reference, morning configuration on the pod replay: hourly pinball 5.55, MAE 15.55,
+15-min pinball 5.85. LEAR's measured evening cost was +0.4 EUR/MWh MAE.
+- **P53.** The evening configuration costs the nets 2–6 % hourly pinball and +0.3 to
+  +1.2 EUR/MWh median MAE against the morning configuration, DM on daily pinball > 2
+  (evening worse). The 15-minute pinball cost is at least as large in percent as the
+  hourly one (the interpolated load loses the within-hour load detail).
+- **P54.** The neighbour-load substitute's MAE against the published 9-zone sum is below
+  3 % of the sum's mean, well under the DE surrogate's error in percent terms
+  (neighbour load is a large, smooth aggregate).
+- **P55.** The evening nets still beat the published site forecast (LEAR, live log) on
+  median MAE over the days both exist, by more than 5 EUR/MWh. Most of the nets' lead
+  over LEAR survives the evening inputs.
+
 ## Status addendum (2026-09-23, afternoon): scarcity inputs for the tree correction — registered
 
 **Why.** The best honest model (GBM on low-hinge gate-safe LEAR, `lear-gbm-de-…094701`)
