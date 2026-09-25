@@ -289,12 +289,12 @@ def load_history(seed_path: Path | None, log_path: Path | None) -> pd.DataFrame:
     The seed (backtest/replay quantiles, `seed_pit`) covers the time before go-live; the
     nets log wins wherever both exist.
     """
-    from pred_el_prices.production.site import read_log
+    from pred_el_prices.production.site import log_exists, read_log
 
     parts = []
     if seed_path is not None and Path(seed_path).exists():
         parts.append(pd.read_parquet(seed_path)[[*R_COLS, "q50"]])
-    if log_path is not None and Path(log_path).exists():
+    if log_path is not None and log_exists(log_path):
         log = read_log(log_path)
         parts.append(log.loc[log["kind"] == "h", [*R_COLS, "q50"]])
     if not parts:

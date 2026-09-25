@@ -1,10 +1,15 @@
 """Network forecast log and the v2 site JSON additions (pandas only, no torch).
 
-The log (`nets_log.parquet` next to the LEAR `forecast_log.parquet`) is append-only.
-Per delivery run it holds 24 hourly rows (kind "h": final percentiles q01..q99 plus the
-raw Vincentized percentiles r01..r99 that the PIT recalibration history needs) and 96
-quarter-hour rows (kind "qh": final percentiles only), all at UTC period starts, with
-the run's generated_utc and flags. The last row per (t, kind) stands, as in the LEAR log.
+The log is append-only, partitioned by month: `nets_log/YYYY-MM.parquet` next to the
+LEAR `forecast_log.parquet` (a run rewrites only its month, so the state repo's history
+grows linearly). Per delivery run it holds 24 hourly rows (kind "h": final percentiles
+q01..q99 plus the raw Vincentized percentiles r01..r99 that the PIT recalibration
+history needs) and 96 quarter-hour rows (kind "qh": final percentiles only), all at UTC
+period starts, with the run's generated_utc and flags (backfill=True: rows from
+`pep backfill-nets`, published as "replay"). The last row per (t, kind) stands, as in
+the LEAR log. A single-file log (`nets_log.parquet`, the first layout; backfill runs)
+is read as is; next to a partition directory it is split into partitions once and then
+left alone.
 """
 
 from pathlib import Path
@@ -20,24 +25,78 @@ R_COLS = [c.replace("q", "r") for c in Q_COLS]
 SITE_LEVELS = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 SITE_COLS = [f"q{lv:02d}" for lv in SITE_LEVELS]
 NETS_MODEL_LABEL = "24 networks (12 JSU + 12 quantile), recalibrated"
-LOG_NAME = "nets_log.parquet"
+LOG_DIR = "nets_log"  # monthly partitions
+LOG_NAME = "nets_log.parquet"  # single-file layout (legacy state, backfill outputs)
 SEED_NAME = "nets_pit_seed.parquet"  # PIT/median history before go-live (pep seed-nets-pit)
+DAYS_DIR = "days"  # per-delivery-day detail files for the site
 # the 15-minute MTU went live in SDAC on 2025-10-01; before it the cache is hourly
 QH_START = pd.Timestamp("2025-10-01", tz="UTC")
 
 
+def _single_file(path: Path) -> bool:
+    return Path(path).suffix == ".parquet"
+
+
+def _write_partitions(log_dir: Path, rows: pd.DataFrame) -> None:
+    log_dir.mkdir(parents=True, exist_ok=True)
+    for month, part in rows.groupby(rows.index.strftime("%Y-%m")):
+        p = log_dir / f"{month}.parquet"
+        if p.exists():
+            part = pd.concat([pd.read_parquet(p), part])
+        part.to_parquet(p)
+
+
+def write_log(log_dir: Path, log: pd.DataFrame) -> None:
+    """Write `log` as the partition set, replacing the partitions of its months."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    for month, part in log.groupby(log.index.strftime("%Y-%m")):
+        part.to_parquet(log_dir / f"{month}.parquet")
+
+
+def _migrate(log_dir: Path) -> None:
+    """Split a single-file log next to `log_dir` into partitions, once; the old file stays."""
+    legacy = log_dir.parent / LOG_NAME
+    if not legacy.exists() or (log_dir.exists() and any(log_dir.glob("*.parquet"))):
+        return
+    _write_partitions(log_dir, pd.read_parquet(legacy))
+    print(
+        f"NOTICE: {legacy} split into monthly partitions under {log_dir}; "
+        "the old file is left in place and no longer written"
+    )
+
+
+def log_exists(path: Path) -> bool:
+    path = Path(path)
+    if _single_file(path):
+        return path.exists()
+    return (path.exists() and any(path.glob("*.parquet"))) or (path.parent / LOG_NAME).exists()
+
+
 def read_log(path: Path) -> pd.DataFrame:
-    """Standing rows only: the last appended row per (t, kind)."""
-    log = pd.read_parquet(path)
+    """Standing rows only: the last appended row per (t, kind).
+
+    `path`: a partition directory (state layout) or a single parquet file.
+    """
+    path = Path(path)
+    if _single_file(path):
+        log = pd.read_parquet(path)
+    else:
+        _migrate(path)
+        log = pd.concat([pd.read_parquet(p) for p in sorted(path.glob("*.parquet"))])
     keep = ~pd.MultiIndex.from_arrays([log.index, log["kind"]]).duplicated(keep="last")
     return log[keep].sort_index()
 
 
 def append_log(path: Path, rows: pd.DataFrame) -> None:
-    if path.exists():
-        rows = pd.concat([pd.read_parquet(path), rows])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    rows.to_parquet(path)
+    path = Path(path)
+    if _single_file(path):
+        if path.exists():
+            rows = pd.concat([pd.read_parquet(path), rows])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rows.to_parquet(path)
+        return
+    _migrate(path)
+    _write_partitions(path, rows)
 
 
 def log_rows(
@@ -105,9 +164,18 @@ def _curve(rows: pd.DataFrame, actual: pd.Series) -> list[dict]:
     ]
 
 
-def latest_nets(log: pd.DataFrame, day: pd.Timestamp, prices, prices_qh) -> dict | None:
-    """The `nets` block of latest.json for delivery `day`, or None if the nets have none."""
-    rows = log[log.index.normalize() == day]
+def by_day(log: pd.DataFrame) -> dict:
+    """Log rows grouped per UTC delivery day (for the per-day blocks below)."""
+    return dict(iter(log.groupby(log.index.normalize())))
+
+
+def _replay(h: pd.DataFrame) -> dict:
+    """Provenance: rows written by `pep backfill-nets` are a replay, not a live forecast."""
+    return {"replay": True} if "backfill" in h and h["backfill"].eq(True).any() else {}
+
+
+def latest_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
+    """The `nets` block of latest.json from one day's log rows (None without hourly rows)."""
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
@@ -115,20 +183,30 @@ def latest_nets(log: pd.DataFrame, day: pd.Timestamp, prices, prices_qh) -> dict
         "model": NETS_MODEL_LABEL,
         "trained_through": str(h["trained_through"].iloc[0]),
         "generated_utc": str(h["generated_utc"].iloc[0]),
+        **_replay(h),
         "hours": _curve(h, prices),
         "quarters": _curve(qh, prices_qh),
     }
 
 
-def history_nets(log: pd.DataFrame, day: pd.Timestamp, prices, prices_qh) -> dict | None:
+def day_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
+    """The `nets` block of a day file: latest.json's block plus the day's scores."""
+    block = latest_nets(rows, prices, prices_qh)
+    if block is None:
+        return None
+    h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
+    return {**block, **day_scores(h, qh, prices.reindex(h.index), prices_qh.reindex(qh.index))}
+
+
+def history_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
     """The `nets` block of a history.json day: scores plus the q10/q50/q90 hourly curve."""
-    rows = log[log.index.normalize() == day]
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
     a_h, a_qh = prices.reindex(h.index), prices_qh.reindex(qh.index)
     return {
         **day_scores(h, qh, a_h, a_qh),
+        **_replay(h),
         "hours": [
             {"t": t.isoformat(), "q10": _r(q10), "q50": _r(q50), "q90": _r(q90), "actual": _r(x)}
             for t, q10, q50, q90, x in zip(h.index, h["q10"], h["q50"], h["q90"], a_h, strict=True)

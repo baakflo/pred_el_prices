@@ -8,10 +8,11 @@ runs at D's gate), and the same forecast_day() the daily job runs. The PIT histo
 the seed before `start` plus the backfill's own log as it grows, as it would have been
 live. Days without ENS features had no production forecast and are skipped.
 
-Output (<out>): nets_log.parquet, bundles/, own_res.parquet (per-day own RES, reused on
-reruns), summary.json, and, given the LEAR log/history, latest.json + history.json (v2).
-Rows are flagged backfill=True with the real generation time, so the site JSON marks
-them post-gate.
+Output (<out>): nets_log/ (monthly partitions; an older single nets_log.parquet there is
+migrated on first read), bundles/, own_res.parquet (per-day own RES, reused on reruns),
+summary.json, and, given the LEAR log/history, latest.json + history.json + days/ (v2).
+Rows are flagged backfill=True with the real generation time; the site JSON publishes
+them with "replay": true in every nets block.
 """
 
 import json
@@ -44,7 +45,7 @@ def run(
     out_dir.mkdir(parents=True, exist_ok=True)
     bundles = out_dir / "bundles"
     bundles.mkdir(exist_ok=True)
-    log_path = out_dir / nets_site.LOG_NAME
+    log_path = out_dir / nets_site.LOG_DIR
     first = pd.Timestamp(start, tz="UTC")
 
     # the seed may reach into the window (a backtest run does): keep only its past
@@ -59,7 +60,7 @@ def run(
     own_path = out_dir / "own_res.parquet"
     own_all = pd.read_parquet(own_path) if own_path.exists() else pd.DataFrame()
     done = set()
-    if log_path.exists():
+    if nets_site.log_exists(log_path):
         log = nets_site.read_log(log_path)
         done = set(log.index[log["kind"] == "h"].normalize())
 
@@ -107,20 +108,7 @@ def run(
 
     lear = None
     if lear_log is not None:
-        # the LEAR log up to `end`, so latest.json is the last backfilled day
-        lear_rows = pd.read_parquet(lear_log)
-        lear_rows = lear_rows[lear_rows.index < pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)]
-        lear = lear_rows["forecast"]
-    if lear is not None and len(lear):
-        lear_rows.to_parquet(out_dir / "forecast_log.parquet")
-        if lear_history is not None:
-            shutil.copyfile(lear_history, out_dir / "history.json")
-        write_site_json(
-            out_dir,
-            out_dir / "forecast_log.parquet",
-            prices,
-            nets_site.quarter_prices(cache_dir),
-        )
+        lear = build_site(log_path, lear_log, cache_dir, out_dir, lear_history, end, prices)
     summary = {
         "window": [start, end],
         "skipped_days": skipped,
@@ -139,6 +127,43 @@ def run(
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     return summary
+
+
+def build_site(
+    nets_log: Path,
+    lear_log: Path,
+    cache_dir: Path,
+    out_dir: Path,
+    history: Path | None = None,
+    end: str | None = None,
+    prices: pd.Series | None = None,
+) -> pd.Series | None:
+    """Site JSON (latest, history, days/) from an existing nets log + LEAR log + caches.
+
+    No networks run: this is how a backfill's outputs are (re)published. The nets log
+    (a single file or a partition directory) is written into `out_dir/nets_log/` unless
+    it already is that directory; the LEAR log is cut after `end` so latest.json is the
+    last day; `history` (a published history.json) is the base the history merges into.
+    Returns the LEAR forecast series used (None if the log is empty up to `end`).
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / nets_site.LOG_DIR
+    if Path(nets_log).resolve() != dest.resolve():
+        nets_site.write_log(dest, nets_site.read_log(nets_log))
+    rows = pd.read_parquet(lear_log)
+    if end is not None:
+        rows = rows[rows.index < pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)]
+    if rows.empty:
+        return None
+    rows.to_parquet(out_dir / "forecast_log.parquet")
+    if history is not None and Path(history).resolve() != (out_dir / "history.json").resolve():
+        shutil.copyfile(history, out_dir / "history.json")
+    if prices is None:
+        prices = site_prices(cache_dir)
+    write_site_json(
+        out_dir, out_dir / "forecast_log.parquet", prices, nets_site.quarter_prices(cache_dir)
+    )
+    return rows["forecast"]
 
 
 def scores(log: pd.DataFrame, prices: pd.Series, prices_qh: pd.Series, lear=None) -> dict:

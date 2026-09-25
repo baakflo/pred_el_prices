@@ -1,9 +1,11 @@
 """Site data contract v2: the nets block next to the v1 (LEAR) fields (synthetic only)."""
 
 import json
+import os
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from pred_el_prices.daily_forecast import nets_step, write_site_json
 from pred_el_prices.production import site
@@ -18,7 +20,7 @@ def _lear_log(days=3, start="2026-08-01", generated="2026-08-02T09:00:00+00:00")
     return df
 
 
-def _nets_log(lear: pd.DataFrame, days) -> pd.DataFrame:
+def _nets_log(lear: pd.DataFrame, days, backfill: bool = False) -> pd.DataFrame:
     parts = []
     for day in days:
         f = lear.loc[lear.index.normalize() == pd.Timestamp(day, tz="UTC"), "forecast"]
@@ -28,15 +30,25 @@ def _nets_log(lear: pd.DataFrame, days) -> pd.DataFrame:
             pd.date_range(f.index[0], periods=96, freq="15min"), method="ffill"
         )
         flags = {"trained_through": "2026-07-25", "recal_days": 300, "shaped": True}
+        if backfill:
+            flags["backfill"] = True
         parts.append(site.log_rows(hourly, quarters, flags, "2026-07-31T09:10:00+00:00"))
     return pd.concat(parts)
 
 
-def _write(tmp_path, nets_days=("2026-08-01", "2026-08-02", "2026-08-03")):
+def _prices(lear, n_hours=48):
+    prices = (lear["forecast"] + 5.0).iloc[:n_hours]
+    prices_qh = prices.reindex(
+        pd.date_range(prices.index[0], periods=len(prices) * 4, freq="15min"), method="ffill"
+    )
+    return prices, prices_qh
+
+
+def _write(tmp_path, nets_days=("2026-08-01", "2026-08-02", "2026-08-03"), backfill=False):
     lear = _lear_log()
     lear.to_parquet(tmp_path / "forecast_log.parquet")
     if nets_days:
-        site.append_log(tmp_path / site.LOG_NAME, _nets_log(lear, nets_days))
+        site.append_log(tmp_path / site.LOG_DIR, _nets_log(lear, nets_days, backfill))
     prices = (lear["forecast"] + 5.0).iloc[:48]  # the third day is tomorrow
     prices_qh = prices.reindex(
         pd.date_range(prices.index[0], periods=len(prices) * 4, freq="15min"), method="ffill"
@@ -102,7 +114,7 @@ def test_without_a_nets_log_v1_is_unchanged(tmp_path):
 
 def test_published_nets_survive_a_nets_log_loss(tmp_path):
     _write(tmp_path)
-    (tmp_path / site.LOG_NAME).rename(tmp_path / "gone.parquet")
+    (tmp_path / site.LOG_DIR).rename(tmp_path / "gone")
     _, history = _write(tmp_path, nets_days=())
     assert all(d["nets"]["mae"] == 5.0 for d in history["days"])
 
@@ -115,7 +127,7 @@ def test_nets_step_failure_is_contained(tmp_path, capsys):
     )  # fmt: skip
     assert ok is False
     assert "nets step failed" in capsys.readouterr().out
-    assert not (tmp_path / site.LOG_NAME).exists()
+    assert not site.log_exists(tmp_path / site.LOG_DIR)
 
 
 def test_log_keeps_the_last_run_per_period(tmp_path):
@@ -124,8 +136,135 @@ def test_log_keeps_the_last_run_per_period(tmp_path):
     later = rows.copy()
     later[site.Q_COLS] += 1.0
     later["generated_utc"] = "2026-07-31T09:50:00+00:00"
-    site.append_log(tmp_path / "l.parquet", rows)
-    site.append_log(tmp_path / "l.parquet", later)
-    log = site.read_log(tmp_path / "l.parquet")
-    assert len(log) == 24 + 96
-    assert (log["generated_utc"] == "2026-07-31T09:50:00+00:00").all()
+    for path in (tmp_path / "l.parquet", tmp_path / site.LOG_DIR):
+        site.append_log(path, rows)
+        site.append_log(path, later)
+        log = site.read_log(path)
+        assert len(log) == 24 + 96
+        assert (log["generated_utc"] == "2026-07-31T09:50:00+00:00").all()
+
+
+# ------------------------------------------------------------------ partitioned log
+
+
+def test_log_is_partitioned_by_month(tmp_path):
+    lear = _lear_log(days=3, start="2026-08-30")
+    site.append_log(tmp_path / site.LOG_DIR, _nets_log(lear, ["2026-08-30", "2026-08-31"]))
+    site.append_log(tmp_path / site.LOG_DIR, _nets_log(lear, ["2026-09-01"]))
+    parts = sorted(p.name for p in (tmp_path / site.LOG_DIR).glob("*.parquet"))
+    assert parts == ["2026-08.parquet", "2026-09.parquet"]
+    assert len(pd.read_parquet(tmp_path / site.LOG_DIR / "2026-09.parquet")) == 120
+    assert len(site.read_log(tmp_path / site.LOG_DIR)) == 3 * 120
+
+
+def test_a_single_file_log_is_migrated_once_and_left_in_place(tmp_path, capsys):
+    lear = _lear_log(days=2, start="2026-08-31")
+    old = _nets_log(lear, ["2026-08-31", "2026-09-01"])
+    old.to_parquet(tmp_path / site.LOG_NAME)
+    log_dir = tmp_path / site.LOG_DIR
+    assert site.log_exists(log_dir)
+    assert len(site.read_log(log_dir)) == 240
+    assert "NOTICE" in capsys.readouterr().out
+    assert len(list(log_dir.glob("*.parquet"))) == 2
+    # new runs go to the partitions only; the old file stays as it was
+    site.append_log(log_dir, _nets_log(_lear_log(1, "2026-09-02"), ["2026-09-02"]))
+    assert len(site.read_log(log_dir)) == 360
+    assert len(pd.read_parquet(tmp_path / site.LOG_NAME)) == 240
+    assert "NOTICE" not in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ replay flag
+
+
+def test_replayed_rows_are_flagged_everywhere(tmp_path):
+    latest, history = _write(tmp_path, backfill=True)
+    assert latest["nets"]["replay"] is True
+    assert all(d["nets"]["replay"] is True for d in history["days"])
+    day = json.loads((tmp_path / "days" / "2026-08-01.json").read_text(encoding="utf-8"))
+    assert day["nets"]["replay"] is True
+
+
+def test_live_rows_carry_no_replay_flag(tmp_path):
+    latest, history = _write(tmp_path)
+    assert "replay" not in latest["nets"]
+    assert all("replay" not in d["nets"] for d in history["days"])
+
+
+# ------------------------------------------------------------------ day files
+
+
+def test_day_files_mirror_latest_with_scores(tmp_path):
+    latest, history = _write(tmp_path)
+    files = sorted(p.name for p in (tmp_path / "days").glob("*.json"))
+    assert files == ["2026-08-01.json", "2026-08-02.json", "2026-08-03.json"]
+    today = json.loads((tmp_path / "days" / "2026-08-03.json").read_text(encoding="utf-8"))
+    # the latest day's file is latest.json plus (still empty) scores
+    for key in ("delivery_day", "hours", "levels", "schema", "pre_gate", "weather_vintage"):
+        assert today[key] == latest[key]
+    assert today["nets"]["quarters"] == latest["nets"]["quarters"]
+    assert today["mae"] is None and today["nets"]["mae"] is None
+    past = json.loads((tmp_path / "days" / "2026-08-01.json").read_text(encoding="utf-8"))
+    entry = history["days"][0]
+    assert past["mae"] == entry["mae"] == 5.0
+    for k in ("mae", "pinball", "cov80", "mae_qh", "pinball_qh"):
+        assert past["nets"][k] == entry["nets"][k]
+    assert len(past["nets"]["hours"]) == 24 and len(past["nets"]["quarters"]) == 96
+    assert past["nets"]["hours"][0]["actual"] is not None
+
+
+def test_day_files_are_rewritten_only_when_they_change(tmp_path):
+    _write(tmp_path)
+    days = tmp_path / "days"
+    stamps = {p.name: p.stat().st_mtime_ns for p in days.glob("*.json")}
+    before = (days / "2026-08-03.json").read_text(encoding="utf-8")
+    lear = pd.read_parquet(tmp_path / "forecast_log.parquet")
+    prices, prices_qh = _prices(lear, 72)  # the auction result for 08-03 is in
+    for p in days.glob("*.json"):  # backdate, so any rewrite shows in the mtime
+        os.utime(p, ns=(stamps[p.name] - 10**9, stamps[p.name] - 10**9))
+    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh)
+    after = {p.name: p.stat().st_mtime_ns for p in days.glob("*.json")}
+    assert after["2026-08-01.json"] == stamps["2026-08-01.json"] - 10**9  # untouched
+    assert (days / "2026-08-03.json").read_text(encoding="utf-8") != before
+    today = json.loads((days / "2026-08-03.json").read_text(encoding="utf-8"))
+    assert today["mae"] == 5.0 and today["nets"]["mae_qh"] == 5.0
+
+
+def test_day_files_cover_history_only_days_and_are_never_deleted(tmp_path):
+    (tmp_path / "days").mkdir()
+    (tmp_path / "days" / "2026-01-01.json").write_text("{}", encoding="utf-8")
+    curve = [{"t": "2026-07-28T00:00:00+00:00", "forecast": 1.0, "actual": 2.0}]
+    entry = {"day": "2026-07-28", "mae": 1.0, "post_gate": True, "hours": curve}
+    (tmp_path / "history.json").write_text(json.dumps({"days": [entry]}), encoding="utf-8")
+    _write(tmp_path)
+    old = json.loads((tmp_path / "days" / "2026-07-28.json").read_text(encoding="utf-8"))
+    assert old["hours"] == curve and old["mae"] == 1.0 and old["pre_gate"] is False
+    assert "nets" not in old
+    assert (tmp_path / "days" / "2026-01-01.json").exists()
+
+
+def test_build_site_rebuilds_from_existing_logs(tmp_path):
+    pytest.importorskip("torch")  # the backfill module loads the network code
+    from pred_el_prices.pipeline import cache
+    from pred_el_prices.production.backfill import build_site
+
+    lear = _lear_log()
+    src = tmp_path / "src"
+    src.mkdir()
+    lear.to_parquet(src / "forecast_log.parquet")
+    _nets_log(lear, ["2026-08-01", "2026-08-02", "2026-08-03"], True).to_parquet(
+        src / site.LOG_NAME
+    )
+    prices, _ = _prices(lear, 72)
+    cache.upsert(tmp_path / "cache", "entsoe/day_ahead_prices", prices.to_frame("price_eur_mwh"))
+    out = tmp_path / "site"
+    build_site(src / site.LOG_NAME, src / "forecast_log.parquet", tmp_path / "cache", out,
+               end="2026-08-02")  # fmt: skip
+    latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
+    assert latest["delivery_day"] == "2026-08-02" and latest["nets"]["replay"] is True
+    assert sorted(p.name for p in (out / "days").glob("*.json")) == [
+        "2026-08-01.json", "2026-08-02.json", "2026-08-03.json",
+    ]  # fmt: skip
+    assert len(list((out / site.LOG_DIR).glob("*.parquet"))) == 1
+    build_site(src / site.LOG_NAME, src / "forecast_log.parquet", tmp_path / "cache", out,
+               end="2026-08-02")  # rerun: partitions replaced, not doubled  # fmt: skip
+    assert len(pd.read_parquet(out / site.LOG_DIR / "2026-08.parquet")) == 3 * 120

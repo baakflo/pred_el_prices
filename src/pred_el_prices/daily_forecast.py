@@ -284,16 +284,16 @@ def lear_forecast(
 def write_site_json(
     out_dir: Path, log_path: Path, prices: pd.Series, prices_qh: pd.Series | None = None
 ) -> None:
-    """Derive latest.json and history.json from the forecast log + known prices.
+    """Derive latest.json, history.json and days/*.json from the logs + known prices.
 
-    Site contract v2 (docs/production_v2.md): the v1 fields carry LEAR; when a
-    network log (`nets_log.parquet` in `out_dir`) covers a day, a `nets` block is
-    added to it. `prices_qh`: 15-minute clearing prices for the quarter-hour actuals.
+    Site contract v2 (docs/production_v2.md): the v1 fields carry LEAR; when the
+    network log (`nets_log/` in `out_dir`) covers a day, a `nets` block is added to
+    it. `prices_qh`: 15-minute clearing prices for the quarter-hour actuals.
     """
     from pred_el_prices.production import site as nets_site
 
-    nets_path = out_dir / nets_site.LOG_NAME
-    nets_log = nets_site.read_log(nets_path) if nets_path.exists() else None
+    nets_path = out_dir / nets_site.LOG_DIR
+    nets_log = nets_site.read_log(nets_path) if nets_site.log_exists(nets_path) else None
     if prices_qh is None:
         prices_qh = pd.Series(dtype=float, index=pd.DatetimeIndex([], tz="UTC"))
     log = pd.read_parquet(log_path)
@@ -301,51 +301,21 @@ def write_site_json(
     # stay in the append-only log, the LAST appended row per hour stands.
     log = log[~log.index.duplicated(keep="last")].sort_index()
     latest_day = log.index.normalize().max()
-    hours = log.loc[log.index.normalize() == latest_day]
-    actuals = prices.reindex(hours.index)
+    lear_days = dict(iter(log.groupby(log.index.normalize())))
+    nets_days = nets_site.by_day(nets_log) if nets_log is not None else {}
+    empty = pd.DataFrame(columns=["kind"])
 
     def flag(rows: pd.DataFrame, col: str) -> bool:
         return bool(rows.get(col, pd.Series(False, index=rows.index)).fillna(False).any())
 
-    # Honesty flags derived per run, not hardcoded: which weather vintage fed
-    # the RES forecast, and whether generation actually beat the auction gate
-    # (12:00 Europe/Berlin on D-1). Rows logged before 2026-08-27 lack the
-    # vintage column — those were all primary-vintage mornings.
-    vintage = hours["weather_vintage"].iloc[0] if "weather_vintage" in hours.columns else "00Z"
-    if not isinstance(vintage, str):
-        vintage = "00Z"
-    gate = pd.Timestamp(f"{latest_day - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
-    pre_gate = pd.Timestamp(hours["generated_utc"].iloc[0]) <= gate
-    is_evening = flag(hours, "evening")
-    is_surrogate = flag(hours, "load_surrogate")
-    note = f"{NOTE_GATE_OK if pre_gate else NOTE_GATE_MISSED} "
-    note += NOTE_EVENING if is_evening else NOTE_RES[vintage]
-    if is_surrogate and not is_evening:
-        note += f" {NOTE_LOAD_SURROGATE}"
     latest = {
-        "generated_utc": hours["generated_utc"].iloc[0],
-        "delivery_day": f"{latest_day:%Y-%m-%d}",
-        "model": MODEL_LABEL,
-        "pre_gate": bool(pre_gate),
-        "weather_vintage": vintage,
-        **({"evening": True} if is_evening else {}),
-        **({"load_surrogate": True} if is_surrogate else {}),
-        "note": note,
-        "hours": [
-            {
-                "t": t.isoformat(),
-                "forecast": round(float(f), 2),
-                "actual": None if pd.isna(a) else round(float(a), 2),
-            }
-            for t, f, a in zip(hours.index, hours["forecast"], actuals, strict=True)
-        ],
+        **_lear_day(latest_day, lear_days[latest_day], prices),
         "schema": 2,
         "levels": nets_site.SITE_LEVELS,
     }
-    if nets_log is not None:
-        nets_latest = nets_site.latest_nets(nets_log, latest_day, prices, prices_qh)
-        if nets_latest is not None:
-            latest["nets"] = nets_latest
+    nets_latest = nets_site.latest_nets(nets_days.get(latest_day, empty), prices, prices_qh)
+    if nets_latest is not None:
+        latest["nets"] = nets_latest
 
     err = (log["forecast"] - prices.reindex(log.index)).abs()
     daily = err.groupby(err.index.normalize()).agg(["mean", "count"])
@@ -406,8 +376,10 @@ def write_site_json(
             post_gate.add(f"{day:%Y-%m-%d}")
     history_path = out_dir / "history.json"
     published_nets: dict[str, dict] = {}
+    published: dict[str, dict] = {}
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
+            published[entry["day"]] = entry
             if "nets" in entry:
                 published_nets[entry["day"]] = entry["nets"]
             if entry["day"] not in days:
@@ -427,10 +399,8 @@ def write_site_json(
 
     def nets_for(d: str) -> dict:
         # the nets log wins; a published block survives a log loss like the curves do
-        block = None
-        if nets_log is not None:
-            block = nets_site.history_nets(nets_log, pd.Timestamp(d, tz="UTC"), prices, prices_qh)
-        block = block or published_nets.get(d)
+        rows = nets_days.get(pd.Timestamp(d, tz="UTC"), empty)
+        block = nets_site.history_nets(rows, prices, prices_qh) or published_nets.get(d)
         return {"nets": block} if block else {}
 
     history = {
@@ -451,6 +421,114 @@ def write_site_json(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "latest.json").write_text(json.dumps(latest, indent=1), encoding="utf-8")
     (out_dir / "history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
+    _write_day_files(
+        out_dir, lear_days, nets_days, published, post_gate, day_flags, prices, prices_qh
+    )
+
+
+def _lear_day(day: pd.Timestamp, hours: pd.DataFrame, prices: pd.Series) -> dict:
+    """The v1 fields (LEAR) for one delivery day from its standing log rows."""
+    actuals = prices.reindex(hours.index)
+
+    def flag(col: str) -> bool:
+        return bool(hours.get(col, pd.Series(False, index=hours.index)).fillna(False).any())
+
+    # Honesty flags derived per run, not hardcoded: which weather vintage fed
+    # the RES forecast, and whether generation actually beat the auction gate
+    # (12:00 Europe/Berlin on D-1). Rows logged before 2026-08-27 lack the
+    # vintage column — those were all primary-vintage mornings.
+    vintage = hours["weather_vintage"].iloc[0] if "weather_vintage" in hours.columns else "00Z"
+    if not isinstance(vintage, str):
+        vintage = "00Z"
+    gate = pd.Timestamp(f"{day - pd.Timedelta(days=1):%Y-%m-%d} 12:00", tz="Europe/Berlin")
+    pre_gate = pd.Timestamp(hours["generated_utc"].iloc[0]) <= gate
+    is_evening = flag("evening")
+    is_surrogate = flag("load_surrogate")
+    note = f"{NOTE_GATE_OK if pre_gate else NOTE_GATE_MISSED} "
+    note += NOTE_EVENING if is_evening else NOTE_RES[vintage]
+    if is_surrogate and not is_evening:
+        note += f" {NOTE_LOAD_SURROGATE}"
+    return {
+        "generated_utc": hours["generated_utc"].iloc[0],
+        "delivery_day": f"{day:%Y-%m-%d}",
+        "model": MODEL_LABEL,
+        "pre_gate": bool(pre_gate),
+        "weather_vintage": vintage,
+        **({"evening": True} if is_evening else {}),
+        **({"load_surrogate": True} if is_surrogate else {}),
+        "note": note,
+        "hours": [
+            {
+                "t": t.isoformat(),
+                "forecast": round(float(f), 2),
+                "actual": None if pd.isna(a) else round(float(a), 2),
+            }
+            for t, f, a in zip(hours.index, hours["forecast"], actuals, strict=True)
+        ],
+    }
+
+
+def _write_day_files(
+    out_dir: Path,
+    lear_days: dict,
+    nets_days: dict,
+    published: dict[str, dict],
+    post_gate: set[str],
+    day_flags: dict[str, dict],
+    prices: pd.Series,
+    prices_qh: pd.Series,
+) -> int:
+    """days/YYYY-MM-DD.json: every delivery day in the detail latest.json has, plus scores.
+
+    Sources per day: the LEAR log rows (else the published history curve, for days
+    lost to a log reseed) and the nets log rows. A file is rewritten only when its
+    content changed (new actuals, scores); files are never deleted. Returns the number
+    of files written.
+    """
+    from pred_el_prices.production import site as nets_site
+
+    days_dir = out_dir / nets_site.DAYS_DIR
+    days_dir.mkdir(parents=True, exist_ok=True)
+    keys = {f"{d:%Y-%m-%d}" for d in [*lear_days, *nets_days]}
+    keys |= {d for d, e in published.items() if "hours" in e}
+    written = 0
+    for key in sorted(keys):
+        day = pd.Timestamp(key, tz="UTC")
+        if day in lear_days:
+            rows = lear_days[day]
+            v1 = _lear_day(day, rows, prices)
+            err = (rows["forecast"] - prices.reindex(rows.index)).abs().dropna()
+            n = len(err)
+            score = {"mae": round(float(err.mean()), 2) if n else None}
+            if 0 < n < 24:
+                score["partial"] = n
+        elif key in published and "hours" in published[key]:
+            entry = published[key]
+            v1 = {
+                "delivery_day": key,
+                "model": MODEL_LABEL,
+                "pre_gate": key not in post_gate,
+                **day_flags.get(key, {}),
+                "hours": entry["hours"],
+            }
+            score = {
+                "mae": entry.get("mae"),
+                **({"partial": entry["partial"]} if "partial" in entry else {}),
+            }
+        else:
+            v1, score = {"delivery_day": key}, {"mae": None}
+        payload = {**v1, "schema": 2, "levels": nets_site.SITE_LEVELS, **score}
+        if day in nets_days:
+            block = nets_site.day_nets(nets_days[day], prices, prices_qh)
+            if block is not None:
+                payload["nets"] = block
+        text = json.dumps(payload, separators=(",", ":"))
+        path = days_dir / f"{key}.json"
+        if path.exists() and path.read_text(encoding="utf-8") == text:
+            continue
+        path.write_text(text, encoding="utf-8")
+        written += 1
+    return written
 
 
 def backfill_history(out_dir: Path, run_dirs: list[Path], start: str, end: str) -> int:
@@ -591,10 +669,10 @@ def refresh_fuels(cache_dir: Path) -> None:
 def nets_logged(out_dir: Path, delivery: pd.Timestamp) -> bool:
     from pred_el_prices.production import site as nets_site
 
-    path = out_dir / nets_site.LOG_NAME
-    if not path.exists():
+    path = out_dir / nets_site.LOG_DIR
+    if not nets_site.log_exists(path):
         return False
-    log = pd.read_parquet(path, columns=["kind"])
+    log = nets_site.read_log(path)
     return bool(((log.index.normalize() == delivery) & (log["kind"] == "h")).any())
 
 
@@ -624,7 +702,7 @@ def nets_step(
         networks, meta = load_bundle(bundle_path)
         if res_parts is None:
             res_parts = own_res_parts(features, dataset, cache_dir, delivery)
-        log_path = out_dir / nets_site.LOG_NAME
+        log_path = out_dir / nets_site.LOG_DIR
         history = nets.load_history(out_dir / nets_site.SEED_NAME, log_path)
         hourly, quarters, flags = nets.forecast_day(
             networks, meta, delivery, dataset, cache_dir, res_parts, history, prices,

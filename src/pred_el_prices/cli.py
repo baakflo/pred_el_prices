@@ -271,6 +271,17 @@ def main() -> None:
     bn.add_argument("--lear-history", type=Path, default=None, help="Published history.json")
     bn.add_argument("--n-jobs", type=int, default=-1)
 
+    bs = sub.add_parser(
+        "build-site",
+        help="Rebuild site JSON (latest, history, days/) from existing nets + LEAR logs",
+    )
+    bs.add_argument("--nets-log", type=Path, required=True, help="nets_log.parquet or nets_log/")
+    bs.add_argument("--lear-log", type=Path, required=True, help="LEAR forecast_log.parquet")
+    bs.add_argument("--history", type=Path, default=None, help="Published history.json base")
+    bs.add_argument("--end", default=None, help="Last delivery day for latest.json (UTC)")
+    bs.add_argument("--cache-dir", type=Path, default=Path("data/cache"))
+    bs.add_argument("--out", type=Path, required=True)
+
     bf = sub.add_parser(
         "backfill-history",
         help="Fill curve-less site history days from backtest runs (flagged post_gate)",
@@ -498,6 +509,12 @@ def main() -> None:
         )  # fmt: skip
         print(json.dumps(summary["scores"], indent=1))
         print(f"backfill-nets: {time.perf_counter() - t0:.0f} s")
+    elif args.command == "build-site":
+        from pred_el_prices.production.backfill import build_site
+
+        build_site(args.nets_log, args.lear_log, args.cache_dir, args.out, args.history, args.end)
+        n_days = len(list((args.out / "days").glob("*.json")))
+        print(f"site JSON written to {args.out} ({n_days} day files)")
     elif args.command == "backfill-history":
         from pred_el_prices.daily_forecast import backfill_history
 
