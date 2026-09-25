@@ -135,24 +135,30 @@ def _r(x) -> float | None:
     return None if x is None or pd.isna(x) else round(float(x), 2)
 
 
+# central bands scored for coverage: name -> (lower, upper) percentile column index
+COVERAGE = {"cov80": (9, 89), "cov90": (4, 94), "cov98": (0, 98)}
+# percentiles kept per hour in history.json (the tails show spikes inside the range)
+HISTORY_LEVELS = [1, 5, 10, 50, 90, 95, 99]
+
+
 def day_scores(hours: pd.DataFrame, quarters: pd.DataFrame, a_h, a_qh) -> dict:
-    """mae (median), pinball (mean over 99 levels), cov80, and the _qh twins; hours with
-    an actual only (None where no hour is scored yet)."""
+    """mae (median), pinball (mean over 99 levels), cov80/cov90/cov98 (share inside
+    [q10, q90], [q05, q95], [q01, q99]) and the _qh twins on quarter-hours; periods
+    with an actual only (None where nothing is scored yet)."""
     out = {}
     for suffix, rows, a in (("", hours, a_h), ("_qh", quarters, a_qh)):
         a = pd.Series(a, index=rows.index, dtype=float)
         ok = a.notna().to_numpy()
+        names = ["mae", "pinball", *COVERAGE]
         if not ok.any():
-            out |= {f"mae{suffix}": None, f"pinball{suffix}": None}
-            if not suffix:
-                out["cov80"] = None
+            out |= {f"{n}{suffix}": None for n in names}
             continue
         q = rows[Q_COLS].to_numpy(dtype=float)[ok]
         av = a.to_numpy()[ok]
         out[f"mae{suffix}"] = _r(np.abs(q[:, 49] - av).mean())
         out[f"pinball{suffix}"] = _r(_pinball_rows(q, av).mean())
-        if not suffix:
-            out["cov80"] = _r(((av >= q[:, 9]) & (av <= q[:, 89])).mean())
+        for name, (lo, hi) in COVERAGE.items():
+            out[f"{name}{suffix}"] = _r(((av >= q[:, lo]) & (av <= q[:, hi])).mean())
     return out
 
 
@@ -199,16 +205,22 @@ def day_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
 
 
 def history_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
-    """The `nets` block of a history.json day: scores plus the q10/q50/q90 hourly curve."""
+    """The `nets` block of a history.json day: scores plus the hourly curve at
+    HISTORY_LEVELS (keys q1, q5, q10, q50, q90, q95, q99)."""
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
     a_h, a_qh = prices.reindex(h.index), prices_qh.reindex(qh.index)
+    cols = [f"q{lv:02d}" for lv in HISTORY_LEVELS]
     return {
         **day_scores(h, qh, a_h, a_qh),
         **_replay(h),
         "hours": [
-            {"t": t.isoformat(), "q10": _r(q10), "q50": _r(q50), "q90": _r(q90), "actual": _r(x)}
-            for t, q10, q50, q90, x in zip(h.index, h["q10"], h["q50"], h["q90"], a_h, strict=True)
+            {
+                "t": t.isoformat(),
+                **{f"q{lv}": _r(v) for lv, v in zip(HISTORY_LEVELS, vals, strict=True)},
+                "actual": _r(x),
+            }
+            for t, vals, x in zip(h.index, h[cols].to_numpy(), a_h, strict=True)
         ],
     }

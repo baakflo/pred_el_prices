@@ -67,13 +67,19 @@ nets block: latest, history days and day files.
 `history.json` days (last 60 scored days), v1 fields = LEAR, plus
 ```json
 "nets": {
-  "mae": 0.0, "pinball": 0.0, "cov80": 0.0, "mae_qh": 0.0, "pinball_qh": 0.0,
-  "hours": [{"t": "...", "q10": 0.0, "q50": 0.0, "q90": 0.0, "actual": 0.0}]
+  "mae": 0.0, "pinball": 0.0, "cov80": 0.0, "cov90": 0.0, "cov98": 0.0,
+  "mae_qh": 0.0, "pinball_qh": 0.0, "cov80_qh": 0.0, "cov90_qh": 0.0, "cov98_qh": 0.0,
+  "replay": true,
+  "hours": [{"t": "...", "q1": 0.0, "q5": 0.0, "q10": 0.0, "q50": 0.0,
+             "q90": 0.0, "q95": 0.0, "q99": 0.0, "actual": 0.0}]
 }
 ```
-`pinball` = mean over the 99 percentiles (hourly), `cov80` = share of hours
-inside [q10, q90], `_qh` = the same on quarter-hours. LEAR's `mae` stays the
-v1 `mae`. Days before go-live carry no `nets` key.
+`pinball` = mean over the 99 percentiles (hourly). `cov80`, `cov90` and `cov98` are the
+shares of hours inside [q10, q90], [q5, q95] and [q1, q99]. `_qh` is the same on
+quarter-hours. The outer tails are kept per hour so a spike can be seen inside (or
+outside) the predicted range. LEAR's `mae` stays the v1 `mae`. Days before go-live
+carry no `nets` key. Size on the 60-day replay: about 455 KB as written (indent 1), or
+278 KB compact.
 
 `days/YYYY-MM-DD.json`: one per delivery day with a forecast (LEAR log, nets log, or
 a curve in the published history), compact JSON, about 16 KB with nets. The same
@@ -89,10 +95,13 @@ structure as `latest.json` for that day, plus the day's scores:
     "model": "...", "trained_through": "YYYY-MM-DD", "generated_utc": "...", "replay": true,
     "hours": [{"t": "...", "q": [9 values], "actual": 0.0}],
     "quarters": [{"t": "...", "q": [9 values], "actual": 0.0}],
-    "mae": 0.0, "pinball": 0.0, "cov80": 0.0, "mae_qh": 0.0, "pinball_qh": 0.0
+    "mae": 0.0, "pinball": 0.0, "cov80": 0.0, "cov90": 0.0, "cov98": 0.0,
+    "mae_qh": 0.0, "pinball_qh": 0.0, "cov80_qh": 0.0, "cov90_qh": 0.0, "cov98_qh": 0.0
   }
 }
 ```
+Every `q` array has all 9 `levels`, including the 1st and 99th percentiles, on every day
+(live or replayed).
 `mae` (LEAR) is null until an hour is scored, and `partial` is the number of scored hours
 while fewer than 24 are in. The nets scores are null until an hour or quarter-hour is
 scored. `evening`, `load_surrogate`, `partial` and `replay` appear only when they apply. A

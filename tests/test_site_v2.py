@@ -90,11 +90,23 @@ def test_history_days_carry_nets_scores(tmp_path):
         taus = np.arange(1, 100) / 100
         want = np.maximum(taus * diff, (taus - 1) * diff).mean()
         assert n["pinball"] == round(want, 2) and n["pinball_qh"] == round(want, 2)
-        assert n["cov80"] == 1.0
+        for k in ("cov80", "cov90", "cov98", "cov80_qh", "cov90_qh", "cov98_qh"):
+            assert n[k] == 1.0
         assert len(n["hours"]) == 24
         h = n["hours"][0]
-        assert set(h) == {"t", "q10", "q50", "q90", "actual"}
+        assert set(h) == {"t", "q1", "q5", "q10", "q50", "q90", "q95", "q99", "actual"}
         assert round(h["actual"] - h["q50"], 2) == 5.0
+        assert round(h["q99"] - h["q50"], 2) == 20.0 and round(h["q1"] - h["q50"], 2) == -20.0
+
+
+def test_coverage_bands_count_the_tails_separately():
+    idx = pd.date_range("2026-08-01", periods=4, freq="1h", tz="UTC")
+    rows = pd.DataFrame(np.tile(OFFSETS, (4, 1)), index=idx, columns=site.Q_COLS)
+    # 17 is outside [q10, q90] = +-16.3, inside [q05, q95] = +-18.4; 19 only inside +-20
+    a = pd.Series([0.0, 17.0, 19.0, 25.0], index=idx)
+    s = site.day_scores(rows, rows.iloc[:0], a, pd.Series(dtype=float))
+    assert (s["cov80"], s["cov90"], s["cov98"]) == (0.25, 0.5, 0.75)
+    assert s["cov98_qh"] is None and s["mae_qh"] is None
 
 
 def test_days_before_go_live_carry_no_nets_key(tmp_path):
