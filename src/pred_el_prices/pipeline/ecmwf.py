@@ -21,6 +21,7 @@ cells covering Germany, one Parquet per run.
 
 from __future__ import annotations
 
+import email.parser
 import json
 import os
 import random
@@ -164,13 +165,60 @@ def _wanted_ranges(index_text: str) -> list[list[int]]:
     return ranges
 
 
+# The ~280 wanted fields per step are scattered across a 6.6 GB file, so one
+# range per request meant ~280 paced requests per step (~200 s; ~40 min per
+# run). data.ecmwf.int answers multi-range requests (206 multipart/byteranges;
+# 2026-09-25: 10 requests, 65 s, byte-identical), cutting the request count
+# ~28x at the same pacing. S3 ignores multi-range (200 with the whole file)
+# and GCS rejects it (400), so a batch goes to data.ecmwf.int only, and any
+# failure falls back to the per-range path with its mirror/backoff logic.
+RANGES_PER_REQUEST = 30
+
+
+def _get_multi(path: str, ranges: list[list[int]]) -> list[bytes] | None:
+    """One multi-range request to the first mirror; None on anything unexpected."""
+    time.sleep(REQUEST_PACING_S)
+    spec = ",".join(f"{start}-{end - 1}" for start, end in ranges)
+    try:
+        resp = _session.get(
+            f"{MIRRORS[0]}/{path}", headers={"Range": f"bytes={spec}"}, timeout=180, stream=True
+        )
+    except requests.RequestException:
+        return None
+    ctype = resp.headers.get("Content-Type", "")
+    if resp.status_code != 206 or not ctype.startswith("multipart/byteranges"):
+        resp.close()  # never read a whole-file 200 body
+        return None
+    try:
+        msg = email.parser.BytesParser().parsebytes(
+            b"Content-Type: " + ctype.encode() + b"\r\n\r\n" + resp.content
+        )
+        parts = {}
+        for part in msg.get_payload():
+            first, last = part["Content-Range"].split()[1].split("/")[0].split("-")
+            parts[int(first)] = part.get_payload(decode=True)
+        chunks = [parts[start] for start, _ in ranges]
+    except (requests.RequestException, KeyError, ValueError, IndexError, AttributeError):
+        return None
+    if [len(c) for c in chunks] != [end - start for start, end in ranges]:
+        return None
+    return chunks
+
+
 def _fetch_step(run_date: date, model_path: str, step: int, run_hour: int = 0) -> bytes:
     index = _get(_step_path(run_date, model_path, step, "index", run_hour)).text
     grib_path = _step_path(run_date, model_path, step, "grib2", run_hour)
-    chunks = [
-        _get(grib_path, headers={"Range": f"bytes={start}-{end - 1}"}).content
-        for start, end in _wanted_ranges(index)
-    ]
+    ranges = _wanted_ranges(index)
+    chunks: list[bytes] = []
+    for i in range(0, len(ranges), RANGES_PER_REQUEST):
+        batch = ranges[i : i + RANGES_PER_REQUEST]
+        got = _get_multi(grib_path, batch) if len(batch) > 1 else None
+        if got is None:
+            got = [
+                _get(grib_path, headers={"Range": f"bytes={start}-{end - 1}"}).content
+                for start, end in batch
+            ]
+        chunks.extend(got)
     return b"".join(chunks)
 
 
