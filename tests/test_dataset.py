@@ -101,6 +101,21 @@ def test_residual_load_subtraction(synthetic_cache):
     assert df["residual_load_forecast_mw"].iloc[0] == 50000.0 - 10000.0 - 2000.0 - 5000.0
 
 
+def test_neighbour_load_columns_come_from_the_zone_caches(synthetic_cache):
+    # the networks read neighbour LOAD (pre-gate); a 15-min zone is averaged hourly
+    idx = pd.date_range("2024-01-01", periods=96 * 4, freq="15min", tz="UTC")
+    fr = pd.DataFrame({"Forecasted Load": np.tile([100.0, 200.0, 300.0, 400.0], 96)}, index=idx)
+    cache.upsert(synthetic_cache, "entsoe/FR/load_forecast", fr)
+    nl_idx = pd.date_range("2024-01-01", periods=96, freq="1h", tz="UTC")
+    cache.upsert(
+        synthetic_cache, "entsoe/NL/load_forecast", pd.DataFrame({"Forecasted Load": 7.0}, nl_idx)
+    )
+    df, _ = build_dataset(synthetic_cache)
+    assert (df["load_fr_mw"] == 250.0).all()
+    assert (df["load_nl_mw"] == 7.0).all()
+    assert "load_be_mw" not in df.columns  # no cache, no column
+
+
 def test_fuel_settlement_lagged_two_days(synthetic_cache):
     df, summary = build_dataset(synthetic_cache)
     assert summary["fuel_lag_days"] == 2

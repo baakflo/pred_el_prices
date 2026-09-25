@@ -458,6 +458,42 @@ def test_run_daily_refresh_only_fills_actuals_without_forecasting(tmp_path):
     assert all(h["actual"] is not None for h in latest["hours"])
 
 
+def test_neighbour_load_fetch_tops_up_seeded_zones_only(tmp_path, monkeypatch):
+    import requests
+
+    from pred_el_prices.daily_forecast import fetch_neighbour_loads
+    from pred_el_prices.pipeline import entsoe as entsoe_pipeline
+
+    idx = pd.date_range("2026-09-01", periods=24, freq="1h", tz="UTC")
+    for zone in ("FR", "NL", "PL"):
+        cache.upsert(
+            tmp_path, f"entsoe/{zone}/load_forecast", pd.DataFrame({"Forecasted Load": 1.0}, idx)
+        )
+    calls = []
+
+    def fake_backfill(client, datasets, start, end, cache_root, sleep_s=0.5, zone=None):
+        calls.append((zone, datasets))
+        if zone == "PL":
+            raise requests.ConnectionError("platform down")
+
+    monkeypatch.setattr(entsoe_pipeline, "backfill", fake_backfill)
+    done = fetch_neighbour_loads(object(), tmp_path, pd.Timestamp("2026-09-03", tz="UTC"))
+    # unseeded zones are skipped; the first failure (PL) ends the sweep
+    assert done == ["FR", "NL"]
+    assert calls == [("FR", ["load_forecast"]), ("NL", ["load_forecast"]), ("PL", ["load_forecast"])]
+
+
+def test_fuel_refresh_failure_is_not_fatal(tmp_path, monkeypatch):
+    from pred_el_prices.daily_forecast import refresh_fuels
+    from pred_el_prices.pipeline import fuels
+
+    def broken(*a, **k):
+        raise ValueError("yahoo changed its API again")
+
+    monkeypatch.setattr(fuels, "update_cache", broken)
+    refresh_fuels(tmp_path)  # must not raise
+
+
 def test_run_daily_refresh_only_without_log_is_a_noop(tmp_path):
     result = run_daily(
         cache_dir=tmp_path / "cache",

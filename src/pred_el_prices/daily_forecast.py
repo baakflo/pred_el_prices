@@ -494,6 +494,51 @@ def _refresh_fallback_prices(cache_dir: Path, end: pd.Timestamp) -> None:
         print(f"WARN: energy-charts price refresh failed ({e})")
 
 
+def fetch_neighbour_loads(client, cache_dir: Path, end: pd.Timestamp) -> list[str]:
+    """Best-effort top-up of the neighbour load forecasts (network inputs, pre-gate).
+
+    Each zone resumes from its cache tail. A zone without any cache is skipped:
+    seeding ~4 years x 9 zones is a one-off job (`pep fetch-entsoe --zones ...`),
+    not something to start inside a forecast slot. The first platform error ends
+    the sweep, so an outage costs one retry ladder, not nine.
+    """
+    import requests
+
+    from pred_el_prices.features.dataset import NEIGHBOUR_ZONES
+    from pred_el_prices.pipeline import entsoe as entsoe_pipeline
+
+    done = []
+    for zone in NEIGHBOUR_ZONES:
+        if cache.last_timestamp(cache_dir, f"entsoe/{zone}/load_forecast") is None:
+            print(f"WARN: no {zone} load-forecast cache to top up; seed it first")
+            continue
+        try:
+            entsoe_pipeline.backfill(
+                client,
+                ["load_forecast"],
+                pd.Timestamp("2015-01-01", tz="UTC"),
+                end,
+                cache_dir,
+                zone=zone,
+            )
+        except requests.RequestException as e:
+            print(f"WARN: neighbour load refresh failed at {zone} ({e}); using cached data")
+            break
+        done.append(zone)
+    return done
+
+
+def refresh_fuels(cache_dir: Path) -> None:
+    """Best-effort top-up of the daily fuel settlements (network inputs, lagged 2 days)."""
+    try:
+        from pred_el_prices.pipeline import fuels
+
+        n = fuels.update_cache(cache_dir, pd.Timestamp("2015-01-01", tz="UTC"))
+        print(f"fuels_daily: {n} rows fetched")
+    except Exception as e:  # noqa: BLE001 - yfinance fails in assorted ways; cache carries on
+        print(f"WARN: fuel price refresh failed ({e}); using cached data")
+
+
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
     """Decide what a run does when `delivery` already has logged rows.
 
@@ -604,6 +649,7 @@ def run_daily(
         # days) the fetch must not kill the run — the caches carry enough
         # history to forecast, and whatever is genuinely missing fails its
         # own specific check further down instead of dying here.
+        entsoe_ok = True
         try:
             backfill(
                 client,
@@ -613,7 +659,12 @@ def run_daily(
                 cache_dir,
             )
         except requests.RequestException as e:
+            entsoe_ok = False
             print(f"WARN: ENTSO-E refresh failed ({e}); proceeding on cached data")
+        # network inputs; skipped when the platform just failed (no second ladder)
+        if entsoe_ok:
+            fetch_neighbour_loads(client, cache_dir, delivery + pd.Timedelta(days=1))
+        refresh_fuels(cache_dir)
         _refresh_fallback_prices(cache_dir, delivery + pd.Timedelta(days=1))
         update_cache(cache_dir)
         # Best-effort: a failure must not kill the run — the 12Z fallback
