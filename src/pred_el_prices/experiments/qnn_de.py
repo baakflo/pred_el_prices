@@ -40,7 +40,13 @@ def load_days(dataset_path: str, train_start: str, exog_extra: list[str], neighb
     forecasts; the wind/solar part publishes only at 18:00 D-1, so it is not
     available at the gate), "load" = summed neighbour load forecasts only (pre-gate).
     """
-    ds = pd.read_parquet(dataset_path)
+    return days_from_frame(pd.read_parquet(dataset_path), train_start, exog_extra, neighbours)
+
+
+def days_from_frame(
+    ds: pd.DataFrame, train_start: str, exog_extra: list[str], neighbours: str = "rl"
+):
+    """load_days on an in-memory dataset (the production path builds it from the caches)."""
     ds = ds[ds.index >= pd.Timestamp(train_start, tz="UTC")]
     frame = pd.DataFrame(index=ds.index)
     frame["price"] = ds[PRICE_COL]

@@ -121,6 +121,22 @@ def own_res_forecast(
     features: pd.DataFrame, dataset: pd.DataFrame, cache_dir: Path, delivery: pd.Timestamp
 ) -> pd.Series:
     """Train on all history before `delivery`, predict its 24 hours (aggregate MW)."""
+    return own_res_total(own_res_parts(features, dataset, cache_dir, delivery))
+
+
+def own_res_total(parts: pd.DataFrame) -> pd.Series:
+    """Aggregate MW of own_res_parts, summed in the same order as always."""
+    total = pd.Series(0.0, index=parts.index)
+    for target in RES_TARGETS:
+        total += parts[target]
+    return total
+
+
+def own_res_parts(
+    features: pd.DataFrame, dataset: pd.DataFrame, cache_dir: Path, delivery: pd.Timestamp
+) -> pd.DataFrame:
+    """own_res_forecast per target (MW, columns = RES_TARGETS): the 15-minute shape
+    model needs solar apart from wind."""
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
     if not delivery_hours.isin(features.index).all():
         raise RuntimeError(f"ENS features for delivery day {delivery:%Y-%m-%d} missing")
@@ -136,14 +152,14 @@ def own_res_forecast(
         x["doy"] = idx.dayofyear
         return x
 
-    total = pd.Series(0.0, index=delivery_hours)
+    parts = pd.DataFrame(index=delivery_hours)
     for target, cap_col in RES_TARGETS.items():
         cf = targets[target].loc[train_index] / capacity[cap_col].loc[train_index].values
         model = HistGradientBoostingRegressor(random_state=0)
         model.fit(design(train_index), cf)
         cf_pred = np.clip(model.predict(design(delivery_hours)), 0.0, None)
-        total += cf_pred * capacity[cap_col].loc[delivery_hours].values
-    return total
+        parts[target] = cf_pred * capacity[cap_col].loc[delivery_hours].values
+    return parts
 
 
 def load_surrogate_forecast(
