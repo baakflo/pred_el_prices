@@ -24,3 +24,15 @@ def energyforecast_token() -> str:
     if not token:
         raise RuntimeError(f"ENERGYFORECAST_TOKEN not set; expected it in {ENV_PATH}")
     return token
+
+
+def netztransparenz_credentials() -> tuple[str, str]:
+    # the names carry the "TRANZ" spelling as registered in .env and GitHub secrets
+    load_dotenv(ENV_PATH, encoding="utf-8-sig")
+    cid = os.environ.get("NETZTRANZPARENZ_CLIENT_ID", "")
+    secret = os.environ.get("NETZTRANZPARENZ_CLIENT_SECRET", "")
+    if not (cid and secret):
+        raise RuntimeError(
+            f"NETZTRANZPARENZ_CLIENT_ID/_SECRET not set; expected them in {ENV_PATH}"
+        )
+    return cid, secret

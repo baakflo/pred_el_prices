@@ -74,6 +74,14 @@ def main() -> None:
         "--archive-dir", type=Path, default=Path("data/archive/forecasts"), help="Output directory"
     )
 
+    ntsnap = sub.add_parser(
+        "archive-netztransparenz",
+        help="Snapshot tomorrow's TSO EEG marketing forecast (solar/wind) from netztransparenz.de",
+    )
+    ntsnap.add_argument(
+        "--archive-dir", type=Path, default=Path("data/archive/benchmarks"), help="Output directory"
+    )
+
     ecmwf = sub.add_parser(
         "backfill-ecmwf",
         help="Backfill ECMWF open-data ENS runs from the AWS archive (available from 2023-01-18)",
@@ -288,6 +296,21 @@ def main() -> None:
             print(f"::warning::entsoe-forecasts snapshot skipped ({e}); later slots retry")
         else:
             print(f"entsoe-forecasts: {written if written else 'nothing written'}")
+    elif args.command == "archive-netztransparenz":
+        import requests
+
+        from pred_el_prices.config import netztransparenz_credentials
+        from pred_el_prices.pipeline.netztransparenz import access_token, archive_snapshot
+
+        # best-effort like the ENTSO-E snapshot: later slots retry
+        try:
+            written = archive_snapshot(
+                args.archive_dir, access_token(*netztransparenz_credentials())
+            )
+        except requests.RequestException as e:
+            print(f"::warning::netztransparenz snapshot skipped ({e}); later slots retry")
+        else:
+            print(f"netztransparenz: {written if written else 'nothing written'}")
     elif args.command == "backfill-ecmwf":
         from pred_el_prices.pipeline.ecmwf import backfill
 
