@@ -13,7 +13,11 @@ from pred_el_prices.models.qnn import (
     QuantileMLP,
     dist_nll,
     dist_quantiles,
+    fit,
     fit_predict,
+    load_bundle,
+    predict,
+    save_bundle,
 )
 
 
@@ -174,6 +178,20 @@ class TestFit:
         # prices are N(50, 10): 10-90 span 25.6; noise inputs on 160 days widen it
         # (the quantile head gives ~56 here)
         assert 15 < np.median(out[..., 89] - out[..., 9]) < 70
+
+    @pytest.mark.parametrize("head", ["quantile", "jsu"])
+    def test_fit_save_load_predict_equals_fit_predict(self, head, tmp_path):
+        prices, exog, fuels, days = _days(120, seed=2)
+        x, y, _ = qnn_de.design(prices, exog, fuels, days)
+        cfg = QNNConfig(hidden=[32, 32], max_epochs=15, patience=5, head=head)
+        want = fit_predict(x[:-5], y[:-5], x[-5:], 7, cfg, seed=3)
+        net = fit(x[:-5], y[:-5], 7, cfg, seed=3)
+        save_bundle(tmp_path / "b.pt", [net], {"trained_through": "2024-04-01"})
+        nets, meta = load_bundle(tmp_path / "b.pt")
+        assert meta == {"trained_through": "2024-04-01"}
+        np.testing.assert_array_equal(predict(nets[0], x[-5:]), want)
+        with pytest.raises(ValueError):
+            predict(nets[0], x[-5:, 1:])
 
     def test_learns_a_shifted_median_and_sorted_output(self):
         prices, exog, fuels, days = _days(200, seed=1)

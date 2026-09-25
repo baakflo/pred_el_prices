@@ -146,6 +146,69 @@ def dist_quantiles(params: np.ndarray, dist: str, taus: np.ndarray = QUANTILES) 
     return loc + scale * np.sinh((u - gamma) / delta)
 
 
+@dataclass
+class FittedNet:
+    """One trained network plus everything needed to predict with it."""
+
+    config: QNNConfig
+    n_in: int
+    n_unscaled: int
+    state: dict  # model state_dict (tensors)
+    scaler_x: InvariantScaler
+    scaler_y: InvariantScaler
+
+    def _model(self) -> nn.Module:
+        if self.config.head == "quantile":
+            return QuantileMLP(self.n_in, self.config.hidden, self.config.dropout)
+        return DistMLP(self.n_in, self.config.hidden, self.config.dropout, self.config.head)
+
+    def to_dict(self) -> dict:
+        """Plain tensors and primitives only, so torch.load(weights_only=True) reads it."""
+
+        def t(a):
+            return torch.as_tensor(np.asarray(a, dtype=np.float64))
+
+        return {
+            "config": vars(self.config),
+            "n_in": self.n_in,
+            "n_unscaled": self.n_unscaled,
+            "state": self.state,
+            "scaler_x": {"median": t(self.scaler_x.median), "mad": t(self.scaler_x.mad)},
+            "scaler_y": {"median": t(self.scaler_y.median), "mad": t(self.scaler_y.mad)},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "FittedNet":
+        def scaler(s):
+            sc = InvariantScaler()
+            sc.median, sc.mad = s["median"].numpy(), s["mad"].numpy()
+            return sc
+
+        return cls(
+            QNNConfig(**d["config"]),
+            d["n_in"],
+            d["n_unscaled"],
+            d["state"],
+            scaler(d["scaler_x"]),
+            scaler(d["scaler_y"]),
+        )
+
+
+def save_bundle(path, nets: list[FittedNet], meta: dict) -> None:
+    """One file per ensemble; `meta` must hold primitives only (str, numbers, lists, dicts)."""
+    torch.save({"meta": meta, "nets": [n.to_dict() for n in nets]}, path)
+
+
+def load_bundle(path) -> tuple[list[FittedNet], dict]:
+    """Inverse of save_bundle. weights_only: a downloaded file cannot run code on load."""
+    d = torch.load(path, weights_only=True)
+    return [FittedNet.from_dict(n) for n in d["nets"]], d["meta"]
+
+
+def _scaled_x(x: np.ndarray, scaler_x: InvariantScaler, n_unscaled: int) -> np.ndarray:
+    return np.hstack([scaler_x.transform(x[:, :-n_unscaled]), x[:, -n_unscaled:]])
+
+
 def fit_predict(
     x_train: np.ndarray,
     y_train: np.ndarray,
@@ -159,18 +222,43 @@ def fit_predict(
     The last `n_unscaled` columns of x (dummies) bypass scaling. Early stopping
     on a random `val_share` of the training days restores the best epoch.
     """
+    return predict(fit(x_train, y_train, n_unscaled, config, seed), x_pred)
+
+
+def predict(net: FittedNet, x_pred: np.ndarray) -> np.ndarray:
+    """Percentiles (n_pred, 24, 99) EUR/MWh from a fitted network."""
+    if x_pred.shape[1] != net.n_in:
+        raise ValueError(f"x has {x_pred.shape[1]} columns, the network expects {net.n_in}")
+    model = net._model()
+    model.load_state_dict(net.state)
+    model.eval()
+    xp = torch.tensor(_scaled_x(x_pred, net.scaler_x, net.n_unscaled), dtype=torch.float32)
+    with torch.no_grad():
+        out = model(xp).numpy()  # (n_pred, 24, n_q) or parameters, scaled space
+    if net.config.head != "quantile":
+        out = dist_quantiles(out.astype(np.float64), net.config.head)
+    # inverse-transform hour by hour: the scaler is per hour column
+    n_pred, _, n_q = out.shape
+    flat = out.transpose(0, 2, 1).reshape(n_pred * n_q, 24)
+    return net.scaler_y.inverse_transform(flat).reshape(n_pred, n_q, 24).transpose(0, 2, 1)
+
+
+def fit(
+    x_train: np.ndarray,
+    y_train: np.ndarray,
+    n_unscaled: int,
+    config: QNNConfig,
+    seed: int,
+) -> FittedNet:
+    """Train one network (see fit_predict); returns the best epoch's weights and scalers."""
     torch.manual_seed(seed)
     rng = np.random.default_rng(seed)
 
     scaler_x = InvariantScaler().fit(x_train[:, :-n_unscaled])
     scaler_y = InvariantScaler().fit(y_train)
 
-    def _x(x):
-        return np.hstack([scaler_x.transform(x[:, :-n_unscaled]), x[:, -n_unscaled:]])
-
-    xs = torch.tensor(_x(x_train), dtype=torch.float32)
+    xs = torch.tensor(_scaled_x(x_train, scaler_x, n_unscaled), dtype=torch.float32)
     ys = torch.tensor(scaler_y.transform(y_train), dtype=torch.float32)
-    xp = torch.tensor(_x(x_pred), dtype=torch.float32)
     q = torch.tensor(QUANTILES, dtype=torch.float32)
 
     n = len(xs)
@@ -212,14 +300,4 @@ def fit_predict(
             if stale >= config.patience:
                 break
 
-    model.load_state_dict(best_state)
-    model.eval()
-    with torch.no_grad():
-        out = model(xp).numpy()  # (n_pred, 24, n_q) or parameters, scaled space
-    if config.head != "quantile":
-        out = dist_quantiles(out.astype(np.float64), config.head)
-    # inverse-transform hour by hour: the scaler is per hour column
-    n_pred, _, n_q = out.shape
-    flat = out.transpose(0, 2, 1).reshape(n_pred * n_q, 24)
-    back = scaler_y.inverse_transform(flat).reshape(n_pred, n_q, 24).transpose(0, 2, 1)
-    return back
+    return FittedNet(config, xs.shape[1], n_unscaled, best_state, scaler_x, scaler_y)
