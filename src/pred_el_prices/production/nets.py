@@ -410,8 +410,7 @@ def forecast_day(
     raw = predict_raw(nets, x, scale)
     q, n_days = recalibrate_day(raw, history, prices, delivery)
     hours = pd.date_range(delivery, periods=24, freq="1h")
-    hourly = pd.DataFrame(q, index=hours, columns=Q_COLS)
-    hourly[R_COLS] = raw
+    hourly = pd.DataFrame(np.hstack([q, raw]), index=hours, columns=Q_COLS + R_COLS)
     quarters, shaped = quarter_forecast(hourly[Q_COLS], delivery, res_parts, history["q50"], qh)
     flags = {
         "trained_through": meta["trained_through"],

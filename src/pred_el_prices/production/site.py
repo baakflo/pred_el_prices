@@ -44,11 +44,14 @@ def log_rows(
     hourly: pd.DataFrame, quarters: pd.DataFrame, flags: dict, generated_utc: str
 ) -> pd.DataFrame:
     """One run's rows: hourly (Q_COLS + R_COLS) and quarter-hour (Q_COLS) percentiles."""
-    h = hourly[Q_COLS + R_COLS].astype("float32")
-    h.insert(0, "kind", "h")
-    q = quarters[Q_COLS].astype("float32")
-    q.insert(0, "kind", "qh")
-    rows = pd.concat([h, q]).assign(generated_utc=generated_utc, **flags)
+    values = pd.concat(
+        [hourly[Q_COLS + R_COLS].astype("float32"), quarters[Q_COLS].astype("float32")]
+    )
+    meta = pd.DataFrame(
+        {"kind": ["h"] * len(hourly) + ["qh"] * len(quarters), "generated_utc": generated_utc},
+        index=values.index,
+    ).assign(**flags)
+    rows = pd.concat([meta, values], axis=1)
     rows.index.name = "t"
     return rows
 
