@@ -486,6 +486,27 @@ Reference, morning configuration on the pod replay: hourly pinball 5.55, MAE 15.
   median MAE over the days both exist, by more than 5 EUR/MWh. Most of the nets' lead
   over LEAR survives the evening inputs.
 
+**Results (2026-09-25, pod run, `runs/evening-nets/summary.json`, 55 days, 9 weekly
+bundles trained once, both configurations from the same bundles):**
+
+| | hourly pinball | MAE | cov80 | cov98 | 15-min pinball |
+|---|---|---|---|---|---|
+| morning | 5.550 | 15.55 | 82.4 % | 99.2 % | 5.853 |
+| evening | 5.554 | 15.46 | 81.1 % | 99.6 % | 5.857 |
+
+- **P53 fails.** The evening configuration costs +0.07 % hourly pinball (15-min +0.07 %)
+  and −0.10 EUR/MWh MAE; DM (evening − morning) on daily pinball 0.03. There is no
+  measurable cost. The substitutes are accurate (P54) and the 12Z weather changes own RES by
+  a mean absolute 1.04 GW, which the networks absorb.
+- **P54 holds.** Neighbour substitute MAE 1,292 MW = 1.25 % of the 9-zone sum; DE load
+  surrogate 1.8 %.
+- **P55 holds.** On the 39 common days the evening nets' MAE is 17.07 vs LEAR's 27.66,
+  a lead of 10.6 EUR/MWh (morning nets 17.28).
+- Timing (16 vCPU pod): 73–99 s per weekly bundle, ~7.6 s per day for both configurations.
+
+**Decision:** run the networks in the evening edition, flagged as before; the morning run
+replaces them.
+
 ## Status addendum (2026-09-23, afternoon): scarcity inputs for the tree correction — registered
 
 **Why.** The best honest model (GBM on low-hinge gate-safe LEAR, `lear-gbm-de-…094701`)
