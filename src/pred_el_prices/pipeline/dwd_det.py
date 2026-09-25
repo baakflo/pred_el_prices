@@ -21,7 +21,9 @@ full delivery-day window, just with 3 h of extra look-ahead at the top.
 Radiation (aswdir_s, aswdifd_s) is stored as published: ICON's value at step t
 is the mean flux since run start (W/m2), not an instantaneous one. Hourly flux
 for hour (t-1, t] is t * value(t) - (t-1) * value(t-1); the 03Z ICON-EU steps
-past +30 h are 6-hourly, so use their actual spacing there.
+past +30 h are 6-hourly, so use their actual spacing there. ICON-D2's
+radiation files each hold four 15-minute messages (+0/15/30/45 min past the
+file's hour); every one is archived with its own valid_time.
 
 Both models publish regular-lat-lon grib2 files directly (unlike the EPS
 icosahedral grid), so lat/lon come from each file's own coordinates - no
@@ -126,15 +128,29 @@ def model_level_url(
     )
 
 
-def _read_grid_field(raw_grib: bytes, tmp_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return flattened (lat, lon, value) arrays for a regular-lat-lon GRIB message."""
+def _read_grid_field(
+    raw_grib: bytes, tmp_dir: Path
+) -> tuple[np.ndarray, np.ndarray, list[tuple[timedelta | None, np.ndarray]]]:
+    """Return flattened lat/lon plus one (lead time, values) pair per GRIB message.
+
+    Most files hold a single message (lead time None: use the file's step).
+    ICON-D2 radiation files hold four 15-minute messages (+0/15/30/45 min
+    past the file's hour), each returned with its own lead time.
+    """
     path = tmp_dir / "current.grib2"
     path.write_bytes(raw_grib)
     with xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""}) as ds:
         (name,) = ds.data_vars
         da = ds[name]
         lat2d, lon2d = np.meshgrid(da.latitude.values, da.longitude.values, indexing="ij")
-        return lat2d.ravel(), lon2d.ravel(), da.values.ravel()
+        if "step" in da.dims:
+            fields = [
+                (pd.Timedelta(s).to_pytimedelta(), da.isel(step=i).values.ravel())
+                for i, s in enumerate(da.step.values)
+            ]
+        else:
+            fields = [(None, da.values.ravel())]
+        return lat2d.ravel(), lon2d.ravel(), fields
 
 
 def _aggregate_field(lat: np.ndarray, lon: np.ndarray, values: np.ndarray, bbox) -> pd.DataFrame:
@@ -160,26 +176,28 @@ def archive_run(model: str, run_date: date, run_hour: int, archive_dir: Path) ->
         for var in SINGLE_LEVEL_VARS:
             for step in steps:
                 url = single_level_url(model, run_date, run_hour, step, var)
-                lat, lon, values = _read_grid_field(_download(url), tmp_dir)
-                df = _aggregate_field(lat, lon, values, spec.bbox)
-                df["variable"] = var
-                df["level"] = np.nan
-                df["height_m"] = np.nan
-                df["valid_time"] = run_time + timedelta(hours=step)
-                frames.append(df)
+                lat, lon, fields = _read_grid_field(_download(url), tmp_dir)
+                for lead, values in fields:
+                    df = _aggregate_field(lat, lon, values, spec.bbox)
+                    df["variable"] = var
+                    df["level"] = np.nan
+                    df["height_m"] = np.nan
+                    df["valid_time"] = run_time + (lead or timedelta(hours=step))
+                    frames.append(df)
             print(f"{var}: {len(steps)} steps done", flush=True)
 
         for level, height_m in spec.wind_levels.items():
             for var in ("u", "v"):
                 for step in steps:
                     url = model_level_url(model, run_date, run_hour, step, var, level)
-                    lat, lon, values = _read_grid_field(_download(url), tmp_dir)
-                    df = _aggregate_field(lat, lon, values, spec.bbox)
-                    df["variable"] = var
-                    df["level"] = level
-                    df["height_m"] = height_m
-                    df["valid_time"] = run_time + timedelta(hours=step)
-                    frames.append(df)
+                    lat, lon, fields = _read_grid_field(_download(url), tmp_dir)
+                    for lead, values in fields:
+                        df = _aggregate_field(lat, lon, values, spec.bbox)
+                        df["variable"] = var
+                        df["level"] = level
+                        df["height_m"] = height_m
+                        df["valid_time"] = run_time + (lead or timedelta(hours=step))
+                        frames.append(df)
                 print(f"{var}@level {level} (~{height_m} m): {len(steps)} steps done", flush=True)
 
     result = pd.concat(frames, ignore_index=True)

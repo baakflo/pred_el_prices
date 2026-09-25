@@ -89,7 +89,7 @@ def test_archive_run_is_idempotent(tmp_path, monkeypatch) -> None:
         lat = np.array([50.2, 50.8])
         lon = np.array([10.1, 10.9])
         values = np.array([1.0, 3.0])
-        return lat, lon, values
+        return lat, lon, [(None, values)]
 
     monkeypatch.setattr(dwd_det, "_download", fake_download)
     monkeypatch.setattr(dwd_det, "_read_grid_field", fake_read_grid_field)
@@ -114,6 +114,45 @@ def test_archive_run_is_idempotent(tmp_path, monkeypatch) -> None:
     out2 = dwd_det.archive_run("icon-d2", date(2026, 9, 24), 0, tmp_path)
     assert out2 == out
     assert len(calls) == n_calls  # second run: already archived, no downloads
+
+
+def test_multi_message_file_keeps_each_quarter_hour(tmp_path, monkeypatch) -> None:
+    # ICON-D2 radiation files carry four 15-min messages per hourly file
+    from datetime import timedelta
+
+    monkeypatch.setattr(dwd_det, "SINGLE_LEVEL_VARS", ["aswdir_s"])
+    monkeypatch.setattr(dwd_det, "STEPS", {("icon-d2", 0): [21]})
+    monkeypatch.setattr(
+        dwd_det,
+        "MODELS",
+        {
+            "icon-d2": dwd_det.ModelSpec(
+                domain="germany",
+                upper_var=False,
+                single_level_tag="2d",
+                bbox=(47.0, 56.0, 5.0, 16.0),
+                wind_levels={},
+            )
+        },
+    )
+    monkeypatch.setattr(dwd_det, "_download", lambda url: b"")
+    leads = [timedelta(hours=21, minutes=m) for m in (0, 15, 30, 45)]
+    monkeypatch.setattr(
+        dwd_det,
+        "_read_grid_field",
+        lambda raw, tmp_dir: (
+            np.array([50.2]),
+            np.array([10.1]),
+            [(lead, np.array([float(i)])) for i, lead in enumerate(leads)],
+        ),
+    )
+
+    df = pd.read_parquet(dwd_det.archive_run("icon-d2", date(2026, 9, 25), 0, tmp_path))
+
+    assert len(df) == 4
+    expected = pd.date_range("2026-09-25 21:00", periods=4, freq="15min", tz="UTC")
+    assert list(df.valid_time) == list(expected)
+    assert df.value.tolist() == [0.0, 1.0, 2.0, 3.0]
 
 
 def test_archive_today_skips_failed_combo_and_continues(tmp_path, monkeypatch) -> None:
