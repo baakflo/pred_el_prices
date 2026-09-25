@@ -16,7 +16,6 @@ them with "replay": true in every nets block.
 """
 
 import json
-import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,17 +146,23 @@ def build_site(
     Returns the LEAR forecast series used (None if the log is empty up to `end`).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+    stop = pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1) if end is not None else None
     dest = out_dir / nets_site.LOG_DIR
     if Path(nets_log).resolve() != dest.resolve():
-        nets_site.write_log(dest, nets_site.read_log(nets_log))
+        log = nets_site.read_log(nets_log)
+        nets_site.write_log(dest, log if stop is None else log[log.index < stop])
     rows = pd.read_parquet(lear_log)
-    if end is not None:
-        rows = rows[rows.index < pd.Timestamp(end, tz="UTC") + pd.Timedelta(days=1)]
+    if stop is not None:
+        rows = rows[rows.index < stop]
     if rows.empty:
         return None
     rows.to_parquet(out_dir / "forecast_log.parquet")
-    if history is not None and Path(history).resolve() != (out_dir / "history.json").resolve():
-        shutil.copyfile(history, out_dir / "history.json")
+    if history is not None:
+        # a published history newer than `end` would put days after latest.json's
+        published = json.loads(Path(history).read_text(encoding="utf-8"))
+        if end is not None:
+            published["days"] = [e for e in published["days"] if e["day"] <= end]
+        (out_dir / "history.json").write_text(json.dumps(published, indent=1), encoding="utf-8")
     if prices is None:
         prices = site_prices(cache_dir)
     write_site_json(

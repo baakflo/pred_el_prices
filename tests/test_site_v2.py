@@ -257,14 +257,17 @@ def test_build_site_rebuilds_from_existing_logs(tmp_path):
     prices, _ = _prices(lear, 72)
     cache.upsert(tmp_path / "cache", "entsoe/day_ahead_prices", prices.to_frame("price_eur_mwh"))
     out = tmp_path / "site"
+    later = {"day": "2026-08-03", "mae": 9.0, "hours": [{"t": "x", "forecast": 1, "actual": 2}]}
+    (src / "history.json").write_text(json.dumps({"days": [later]}), encoding="utf-8")
     build_site(src / site.LOG_NAME, src / "forecast_log.parquet", tmp_path / "cache", out,
-               end="2026-08-02")  # fmt: skip
+               src / "history.json", end="2026-08-02")  # fmt: skip
+    history = json.loads((out / "history.json").read_text(encoding="utf-8"))
+    assert "2026-08-03" not in [d["day"] for d in history["days"]]  # nothing after `end`
     latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
     assert latest["delivery_day"] == "2026-08-02" and latest["nets"]["replay"] is True
-    assert sorted(p.name for p in (out / "days").glob("*.json")) == [
-        "2026-08-01.json", "2026-08-02.json", "2026-08-03.json",
-    ]  # fmt: skip
+    names = sorted(p.name for p in (out / "days").glob("*.json"))
+    assert names == ["2026-08-01.json", "2026-08-02.json"]
     assert len(list((out / site.LOG_DIR).glob("*.parquet"))) == 1
     build_site(src / site.LOG_NAME, src / "forecast_log.parquet", tmp_path / "cache", out,
                end="2026-08-02")  # rerun: partitions replaced, not doubled  # fmt: skip
-    assert len(pd.read_parquet(out / site.LOG_DIR / "2026-08.parquet")) == 3 * 120
+    assert len(pd.read_parquet(out / site.LOG_DIR / "2026-08.parquet")) == 2 * 120

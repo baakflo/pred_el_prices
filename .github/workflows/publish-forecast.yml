@@ -140,6 +140,11 @@ jobs:
             website_repo
           cp archive_repo/site-state/site/latest.json archive_repo/site-state/site/history.json \
             website_repo/public/data/
+          # per-day detail files (only changed days differ; none are ever deleted)
+          mkdir -p website_repo/public/data/days
+          if compgen -G "archive_repo/site-state/site/days/*.json" > /dev/null; then
+            cp archive_repo/site-state/site/days/*.json website_repo/public/data/days/
+          fi
           cd website_repo
           git config user.name "forecast-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

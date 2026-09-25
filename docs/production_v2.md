@@ -30,12 +30,14 @@ bounds; 15-minute percentiles = hourly percentiles + one median shape
   does, forward pass (24 networks), Vincentize, recalibrate with the rolling
   365-day PIT window, clip to [-500, 4000]; fit the 15-minute shape model
   (HGB, cheap) and produce quarter-hour percentiles. LEAR runs as before.
-- **Logs**: `site-state/site/nets_log.parquet` (99 hourly percentiles per
-  delivery hour + 99 per quarter-hour, generated_utc, flags). PIT history for
-  recalibration is seeded from the backtest/replay quantiles and then grows
-  from this log.
+- **Logs**: `site-state/site/nets_log/YYYY-MM.parquet`, one partition per month
+  (99 final + 99 raw hourly percentiles per delivery hour, 99 per quarter-hour,
+  generated_utc, flags incl. `backfill`); a run rewrites only its month. A single
+  `nets_log.parquet` found next to it is split into partitions on first read and then
+  left untouched. PIT history for recalibration is seeded from the backtest/replay
+  quantiles (`nets_pit_seed.parquet`) and then grows from this log.
 
-## Site data contract v2 (`latest.json`, `history.json`)
+## Site data contract v2 (`latest.json`, `history.json`, `days/`)
 
 Backward compatible: all v1 fields stay (they carry LEAR), v2 adds keys.
 
@@ -49,14 +51,18 @@ Backward compatible: all v1 fields stay (they carry LEAR), v2 adds keys.
   "levels": [1, 5, 10, 25, 50, 75, 90, 95, 99],
   "nets": {
     "model": "24 networks (12 JSU + 12 quantile), recalibrated",
-    "trained_through": "YYYY-MM-DD",
+    "trained_through": "YYYY-MM-DD", "generated_utc": "...",
+    "replay": true,
     "hours":    [{"t": "...", "q": [9 values at `levels`], "actual": 0.0}],
     "quarters": [{"t": "...", "q": [9 values], "actual": 0.0}]
   }
 }
 ```
 `actual` is null until the auction result is in. Timestamps UTC ISO; quarters
-are 15-min starts. DST days have 23/25 hours (92/100 quarters).
+are 15-min starts. Delivery blocks are UTC days: always 24 hours, 96 quarters.
+`replay: true` marks rows produced by `pep backfill-nets` (a historical replay, not a
+live pre-gate forecast); live forecasts carry no `replay` key. It appears in every
+nets block: latest, history days and day files.
 
 `history.json` days (last 60 scored days), v1 fields = LEAR, plus
 ```json
@@ -69,11 +75,38 @@ are 15-min starts. DST days have 23/25 hours (92/100 quarters).
 inside [q10, q90], `_qh` = the same on quarter-hours. LEAR's `mae` stays the
 v1 `mae`. Days before go-live carry no `nets` key.
 
+`days/YYYY-MM-DD.json`: one per delivery day with a forecast (LEAR log, nets log, or
+a curve in the published history), compact JSON, about 16 KB with nets. The same
+structure as `latest.json` for that day, plus the day's scores:
+```json
+{
+  "generated_utc": "...", "delivery_day": "YYYY-MM-DD", "model": "LEAR ...",
+  "pre_gate": true, "weather_vintage": "00Z", "evening": true, "load_surrogate": true,
+  "note": "...", "hours": [{"t": "...", "forecast": 0.0, "actual": 0.0}],
+  "schema": 2, "levels": [1, 5, 10, 25, 50, 75, 90, 95, 99],
+  "mae": 0.0, "partial": 22,
+  "nets": {
+    "model": "...", "trained_through": "YYYY-MM-DD", "generated_utc": "...", "replay": true,
+    "hours": [{"t": "...", "q": [9 values], "actual": 0.0}],
+    "quarters": [{"t": "...", "q": [9 values], "actual": 0.0}],
+    "mae": 0.0, "pinball": 0.0, "cov80": 0.0, "mae_qh": 0.0, "pinball_qh": 0.0
+  }
+}
+```
+`mae` (LEAR) is null until an hour is scored, and `partial` is the number of scored hours
+while fewer than 24 are in. The nets scores are null until an hour or quarter-hour is
+scored. `evening`, `load_surrogate`, `partial` and `replay` appear only when they apply. A
+day that exists only as a published history curve has `delivery_day`, `model`,
+`pre_gate`, flags and `hours` (no generated_utc, vintage or note); a nets-only day has
+`delivery_day` and `nets`. A file is rewritten only when its content changes (new
+actuals or scores) and is never deleted. The publish job copies them to the website's
+`public/data/days/`.
+
 ## Implementation notes (2026-09-25)
 
 Code: `production/nets.py` (training, gate row, recalibration, 15-min shape),
 `production/site.py` (log + v2 JSON blocks, torch-free), `production/backfill.py`;
-CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `backfill-nets`;
+CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `backfill-nets`, `build-site`;
 workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
 
 - **Delivery blocks are UTC days**, as in v1 and every backtest: always 24 hours and
@@ -94,10 +127,14 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
 - **Timing:** one bundle (24 fits) takes 15-17 min wall on a 12-core/16-thread laptop
   (16 workers); the daily nets step ~9 s incl. own RES and the shape model. Estimate
   for a 4-vCPU GitHub runner: 45-90 min (not measured). Bundle file 49 MB.
-- **Log growth:** `nets_log.parquet` grows ~80 KB per delivery day (~30 MB a year),
-  rewritten on every run, so the state repo's history grows quadratically (GBs within a
-  year). Open decision: monthly partitions, and/or quarter rows stored as the 96-value
-  shape instead of 99 percentiles each.
+- **Log growth:** the nets log holds ~70 KB per delivery day (about 2.1 MB per month
+  partition, measured on the replay). Monthly partitions bound each commit to the current
+  month's file, so the state repo grows by roughly 30 MB a month (~0.4 GB a year) instead
+  of quadratically. If that is still too much, store quarter rows as the 96-value shape
+  instead of 99 percentiles each (about 5x smaller).
+- **Rebuilding the site from logs:** `pep build-site --nets-log ... --lear-log ...
+  [--history ...] [--end DAY] --out DIR` writes latest/history/days without running
+  any network. `backfill-nets` uses it for its own output.
 
 ## Website (dev branch, local only until approved)
 
