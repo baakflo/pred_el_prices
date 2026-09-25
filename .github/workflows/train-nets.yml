@@ -1,0 +1,82 @@
+name: Train networks
+
+on:
+  # Weekly, dispatched by cron-job.org (GitHub's own schedule events drift and
+  # skip, see publish-forecast.yml) on SATURDAY 18:30 UTC. The bundle trains on
+  # the 1460 UTC days ending Saturday = the coming Monday - 2, the backtests'
+  # convention, so it serves Sunday's forecast (delivery Monday) through the
+  # next Saturday's (delivery Sunday). Saturday's last hours are complete by
+  # then: their prices cleared in Saturday's auction (~12:45 CET) and the TSO
+  # wind/solar forecast for them publishes 18:00 local (16:00 UTC in summer,
+  # 17:00 UTC in winter). If a week's run fails, last week's bundle keeps
+  # serving (the daily job refuses only a bundle trained too late, never an
+  # old one).
+  workflow_dispatch:
+    inputs:
+      monday:
+        description: "Week the bundle serves (YYYY-MM-DD); default: the next Monday"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # replace the release asset
+
+concurrency:
+  group: train-nets
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    # 24 networks on the runner's 4 vCPUs: estimated 45-90 min (a laptop with
+    # 16 threads trains one bundle in 15-17 min; docs/production_v2.md)
+    timeout-minutes: 150
+    env:
+      MONDAY: ${{ inputs.monday }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v9.0.0
+
+      # Read-only use of the production state: the caches are topped up here
+      # but never pushed back (the forecast job owns the state repo's writes).
+      - name: Clone state repo
+        run: >
+          git clone --depth 1
+          "https://x-access-token:${{ secrets.ARCHIVE_REPO_TOKEN }}@github.com/baakflo/pred_el_prices_weather_archive.git"
+          archive_repo
+
+      - name: Install
+        run: uv sync --extra nn
+
+      # Best-effort top-up so Saturday is complete (its UTC 22-23 wind/solar
+      # forecast published after the morning forecast run fetched).
+      - name: Refresh caches
+        continue-on-error: true
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+        run: |
+          uv run --extra nn pep fetch-entsoe --cache-dir archive_repo/site-state/cache \
+            --datasets day_ahead_prices load_forecast wind_solar_forecast
+          uv run --extra nn pep fetch-entsoe --cache-dir archive_repo/site-state/cache \
+            --datasets load_forecast --zones FR NL BE AT PL CZ CH DK_1 DK_2
+          uv run --extra nn pep fetch-fuels --cache-dir archive_repo/site-state/cache
+
+      - name: Train
+        run: >
+          uv run --extra nn pep train-nets
+          --cache-dir archive_repo/site-state/cache
+          --out models/nets.pt
+          ${{ env.MONDAY != '' && format('--monday {0}', env.MONDAY) || '' }}
+
+      # One release (tag models-latest) holds one asset, nets.pt, replaced
+      # weekly; the bundle never enters git.
+      - name: Publish bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view models-latest >/dev/null 2>&1; then
+            gh release create models-latest --latest=false \
+              --title "Network bundle (latest)" \
+              --notes "Weekly network ensemble for the daily forecast; replaced every week."
+          fi
+          gh release upload models-latest models/nets.pt --clobber

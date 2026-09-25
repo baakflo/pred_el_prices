@@ -70,7 +70,18 @@ jobs:
           archive_repo
 
       - name: Install
-        run: uv sync
+        run: uv sync --extra nn
+
+      # The weekly network bundle (train-nets.yml). Missing or broken, LEAR
+      # still publishes: the forecast runs without --nets-bundle, or its nets
+      # step fails soft with a warning.
+      - name: Fetch network bundle
+        if: env.SLOT != '1115' && env.SLOT != '1215' && env.SLOT != '1515'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download models-latest --pattern nets.pt --dir models --clobber \
+            || echo "::warning::no network bundle; LEAR publishes alone"
 
       # Idempotent: if a pre-gate forecast for tomorrow is already logged, this
       # only refreshes the site JSON (fills in actuals). If the load forecast
@@ -86,11 +97,12 @@ jobs:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
           PEP_ENS_RETRY_BUDGET_S: ${{ env.SLOT == '0950' && '120' || '900' }}
         run: >
-          uv run pep forecast
+          uv run --extra nn pep forecast
           --cache-dir archive_repo/site-state/cache
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
           --out archive_repo/site-state/site
+          $( [ -f models/nets.pt ] && echo --nets-bundle models/nets.pt )
           ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}
           ${{ env.SLOT != '0915' && '--allow-load-surrogate' || '' }}
           ${{ (env.SLOT == '1115' || env.SLOT == '1215' || env.SLOT == '1515') && '--refresh-only' || '' }}

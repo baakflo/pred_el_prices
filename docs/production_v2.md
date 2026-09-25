@@ -69,6 +69,36 @@ are 15-min starts. DST days have 23/25 hours (92/100 quarters).
 inside [q10, q90], `_qh` = the same on quarter-hours. LEAR's `mae` stays the
 v1 `mae`. Days before go-live carry no `nets` key.
 
+## Implementation notes (2026-09-25)
+
+Code: `production/nets.py` (training, gate row, recalibration, 15-min shape),
+`production/site.py` (log + v2 JSON blocks, torch-free), `production/backfill.py`;
+CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `backfill-nets`;
+workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
+
+- **Delivery blocks are UTC days**, as in v1 and every backtest: always 24 hours and
+  96 quarters. The "DST days have 23/25 hours" line above only holds for local-day
+  blocks, which nothing produces today.
+- **Weekly train: Saturday 18:30 UTC**, not Sunday evening. Trained through Saturday
+  (= Monday - 2), the bundle then serves Sunday's run (delivery Monday) through
+  Saturday's, exactly the backtest week. A Sunday-evening bundle is equally gate-safe
+  but serves deliveries Tuesday..Monday (one-day shift from the backtests).
+- **Recalibration runs daily** (PIT of forecast days <= D-2, 365 days), not in weekly
+  steps as in the backtests/replay. Fewer than 28 PIT days: raw percentiles, flagged.
+- **PIT seed** (`site-state/site/nets_pit_seed.parquet`): raw percentiles of `runs/b16`
+  (8+8 blend, TSO inputs) for the 400 days before the backfill window, its
+  recalibrated median (`b16-cal`, for the shape model), plus the production-path
+  backfill's own log (07-27 onward) — the most production-like history there is.
+- **Evening edition:** no nets (neighbour load forecasts for D+2 do not exist yet);
+  the morning run adds them. A pre-gate slot retries a nets step that failed earlier.
+- **Timing:** one bundle (24 fits) takes 15-17 min wall on a 12-core/16-thread laptop
+  (16 workers); the daily nets step ~9 s incl. own RES and the shape model. Estimate
+  for a 4-vCPU GitHub runner: 45-90 min (not measured). Bundle file 49 MB.
+- **Log growth:** `nets_log.parquet` grows ~80 KB per delivery day (~30 MB a year),
+  rewritten on every run, so the state repo's history grows quadratically (GBs within a
+  year). Open decision: monthly partitions, and/or quarter rows stored as the 96-value
+  shape instead of 99 percentiles each.
+
 ## Website (dev branch, local only until approved)
 
 Nets fan (bands 5-95, 10-90, 25-75, median line) is the hero, 15-minute view
