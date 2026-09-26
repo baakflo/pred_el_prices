@@ -195,7 +195,7 @@ def _get_multi(path: str, ranges: list[list[int]]) -> list[bytes] | None:
         )
         parts = {}
         for part in msg.get_payload():
-            first, last = part["Content-Range"].split()[1].split("/")[0].split("-")
+            first = part["Content-Range"].split()[1].split("-")[0]
             parts[int(first)] = part.get_payload(decode=True)
         chunks = [parts[start] for start, _ in ranges]
     except (requests.RequestException, KeyError, ValueError, IndexError, AttributeError):
