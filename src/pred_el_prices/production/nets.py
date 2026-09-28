@@ -479,7 +479,8 @@ def forecast_day(
     own_res_parts); `history`: load_history(); `prices`: hourly clearing prices (PIT).
     `evening`: the 21:35 UTC edition two days ahead; DE load = `load_de_fallback` (the
     surrogate), neighbour load = `load_nb_fallback` (neighbour_load_surrogate), and the
-    15-minute shape runs on the interpolated DE surrogate.
+    15-minute shape runs on the interpolated DE surrogate (as does any morning run that
+    fell back to the surrogate).
     """
     from pred_el_prices.daily_forecast import own_res_total
 
@@ -500,7 +501,9 @@ def forecast_day(
     hourly = pd.DataFrame(np.hstack([q, raw]), index=hours, columns=Q_COLS + R_COLS)
     quarters, shaped = quarter_forecast(
         hourly[Q_COLS], delivery, res_parts, history["q50"], qh,
-        inputs["load_de"] if evening else None,
+        # no TSO 15-min load behind a surrogate (evening, or a late morning publication):
+        # shape on the interpolated surrogate instead of repeating the hours x4
+        inputs["load_de"] if evening or inputs["flags"]["load_surrogate"] else None,
     )  # fmt: skip
     flags = {
         "trained_through": meta["trained_through"],

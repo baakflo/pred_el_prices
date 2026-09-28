@@ -368,6 +368,36 @@ class TestEvening:
         med = out["q50"].groupby(out.index.floor("h")).mean()
         np.testing.assert_allclose(med.to_numpy(), q_h["q50"].to_numpy(), atol=1e-9)
 
+    @pytest.mark.parametrize("surrogate", [True, False])
+    def test_a_morning_surrogate_run_shapes_on_the_surrogate(self, monkeypatch, surrogate):
+        # 2026-09-28: the 09:50 slot fell back to the load surrogate (TSO forecast late)
+        # and the quarter-hours came out as the hours repeated x4
+        d = pd.Timestamp("2025-11-30", tz="UTC")
+        hours = pd.date_range(d, periods=24, freq="1h")
+        load_de = pd.Series(5e4, index=hours)
+        flags = {"load_surrogate": surrogate, "neighbour_surrogate": False}
+        monkeypatch.setattr(
+            nets, "gate_inputs",
+            lambda *a, **k: {"load_de": load_de, "load_nb": load_de, "fuel": None, "flags": flags},
+        )  # fmt: skip
+        monkeypatch.setattr(nets, "gate_row", lambda *a: (None, None))
+        monkeypatch.setattr(nets, "predict_raw", lambda *a: np.zeros((24, len(R_COLS))))
+        monkeypatch.setattr(nets, "recalibrate_day", lambda *a: (np.zeros((24, 99)), 0))
+        seen = {}
+
+        def fake_quarters(q_h, delivery, parts, p_hist, qh, load_hourly=None):
+            seen["load"] = load_hourly
+            return q_h, True
+
+        monkeypatch.setattr(nets, "quarter_forecast", fake_quarters)
+        parts = pd.DataFrame(0.0, index=hours, columns=list(nets_res_cols()))
+        history = pd.DataFrame({"q50": pd.Series(60.0, index=hours)})
+        nets.forecast_day(
+            [], {"trained_through": "2025-11-01"}, d, None, None, parts, history, None, None,
+            load_de_fallback=load_de if surrogate else None,
+        )  # fmt: skip
+        assert (seen["load"] is load_de) if surrogate else seen["load"] is None
+
 
 def test_pit_seed_keeps_the_past_window_and_lets_logs_win(tmp_path):
     from pred_el_prices.production import site
