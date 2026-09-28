@@ -70,7 +70,16 @@ jobs:
           archive_repo
 
       - name: Install
-        run: uv sync --extra nn
+        run: uv sync --extra nn --extra t0
+
+      # The t0 shadow forecast (logged to the state repo, never published) loads
+      # its weights from Hugging Face; a cache miss only costs the download.
+      - name: Cache t0 weights
+        if: env.SLOT == '0915' || env.SLOT == '0950' || env.SLOT == ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-theforecastingcompany-t0-beta
 
       # The weekly network bundle (train-nets.yml). Missing or broken, LEAR
       # still publishes: the forecast runs without --nets-bundle, or its nets
@@ -97,7 +106,7 @@ jobs:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
           PEP_ENS_RETRY_BUDGET_S: ${{ env.SLOT == '0950' && '120' || '900' }}
         run: >
-          uv run --extra nn pep forecast
+          uv run --extra nn --extra t0 pep forecast
           --cache-dir archive_repo/site-state/cache
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
@@ -107,6 +116,7 @@ jobs:
           ${{ env.SLOT != '0915' && '--allow-load-surrogate' || '' }}
           ${{ (env.SLOT == '1115' || env.SLOT == '1215' || env.SLOT == '1515') && '--refresh-only' || '' }}
           ${{ env.SLOT == '2135' && '--evening' || '' }}
+          ${{ (env.SLOT == '0915' || env.SLOT == '0950' || env.SLOT == '') && '--t0-shadow' || '' }}
 
       # Other workflows (and manual pre-seeds) push to the same repo; a
       # non-fast-forward rejection must merge-and-retry, not drop the state.

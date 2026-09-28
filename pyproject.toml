@@ -38,6 +38,10 @@ nn = [
     "torch>=2.4",
     "optuna>=4.0",
 ]
+# shadow forecast of the zero-shot foundation model t0-beta (production/t0_shadow.py)
+t0 = [
+    "tfc-t0==0.5.0",
+]
 
 [project.scripts]
 pep = "pred_el_prices.cli:main"

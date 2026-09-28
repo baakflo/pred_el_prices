@@ -227,6 +227,12 @@ def main() -> None:
         help="Network ensemble bundle (pep train-nets): also publish the nets forecast "
         "(additive; LEAR publishes even if the nets step fails)",
     )
+    fc.add_argument(
+        "--t0-shadow",
+        action="store_true",
+        help="Also log a shadow forecast of the t0 foundation model (needs the t0 extra; "
+        "never published, fail-soft; skipped on evening and refresh runs)",
+    )
 
     tn = sub.add_parser(
         "train-nets",
@@ -483,6 +489,7 @@ def main() -> None:
             evening=args.evening,
             allow_load_surrogate=args.allow_load_surrogate,
             nets_bundle=args.nets_bundle,
+            t0_shadow=args.t0_shadow,
         )
     elif args.command == "train-nets":
         import time

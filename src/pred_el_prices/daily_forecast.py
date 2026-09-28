@@ -767,12 +767,16 @@ def run_daily(
     evening: bool = False,
     allow_load_surrogate: bool = False,
     nets_bundle: Path | None = None,
+    t0_shadow: bool = False,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day.
 
     `nets_bundle`: also forecast with the network ensemble (production/nets.py),
     logged to nets_log.parquet and published as the v2 `nets` block. Additive and
     fail-soft: LEAR publishes whatever happens to the networks.
+
+    `t0_shadow`: also run the t0 foundation model (production/t0_shadow.py) on
+    morning forecast runs, logged to t0_log/ only, never published; fail-soft.
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -1000,4 +1004,12 @@ def run_daily(
         )  # fmt: skip
     write_site_json(out_dir, log_path, prices, prices_qh)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
+    # after the site JSON: the shadow model feeds no published file
+    if t0_shadow and not evening:
+        from pred_el_prices.production.t0_shadow import t0_step
+
+        t0_step(
+            out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+            entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1], load_surrogate,
+        )  # fmt: skip
     return out_dir / "latest.json"
