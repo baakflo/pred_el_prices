@@ -34,6 +34,9 @@ from pred_el_prices.features.holidays import holiday_share
 from pred_el_prices.production.site import _write_partitions
 
 MODEL_ID = "theforecastingcompany/t0-beta"
+# pinned: the weights the P65-P69 backtest ran on (HF main as of 2026-09-24); an upstream
+# update must not silently swap the model mid forward test
+MODEL_REVISION = "c8885416fab935d604749a90cdcbf9b54fffcaeb"
 LEVELS = [0.01, 0.05] + [round(0.1 + 0.05 * i, 2) for i in range(17)] + [0.95, 0.99]
 Q_NAMES = [f"q{round(q * 100):02d}" for q in LEVELS]
 CONTEXT = 8192
@@ -106,7 +109,7 @@ def load_model():
     import torch
     from t0 import T0Forecaster
 
-    return T0Forecaster.from_pretrained(MODEL_ID).to(torch.device("cpu")).eval()
+    return T0Forecaster.from_pretrained(MODEL_ID, revision=MODEL_REVISION).to(torch.device("cpu")).eval()
 
 
 def forecast_day(model, delivery, prices, dataset, load_d, res_d, res_prev) -> pd.DataFrame:
