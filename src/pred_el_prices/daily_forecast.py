@@ -866,7 +866,13 @@ def run_daily(
             fetch_neighbour_loads(client, cache_dir, delivery + pd.Timedelta(days=1))
         refresh_fuels(cache_dir)
         _refresh_fallback_prices(cache_dir, delivery + pd.Timedelta(days=1))
-        update_cache(cache_dir)
+        # Best-effort: monthly capacity barely moves day to day, and an empty
+        # cache still fails loudly in hourly_capacity (2026-10-04: energy-charts
+        # 503 on installed_power killed all three slots).
+        try:
+            update_cache(cache_dir)
+        except requests.RequestException as e:
+            print(f"WARN: capacity refresh failed ({e}); proceeding on cached data")
         # Best-effort: a failure must not kill the run — the 12Z fallback
         # may cover the day. Gap healing of older 00Z runs happens in the
         # evening archive-ens-12z workflow, outside the morning S3 herd.
