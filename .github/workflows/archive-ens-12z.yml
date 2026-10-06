@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   archive:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The S3 crawl crept from ~37 to 45+ min over 08-28..09-01; at 45 the
     # 20:35 slot got timeout-cancelled mid-download and the 21:35 retry
     # finished only at ~22:20 — after the 21:50 evening forecast had

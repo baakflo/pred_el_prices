@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   archive:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 60: the first slot of a day also downloads ~1.4 GB of ICON-D2/ICON-EU
     timeout-minutes: 60
     env:

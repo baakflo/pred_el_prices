@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   forecast:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The 00Z ENS download+decode alone takes ~35-40 min (measured daily,
     # 08-28..09-01); 45 min left so little headroom that the ENTSO-E-outage
     # retry ladder tipped both morning slots into timeout-cancellation on

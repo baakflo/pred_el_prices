@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   train:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 24 networks on the runner's 4 vCPUs: estimated 45-90 min (a laptop with
     # 16 threads trains one bundle in 15-17 min; docs/production_v2.md)
     timeout-minutes: 150
