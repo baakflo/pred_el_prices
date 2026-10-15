@@ -124,3 +124,25 @@ def test_fuel_settlement_lagged_two_days(synthetic_cache):
     # Jan 2 hours use the Dec 31 settlement (33.0)
     jan2 = df.loc[df.index.normalize() == pd.Timestamp("2024-01-02", tz="UTC")]
     assert (jan2["ttf_gas_eur_mwh"] == 33.0).all()
+
+
+def test_ragged_fuel_row_carries_each_column_forward(synthetic_cache):
+    # yfinance's newest row often has TTF but no EUA: EUA must keep its last
+    # settlement, not turn NaN (training and the gate then read it as 0)
+    fuel_idx = pd.date_range("2023-12-28", periods=8, freq="1D", tz="UTC")
+    eua = pd.Series(80.0, index=fuel_idx)
+    eua.iloc[4:] = np.nan  # Jan 1.. settlements ragged: EUA missing
+    eua.iloc[5] = 81.0  # Jan 2 has it again
+    eua.iloc[6:] = np.nan
+    cache.upsert(
+        synthetic_cache,
+        "fuels_daily",
+        pd.DataFrame({"ttf_gas_eur_mwh": np.arange(8, dtype=float) + 30.0, "eua_proxy_usd": eua}),
+    )
+    df, _ = build_dataset(synthetic_cache)
+    day = df.index.normalize()
+    # Jan 3 hours use the Jan 1 settlement (EUA NaN there) -> the Dec 31 value
+    assert (df.loc[day == pd.Timestamp("2024-01-03", tz="UTC"), "eua_proxy_usd"] == 80.0).all()
+    # Jan 4 uses Jan 2 (81.0)
+    assert (df.loc[day == pd.Timestamp("2024-01-04", tz="UTC"), "eua_proxy_usd"] == 81.0).all()
+    assert df["eua_proxy_usd"].notna().all()

@@ -140,7 +140,10 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
         lagged.index = lagged.index + pd.Timedelta(days=FUEL_SETTLEMENT_LAG_DAYS)
         for col in FUEL_COLUMNS:
             if col in lagged.columns:
-                out[col] = lagged[col].reindex(index, method="ffill")
+                # per column: a ragged settlement row (one ticker NaN, e.g. EUA missing
+                # from yfinance's newest row) carries that column's last value forward
+                # instead of a NaN; NaN stays only before the source begins
+                out[col] = lagged[col].ffill().reindex(index, method="ffill")
         summary["fuel_lag_days"] = FUEL_SETTLEMENT_LAG_DAYS
 
     summary["columns"] = list(out.columns)

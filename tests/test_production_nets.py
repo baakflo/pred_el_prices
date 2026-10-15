@@ -157,6 +157,19 @@ class TestGateInputs:
         np.testing.assert_allclose(got["fuel"], [42.0, 70.0])
         assert got["flags"] == {"load_surrogate": False, "neighbour_surrogate": False}
 
+    def test_ragged_fuel_row_keeps_the_last_eua(self, tmp_path):
+        # the D-2 row with TTF but no EUA (yfinance's newest row): EUA 0 would cut
+        # the fuel-cost scale ~15 % and shift the whole day down
+        ds = _dataset(20)
+        d = pd.Timestamp("2024-01-15", tz="UTC")
+        root = _cache(tmp_path, ds)
+        ragged = pd.DataFrame(
+            {"ttf_gas_eur_mwh": [99.0], "eua_proxy_usd": [np.nan]},
+            index=[d - pd.Timedelta(days=2)],
+        )
+        cache.upsert(root, "fuels_daily", ragged)
+        np.testing.assert_allclose(nets.gate_inputs(root, d)["fuel"], [99.0, 70.0])
+
     def test_unpublished_boundary_hours_are_not_needed(self, tmp_path):
         ds = _dataset(20)
         d = pd.Timestamp("2024-01-15", tz="UTC")
@@ -378,7 +391,10 @@ class TestEvening:
         flags = {"load_surrogate": surrogate, "neighbour_surrogate": False}
         monkeypatch.setattr(
             nets, "gate_inputs",
-            lambda *a, **k: {"load_de": load_de, "load_nb": load_de, "fuel": None, "flags": flags},
+            lambda *a, **k: {
+                "load_de": load_de, "load_nb": load_de, "fuel": np.array([30.0, 70.0]),
+                "flags": flags,
+            },
         )  # fmt: skip
         monkeypatch.setattr(nets, "gate_row", lambda *a: (None, None))
         monkeypatch.setattr(nets, "predict_raw", lambda *a: np.zeros((24, len(R_COLS))))

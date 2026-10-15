@@ -214,14 +214,16 @@ def _fuel(cache_dir: Path, delivery: pd.Timestamp) -> np.ndarray:
     fuels = cache.load(cache_dir, "fuels_daily")
     lagged = fuels.copy()
     lagged.index = lagged.index + pd.Timedelta(days=FUEL_SETTLEMENT_LAG_DAYS)
-    # as the dataset: the settlement row at-or-before D (a NaN in it stays NaN there);
-    # then as load_days: TTF carried forward from the last valid value, EUA NaN -> 0
-    at = lagged.reindex([delivery], method="ffill")
-    ttf = at["ttf_gas_eur_mwh"].iloc[0]
-    if pd.isna(ttf):
-        ttf = lagged["ttf_gas_eur_mwh"].loc[:delivery].dropna().iloc[-1]
-    eua = at["eua_proxy_usd"].iloc[0] if "eua_proxy_usd" in at else np.nan
-    return np.array([ttf, 0.0 if pd.isna(eua) else eua])
+    # as the dataset: per column, the last valid settlement at-or-before D. yfinance's
+    # newest row is often ragged (TTF set, EUA NaN); an EUA of 0 there once cut the
+    # fuel-cost scale ~15 % and shifted whole live days down (2026-09-27..10-16)
+    ttf = lagged["ttf_gas_eur_mwh"].loc[:delivery].dropna().iloc[-1]
+    eua = (
+        lagged["eua_proxy_usd"].loc[:delivery].dropna()
+        if "eua_proxy_usd" in lagged
+        else pd.Series(dtype=float)
+    )
+    return np.array([ttf, eua.iloc[-1] if len(eua) else 0.0])
 
 
 def neighbour_load_surrogate(
@@ -298,7 +300,11 @@ def gate_row(
     res_hist = ds[RES_COLS].sum(axis=1, min_count=len(RES_COLS))
     nb_hist = dataset[LOAD_NB_COLS].ffill().reindex(hist).sum(axis=1, min_count=len(LOAD_NB_COLS))
     ttf = dataset["ttf_gas_eur_mwh"].ffill().reindex(hist)
-    eua = ds["eua_proxy_usd"].fillna(0.0) if "eua_proxy_usd" in ds else pd.Series(0.0, hist)
+    eua = (
+        dataset["eua_proxy_usd"].ffill().fillna(0.0).reindex(hist)
+        if "eua_proxy_usd" in dataset
+        else pd.Series(0.0, hist)
+    )
 
     prices = np.vstack([ds[PRICE_COL].to_numpy().reshape(7, 24), np.full((1, 24), np.nan)])
     exog = np.stack(
@@ -511,6 +517,9 @@ def forecast_day(
         "shaped": shaped,
         "evening": evening,
         **inputs["flags"],
+        # the day's fuel inputs, logged so a bad settlement shows up in the nets log
+        "fuel_ttf": float(inputs["fuel"][0]),
+        "fuel_eua": float(inputs["fuel"][1]),
     }
     return hourly, quarters, flags
 

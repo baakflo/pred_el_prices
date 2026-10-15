@@ -54,5 +54,11 @@ def update_cache(cache_root, start: pd.Timestamp, end: pd.Timestamp | None = Non
     if resume is not None:
         start = max(start, resume - pd.Timedelta(days=7))
     df = fetch_daily(start, end)
+    if not df.empty:
+        # yfinance rows can come back ragged (one ticker NaN) even for settled days; a
+        # NaN must not overwrite a settlement already cached (upsert replaces whole rows)
+        existing = cache.load(cache_root, DATASET)
+        if not existing.empty:
+            df = df.combine_first(existing.reindex(df.index))[df.columns]
     cache.upsert(cache_root, DATASET, df)
     return len(df)

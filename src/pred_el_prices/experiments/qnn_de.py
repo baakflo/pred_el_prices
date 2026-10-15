@@ -62,7 +62,8 @@ def days_from_frame(
     for c in exog_extra:
         frame[c] = ds[c].ffill()
     frame["ttf"] = ds["ttf_gas_eur_mwh"].ffill()
-    frame["eua"] = ds["eua_proxy_usd"].fillna(0.0)  # NaN before 2021-10; no back-fill
+    # gaps carry forward like TTF; 0 only before the source begins (2021-10), no back-fill
+    frame["eua"] = ds["eua_proxy_usd"].ffill().fillna(0.0)
 
     frame = frame.dropna()
     sizes = frame.groupby(frame.index.normalize()).size()
