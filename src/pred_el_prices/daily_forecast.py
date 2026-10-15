@@ -621,6 +621,24 @@ def _refresh_fallback_prices(cache_dir: Path, end: pd.Timestamp) -> None:
         print(f"WARN: energy-charts price refresh failed ({e})")
 
 
+def refresh_smard_features(cache_dir: Path, end: pd.Timestamp) -> None:
+    """Best-effort top-up of the SMARD load/wind/solar caches (resume from cache tail).
+
+    These patch the rare ENTSO-E forecast gaps in features/dataset.py (TSO
+    load, wind, and solar day-ahead forecasts feeding both the daily LEAR
+    dataset and the weekly network retrain). Unlike `_refresh_fallback_prices`
+    nothing publishes from them directly, so a failure here is quiet
+    correctness insurance, never fatal to the forecast run.
+    """
+    from pred_el_prices.pipeline.smard import update_cache as update_smard_cache
+
+    for dataset in ("smard_load", "smard_wind_solar"):
+        try:
+            update_smard_cache(cache_dir, dataset, pd.Timestamp("2015-01-01", tz="UTC"), end)
+        except Exception as e:  # noqa: BLE001 - insurance only: nothing may cost the run
+            print(f"WARN: SMARD {dataset} refresh failed ({e})")
+
+
 def fetch_neighbour_loads(client, cache_dir: Path, end: pd.Timestamp) -> list[str]:
     """Best-effort top-up of the neighbour load forecasts (network inputs, pre-gate).
 
@@ -866,6 +884,7 @@ def run_daily(
             fetch_neighbour_loads(client, cache_dir, delivery + pd.Timedelta(days=1))
         refresh_fuels(cache_dir)
         _refresh_fallback_prices(cache_dir, delivery + pd.Timedelta(days=1))
+        refresh_smard_features(cache_dir, delivery + pd.Timedelta(days=1))
         # Best-effort: monthly capacity barely moves day to day, and an empty
         # cache still fails loudly in hourly_capacity (2026-10-04: energy-charts
         # 503 on installed_power killed all three slots).

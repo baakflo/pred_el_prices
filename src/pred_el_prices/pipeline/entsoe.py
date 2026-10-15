@@ -36,6 +36,22 @@ DATASETS = {
 }
 
 
+def default_fetch_end(now: pd.Timestamp | None = None) -> pd.Timestamp:
+    """Next UTC midnight after `now` (default: wall-clock now).
+
+    Forecast-type datasets (load, wind/solar) are often already published
+    hours into the future of "now" within the same UTC day (e.g. the next
+    local day's TSO forecast lands ~16:00-18:00 UTC); a query window capped
+    at wall-clock now silently excludes those already-published hours. The
+    train-nets.yml Saturday top-up needs the full day, so round up instead -
+    the 18:30 UTC run was otherwise one day short of `trained_through`
+    (2026-10-10: missed Saturday's last 2 h of wind/solar forecast).
+    """
+    if now is None:
+        now = pd.Timestamp.now(tz="UTC")
+    return now.normalize() + pd.Timedelta(days=1)
+
+
 def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
         return True

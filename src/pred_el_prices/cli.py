@@ -115,7 +115,10 @@ def main() -> None:
         help="Subset of datasets (default: all)",
     )
     fetch.add_argument("--start", default="2015-01-01", help="UTC start date")
-    fetch.add_argument("--end", default=None, help="UTC end date (default: now)")
+    fetch.add_argument(
+        "--end", default=None, help="UTC end date (default: end of today, not just now - "
+        "forecast series publish hours ahead of wall-clock time within the same day)"
+    )  # fmt: skip
     fetch.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Cache root")
     fetch.add_argument(
         "--zones",
@@ -411,14 +414,14 @@ def main() -> None:
         from entsoe import EntsoePandasClient
 
         from pred_el_prices.config import entsoe_api_key
-        from pred_el_prices.pipeline.entsoe import DATASETS, backfill
+        from pred_el_prices.pipeline.entsoe import DATASETS, backfill, default_fetch_end
 
         datasets = args.datasets or list(DATASETS)
         unknown = set(datasets) - set(DATASETS)
         if unknown:
             parser.error(f"unknown datasets: {sorted(unknown)}; choose from {list(DATASETS)}")
         start = pd.Timestamp(args.start, tz="UTC")
-        end = pd.Timestamp(args.end, tz="UTC") if args.end else pd.Timestamp.now(tz="UTC")
+        end = pd.Timestamp(args.end, tz="UTC") if args.end else default_fetch_end()
         client = EntsoePandasClient(api_key=entsoe_api_key())
         for zone in args.zones or [None]:
             backfill(client, datasets, start, end, args.cache_dir, zone=zone)

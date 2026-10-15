@@ -494,6 +494,34 @@ def test_fuel_refresh_failure_is_not_fatal(tmp_path, monkeypatch):
     refresh_fuels(tmp_path)  # must not raise
 
 
+def test_smard_feature_refresh_tops_up_load_and_wind_solar(tmp_path, monkeypatch):
+    from pred_el_prices.daily_forecast import refresh_smard_features
+    from pred_el_prices.pipeline import smard
+
+    calls = []
+
+    def fake_update_cache(cache_root, dataset, start, end):
+        calls.append(dataset)
+        return 0
+
+    monkeypatch.setattr(smard, "update_cache", fake_update_cache)
+    refresh_smard_features(tmp_path, pd.Timestamp("2026-10-15", tz="UTC"))
+    assert calls == ["smard_load", "smard_wind_solar"]
+
+
+def test_smard_feature_refresh_failure_is_not_fatal(tmp_path, monkeypatch):
+    import requests
+
+    from pred_el_prices.daily_forecast import refresh_smard_features
+    from pred_el_prices.pipeline import smard
+
+    def broken(*a, **k):
+        raise requests.ConnectionError("smard.de unreachable")
+
+    monkeypatch.setattr(smard, "update_cache", broken)
+    refresh_smard_features(tmp_path, pd.Timestamp("2026-10-15", tz="UTC"))  # must not raise
+
+
 def test_run_daily_refresh_only_without_log_is_a_noop(tmp_path):
     result = run_daily(
         cache_dir=tmp_path / "cache",

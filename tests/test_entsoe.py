@@ -9,6 +9,7 @@ from pred_el_prices.pipeline.entsoe import (
     ZONE_SPLIT_UTC,
     _normalize,
     _zone_windows,
+    default_fetch_end,
     month_ranges,
     resample_hourly,
 )
@@ -16,6 +17,16 @@ from pred_el_prices.pipeline.entsoe import (
 
 def ts(s: str) -> pd.Timestamp:
     return pd.Timestamp(s, tz="UTC")
+
+
+class TestDefaultFetchEnd:
+    def test_rounds_up_to_the_next_midnight(self):
+        # train-nets.yml's Saturday 18:30 UTC top-up: must reach into Saturday's
+        # remaining hours (already published) instead of stopping at "now"
+        assert default_fetch_end(ts("2026-10-10 18:30")) == ts("2026-10-11")
+
+    def test_exactly_midnight_still_reaches_a_full_day_ahead(self):
+        assert default_fetch_end(ts("2026-10-10 00:00")) == ts("2026-10-11")
 
 
 class TestZoneWindows:
