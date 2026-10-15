@@ -40,6 +40,18 @@ def test_normalize_multiticker_download():
     assert len(df) == 3
 
 
+def test_milan_listing_fills_the_days_london_skips():
+    idx = pd.date_range("2024-01-01", periods=2, freq="1D")
+    raw = pd.DataFrame(
+        [[30.0, 80.0, 79.9], [31.0, np.nan, 81.7]],
+        index=idx,
+        columns=pd.MultiIndex.from_product([["Close"], ["TTF=F", "CO2.L", "CO2.MI"]]),
+    )
+    df = _normalize_download(raw)
+    assert list(df.columns) == ["ttf_gas_eur_mwh", "eua_proxy_usd"]
+    np.testing.assert_allclose(df["eua_proxy_usd"], [80.0, 81.7])  # London wins when set
+
+
 def test_normalize_drops_all_nan_rows_and_unknown_tickers():
     idx = pd.date_range("2024-01-01", periods=2, freq="1D")
     raw = pd.DataFrame(

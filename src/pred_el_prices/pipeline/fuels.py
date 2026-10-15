@@ -23,11 +23,18 @@ TICKERS = {
     "MTF=F": "api2_coal_usd_t",
     "CO2.L": "eua_proxy_usd",
 }
+# Same SparkChange EUA ETC, Milan listing (history from 2022-06; ratio to CO2.L 0.999,
+# corr 0.996 over 2022-06..2026-10): fills the days CO2.L skips (e.g. 2026-10-15)
+EUA_FALLBACK = "CO2.MI"
 
 
 def _normalize_download(raw: pd.DataFrame) -> pd.DataFrame:
     """Close prices only, friendly column names, UTC-midnight index."""
     close = raw["Close"] if isinstance(raw.columns, pd.MultiIndex) else raw[["Close"]]
+    if EUA_FALLBACK in close.columns:
+        close = close.copy()
+        primary = close["CO2.L"] if "CO2.L" in close.columns else pd.Series(index=close.index)
+        close["CO2.L"] = primary.fillna(close[EUA_FALLBACK])
     df = close.rename(columns=TICKERS)
     df = df[[c for c in TICKERS.values() if c in df.columns]]
     df.columns.name = None
@@ -37,7 +44,7 @@ def _normalize_download(raw: pd.DataFrame) -> pd.DataFrame:
 
 def fetch_daily(start: pd.Timestamp, end: pd.Timestamp | None = None) -> pd.DataFrame:
     raw = yf.download(
-        list(TICKERS),
+        [*TICKERS, EUA_FALLBACK],
         start=start.tz_convert(None),
         end=end.tz_convert(None) if end is not None else None,
         progress=False,
