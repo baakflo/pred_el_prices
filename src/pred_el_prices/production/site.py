@@ -116,13 +116,21 @@ def log_rows(
 
 
 def quarter_prices(cache_dir: Path) -> pd.Series:
-    """15-minute clearing prices (ENTSO-E native resolution) from the 15-min MTU start."""
+    """15-minute clearing prices from the 15-min MTU start: ENTSO-E (native resolution),
+    gaps filled from energy-charts' native points (same auction; it often publishes
+    first — 2026-10-16: past the 12:15 refresh ENTSO-E still had nothing)."""
     from pred_el_prices.pipeline import cache
+    from pred_el_prices.pipeline.energy_charts import DATASET_QH
 
-    p = cache.load(cache_dir, "entsoe/day_ahead_prices")
-    if p.empty:
+    parts = []
+    for dataset in ("entsoe/day_ahead_prices", DATASET_QH):  # first wins on overlap
+        p = cache.load(cache_dir, dataset)
+        if not p.empty:
+            parts.append(p["price_eur_mwh"].dropna())
+    if not parts:
         return pd.Series(dtype=float)
-    p = p["price_eur_mwh"].dropna()
+    p = pd.concat(parts)
+    p = p[~p.index.duplicated(keep="first")].sort_index()
     return p[(p.index >= QH_START) & p.index.minute.isin([0, 15, 30, 45])]
 
 
