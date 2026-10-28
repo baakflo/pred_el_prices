@@ -593,9 +593,9 @@ def test_t0_and_the_mix_run_before_the_site_json(tmp_path, monkeypatch, evening)
     _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
     order = []
     _record_t0_and_mix(monkeypatch, order)
-    _run_nets(tmp_path, t0_shadow=True, evening=evening, primary="mix")
+    _run_nets(tmp_path, t0_shadow=True, evening=evening, primary="mix", mix_from="2026-10-25")
     assert [o[0] for o in order] == ["t0", "mix", "site"]
-    assert order[2][1]["primary"] == "mix"
+    assert order[2][1]["primary"] == "mix" and order[2][1]["mix_from"] == "2026-10-25"
     t0_args, mix_args = order[0][1], order[1][1]
     assert t0_args[-1] is evening
     assert mix_args[2] == "T0 ROWS" and mix_args[-1] is evening  # this run's t0 rows

@@ -320,6 +320,7 @@ def write_site_json(
     prices: pd.Series,
     prices_qh: pd.Series | None = None,
     primary: str = "nets",
+    mix_from: str | None = None,
 ) -> None:
     """Derive latest.json, history.json and days/*.json from the logs + known prices.
 
@@ -330,12 +331,16 @@ def write_site_json(
     `primary` "mix": the `nets` block carries the nets+t0 mix (`mix_log/`) wherever a
     mix with t0 stands on the day's nets run, else the nets; every block then says which
     (`primary`), and the mix has its own model label. "nets" (default): the mix log is
-    not read and the output is what it always was.
+    not read and the output is what it always was. `mix_from` (YYYY-MM-DD, required
+    with "mix"): the cut-over delivery day; earlier days keep their published nets
+    blocks untouched instead of being rewritten from the shadow mix log.
     """
     from pred_el_prices.production import site as nets_site
 
     if primary not in nets_site.PRIMARIES:
         raise ValueError(f"primary must be one of {nets_site.PRIMARIES}, not {primary!r}")
+    if primary == "mix" and not mix_from:
+        raise ValueError("primary 'mix' needs mix_from, the cut-over delivery day")
     nets_path = out_dir / nets_site.LOG_DIR
     nets_log = nets_site.read_log(nets_path) if nets_site.log_exists(nets_path) else None
     if prices_qh is None:
@@ -351,7 +356,8 @@ def write_site_json(
     if primary == "mix":
         mix_log = nets_site.read_partitions(out_dir / nets_site.MIX_LOG_DIR)
         mix_days = nets_site.by_day(mix_log) if mix_log is not None else {}
-        nets_days, which = nets_site.primary_days(nets_days, mix_days)
+        since = pd.Timestamp(mix_from, tz="UTC")
+        nets_days, which = nets_site.primary_days(nets_days, mix_days, since)
     empty = pd.DataFrame(columns=["kind"])
 
     def flag(rows: pd.DataFrame, col: str) -> bool:
@@ -936,6 +942,7 @@ def run_daily(
     t0_shadow: bool = False,
     t0_all_checkpoint: Path | None = None,
     primary: str = "nets",
+    mix_from: str | None = None,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day.
 
@@ -950,7 +957,8 @@ def run_daily(
     (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
     `primary`: what the site's `nets` block publishes, "nets" or "mix" (falling back
     to the nets on days without a mix with t0); see write_site_json. Every slot of a
-    deployment must pass the same value, the refresh slots included.
+    deployment must pass the same value, the refresh slots included. `mix_from`: the
+    mix's cut-over delivery day (YYYY-MM-DD), required with "mix".
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -1006,7 +1014,12 @@ def run_daily(
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
             _refresh_fallback_prices(cache_dir, end)
         write_site_json(
-            out_dir, log_path, site_prices(cache_dir), quarter_prices(cache_dir), primary=primary
+            out_dir,
+            log_path,
+            site_prices(cache_dir),
+            quarter_prices(cache_dir),
+            primary=primary,
+            mix_from=mix_from,
         )
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
@@ -1102,14 +1115,18 @@ def run_daily(
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
                         allow_load_surrogate or flag_of(day_rows, "load_surrogate"), t0_shadow,
                     )  # fmt: skip
-                write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
+                write_site_json(
+                    out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from
+                )
                 return None
             if action == "keep-late":
                 print(
                     f"evening edition for {delivery:%Y-%m-%d} stands; past the gate, "
                     "a post-gate replacement would downgrade the day"
                 )
-                write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
+                write_site_json(
+                    out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from
+                )
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
@@ -1197,6 +1214,6 @@ def run_daily(
         from pred_el_prices.production.mix import mix_step
 
         mix_step(out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening)
-    write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
+    write_site_json(out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

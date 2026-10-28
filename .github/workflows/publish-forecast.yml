@@ -63,6 +63,9 @@ jobs:
       SLOT: ${{ inputs.slot }}
       # every slot passes it, the refresh slots included: they rewrite the site too
       PRIMARY: ${{ inputs.primary || vars.PEP_PRIMARY || 'nets' }}
+      # the mix's cut-over UTC delivery day (YYYY-MM-DD), required with mix: earlier
+      # days keep the nets blocks they were published with
+      MIX_FROM: ${{ vars.PEP_MIX_FROM }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -135,6 +138,7 @@ jobs:
           --archive-dir archive_repo
           --out archive_repo/site-state/site
           --primary "$PRIMARY"
+          $( [ -n "$MIX_FROM" ] && echo --mix-from "$MIX_FROM" )
           $( [ -f models/nets.pt ] && echo --nets-bundle models/nets.pt )
           $( [ -f models/t0_all.pt ] && echo --t0-all-checkpoint models/t0_all.pt )
           ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}

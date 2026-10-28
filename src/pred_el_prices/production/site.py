@@ -218,17 +218,22 @@ def _replay(h: pd.DataFrame) -> dict:
     return {key: True for col, key in NETS_FLAGS.items() if col in h and h[col].eq(True).any()}
 
 
-def primary_days(nets_days: dict, mix_days: dict) -> tuple[dict, dict]:
+def primary_days(nets_days: dict, mix_days: dict, since: pd.Timestamp) -> tuple[dict, dict]:
     """Per delivery day, the rows a `--primary mix` site publishes and which model they are.
 
-    The mix where its standing rows include t0 and were built on the standing nets run
-    (a nets rerun the mix step missed must not leave an older mix in front of it);
-    otherwise the nets, recorded as such. Returns ({day: rows}, {day: "mix" | "nets"}).
+    From delivery day `since` (the cut-over, UTC) on: the mix where its standing rows
+    include t0 and were built on the standing nets run (a nets rerun the mix step missed
+    must not leave an older mix in front of it); otherwise the nets, recorded as such.
+    Before `since` the nets stand unrecorded, so already-published days keep the blocks
+    (and scores) they went out with. Returns ({day: rows}, {day: "mix" | "nets"}).
     """
     rows, which = {}, {}
     for day in sorted({*nets_days, *mix_days}):
         nets, mix = nets_days.get(day), mix_days.get(day)
-        if mix is not None and _mix_stands(mix, nets):
+        if day < since:
+            if nets is not None:
+                rows[day] = nets
+        elif mix is not None and _mix_stands(mix, nets):
             rows[day], which[day] = mix, "mix"
         elif nets is not None:
             rows[day], which[day] = nets, "nets"

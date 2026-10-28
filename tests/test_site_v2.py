@@ -292,7 +292,9 @@ def _t0_rows(lear: pd.DataFrame, day: str) -> pd.DataFrame:
     return pd.DataFrame(f.to_numpy()[:, None] + 10.0 + 40.0 * (taus - 0.5), f.index, Q_NAMES)
 
 
-def _write_mix(tmp_path, primary, t0_days=("2026-08-01", "2026-08-02", "2026-08-03")):
+def _write_mix(
+    tmp_path, primary, t0_days=("2026-08-01", "2026-08-02", "2026-08-03"), mix_from="2026-08-01"
+):
     """The _write fixture plus a mix log: mix with t0 on `t0_days`, nets-only elsewhere."""
     from pred_el_prices.production import mix
 
@@ -306,7 +308,14 @@ def _write_mix(tmp_path, primary, t0_days=("2026-08-01", "2026-08-02", "2026-08-
         t0 = _t0_rows(lear, day) if day in t0_days else None
         site.append_log(tmp_path / site.MIX_LOG_DIR, mix.mix_rows(rows, t0, "2026-07-31T09:12Z"))
     prices, prices_qh = _prices(lear)
-    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh, primary=primary)
+    write_site_json(
+        tmp_path,
+        tmp_path / "forecast_log.parquet",
+        prices,
+        prices_qh,
+        primary=primary,
+        mix_from=mix_from if primary == "mix" else None,
+    )
     return _read_site(tmp_path)
 
 
@@ -368,13 +377,51 @@ def test_primary_mix_skips_a_mix_built_on_an_older_nets_run(tmp_path):
     rerun["generated_utc"] = "2026-08-02T09:50:00+00:00"  # the mix step missed this run
     site.append_log(tmp_path / site.LOG_DIR, rerun)
     prices, prices_qh = _prices(lear)
-    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh, primary="mix")
+    write_site_json(
+        tmp_path,
+        tmp_path / "forecast_log.parquet",
+        prices,
+        prices_qh,
+        primary="mix",
+        mix_from="2026-08-01",
+    )
     latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
     assert latest["nets"]["primary"] == "nets"
     assert latest["nets"]["generated_utc"] == "2026-08-02T09:50:00+00:00"
 
 
-@pytest.mark.parametrize(("argv", "want"), [([], "nets"), (["--primary", "mix"], "mix")])
+def test_primary_mix_leaves_days_before_the_cut_over_as_published(tmp_path):
+    plain, mixed = tmp_path / "plain", tmp_path / "mixed"
+    plain.mkdir()
+    mixed.mkdir()
+    _write(plain)
+    out = _write_mix(mixed, "mix", mix_from="2026-08-03")  # mix logged since 08-01
+    before = _read_site(plain)
+    for day in ("2026-08-01", "2026-08-02"):  # shadow-mixed, but before the cut-over
+        assert out[f"days/{day}.json"] == before[f"days/{day}.json"]
+    by_day = {d["day"]: d["nets"] for d in json.loads(out["history.json"])["days"]}
+    plain_days = {d["day"]: d["nets"] for d in json.loads(before["history.json"])["days"]}
+    assert by_day["2026-08-01"] == plain_days["2026-08-01"]
+    assert "primary" not in by_day["2026-08-02"] and by_day["2026-08-02"]["mae"] == 5.0
+    latest = json.loads(out["latest.json"])  # 08-03, the cut-over day itself
+    assert latest["nets"]["primary"] == "mix" and latest["nets"]["model"] == site.MIX_MODEL_LABEL
+    assert json.loads(out["days/2026-08-03.json"])["nets"]["primary"] == "mix"
+
+
+def test_primary_mix_without_a_cut_over_is_refused(tmp_path):
+    lear = _lear_log()
+    lear.to_parquet(tmp_path / "forecast_log.parquet")
+    with pytest.raises(ValueError, match="mix_from"):
+        write_site_json(tmp_path, tmp_path / "forecast_log.parquet", *_prices(lear), primary="mix")
+
+
+@pytest.mark.parametrize(
+    ("argv", "want"),
+    [
+        ([], ("nets", None)),
+        (["--primary", "mix", "--mix-from", "2026-11-05"], ("mix", "2026-11-05")),
+    ],
+)
 def test_cli_passes_the_primary_through(monkeypatch, argv, want):
     import sys
 
@@ -384,7 +431,19 @@ def test_cli_passes_the_primary_through(monkeypatch, argv, want):
     monkeypatch.setattr(daily_forecast, "run_daily", lambda **k: seen.update(k))
     monkeypatch.setattr(sys, "argv", ["pep", "forecast", *argv])
     cli.main()
-    assert seen["primary"] == want
+    assert (seen["primary"], seen["mix_from"]) == want
+
+
+@pytest.mark.parametrize("extra", [[], ["--mix-from", "next week"]])
+def test_cli_refuses_mix_without_a_valid_cut_over(monkeypatch, extra):
+    import sys
+
+    from pred_el_prices import cli, daily_forecast
+
+    monkeypatch.setattr(daily_forecast, "run_daily", lambda **k: pytest.fail("ran"))
+    monkeypatch.setattr(sys, "argv", ["pep", "forecast", "--primary", "mix", *extra])
+    with pytest.raises(SystemExit):
+        cli.main()
 
 
 def test_an_unknown_primary_is_refused(tmp_path):

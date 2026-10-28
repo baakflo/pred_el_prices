@@ -168,15 +168,17 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
   `nets` when t0 failed, `nets_generated_utc`). Never across editions: a morning run whose
   nets failed logs no mix. A pre-gate morning retry reruns t0 + mix when no morning mix
   with t0 stands.
-- **Publishing**: `pep forecast --primary mix` (workflow: repository variable
-  `PEP_PRIMARY=mix`, or the dispatch input `primary`; default `nets`). The `nets` block
-  then carries the mix on each day where a mix with t0 stands on the day's nets run,
-  else the nets, and every block (latest, history days, day files) adds
-  `"primary": "mix" | "nets"`; the mix's `model` is "24 networks + t0-beta foundation
-  model, equal-weight quantile mix". Scores are computed on whichever is published (same
-  99 levels). History days are recomputed from the logs, so with `mix` every day the mix
-  log covers switches, back to the start of the shadow log. `--primary nets` leaves the
-  output byte-identical (the mix log is not read).
+- **Publishing**: `pep forecast --primary mix --mix-from YYYY-MM-DD` (workflow:
+  repository variables `PEP_PRIMARY=mix` and `PEP_MIX_FROM`, or the dispatch input
+  `primary`; default `nets`). `--mix-from` is the cut-over UTC delivery day and is
+  required with `mix`. From it on, the `nets` block carries the mix on each day where a
+  mix with t0 stands on the day's nets run, else the nets, and every such block (latest,
+  history days, day files) adds `"primary": "mix" | "nets"`; the mix's `model` is "24
+  networks + t0-beta foundation model, equal-weight quantile mix". Scores are computed on
+  whichever is published (same 99 levels). Days before the cut-over keep the nets blocks
+  they were published with, unchanged and without a `primary` key, although history is
+  recomputed from the logs and the shadow mix log covers them. `--primary nets` leaves
+  the output byte-identical (the mix log is not read).
 
 ## Website (dev branch, local only until approved)
 

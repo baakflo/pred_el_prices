@@ -251,6 +251,12 @@ def main() -> None:
         "mix (falls back to the nets on days without t0; the mix is logged either way). "
         "Pass the same value on every slot, refresh slots included",
     )
+    fc.add_argument(
+        "--mix-from",
+        default=None,
+        help="Cut-over UTC delivery day (YYYY-MM-DD) of --primary mix; required with it. "
+        "Earlier days keep their published nets blocks",
+    )
 
     tn = sub.add_parser(
         "train-nets",
@@ -495,6 +501,14 @@ def main() -> None:
     elif args.command == "forecast":
         from pred_el_prices.daily_forecast import run_daily
 
+        if args.primary == "mix":
+            try:
+                date.fromisoformat(args.mix_from or "")
+            except ValueError:
+                parser.error(
+                    "--primary mix needs --mix-from YYYY-MM-DD (the cut-over delivery day)"
+                )
+
         run_daily(
             cache_dir=args.cache_dir,
             archive_dir=args.archive_dir,
@@ -510,6 +524,7 @@ def main() -> None:
             t0_shadow=args.t0_shadow,
             t0_all_checkpoint=args.t0_all_checkpoint,
             primary=args.primary,
+            mix_from=args.mix_from,
         )
     elif args.command == "train-nets":
         import time
