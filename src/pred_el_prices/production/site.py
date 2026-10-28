@@ -27,6 +27,7 @@ SITE_COLS = [f"q{lv:02d}" for lv in SITE_LEVELS]
 NETS_MODEL_LABEL = "24 networks (12 JSU + 12 quantile), recalibrated"
 LOG_DIR = "nets_log"  # monthly partitions
 LOG_NAME = "nets_log.parquet"  # single-file layout (legacy state, backfill outputs)
+MIX_LOG_DIR = "mix_log"  # nets+t0 mix (production/mix.py), monthly partitions only
 SEED_NAME = "nets_pit_seed.parquet"  # PIT/median history before go-live (pep seed-nets-pit)
 DAYS_DIR = "days"  # per-delivery-day detail files for the site
 # the 15-minute MTU went live in SDAC on 2025-10-01; before it the cache is hourly
@@ -83,8 +84,24 @@ def read_log(path: Path) -> pd.DataFrame:
     else:
         _migrate(path)
         log = pd.concat([pd.read_parquet(p) for p in sorted(path.glob("*.parquet"))])
+    return _standing(log)
+
+
+def _standing(log: pd.DataFrame) -> pd.DataFrame:
     keep = ~pd.MultiIndex.from_arrays([log.index, log["kind"]]).duplicated(keep="last")
     return log[keep].sort_index()
+
+
+def read_partitions(log_dir: Path) -> pd.DataFrame | None:
+    """Standing rows of a partition directory in the nets log's layout (None when empty).
+
+    For logs that never had a single-file past (the mix log): read_log's migration would
+    split a `nets_log.parquet` lying next to them into their partitions.
+    """
+    parts = sorted(Path(log_dir).glob("*.parquet"))
+    if not parts:
+        return None
+    return _standing(pd.concat([pd.read_parquet(p) for p in parts]))
 
 
 def append_log(path: Path, rows: pd.DataFrame) -> None:

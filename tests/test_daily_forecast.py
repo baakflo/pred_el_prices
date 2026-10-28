@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from pred_el_prices.daily_forecast import (
     backfill_history,
@@ -542,7 +543,8 @@ def _nets_wiring(tmp_path, monkeypatch, delivery):
     )
     monkeypatch.setattr(daily_forecast, "datetime", _Clock)
     monkeypatch.setattr(daily_forecast, "update_features", lambda *a: features)
-    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (pd.DataFrame(), None))
+    empty = pd.DataFrame({"price_eur_mwh": pd.Series(dtype=float)})  # no calibration gaps
+    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (empty, None))
     monkeypatch.setattr(daily_forecast, "site_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(daily_forecast, "quarter_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(
@@ -559,11 +561,60 @@ def _nets_wiring(tmp_path, monkeypatch, delivery):
     return calls
 
 
-def _run_nets(tmp_path):
+def _run_nets(tmp_path, **kw):
     run_daily(
         tmp_path / "cache", tmp_path, tmp_path / "features.parquet", tmp_path / "site",
-        delivery_day="2026-10-25", skip_fetch=True, nets_bundle=tmp_path / "nets.pt",
+        delivery_day="2026-10-25", skip_fetch=True, nets_bundle=tmp_path / "nets.pt", **kw,
     )  # fmt: skip
+
+
+def _standing_lear(tmp_path, delivery):
+    (tmp_path / "site").mkdir()
+    lear = pd.DataFrame({"forecast": 1.0}, pd.date_range(delivery, periods=24, freq="1h"))
+    lear["generated_utc"] = "2026-10-24T09:30:00+00:00"
+    lear["evening"] = False
+    lear["load_surrogate"] = False
+    lear.to_parquet(tmp_path / "site" / "forecast_log.parquet")
+
+
+def _record_t0_and_mix(monkeypatch, order):
+    from pred_el_prices import daily_forecast
+    from pred_el_prices.production import mix, t0_shadow
+
+    monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: order.append(("t0", a)) or "T0 ROWS")
+    monkeypatch.setattr(mix, "mix_step", lambda *a: order.append(("mix", a)))
+    monkeypatch.setattr(
+        daily_forecast, "write_site_json", lambda *a, **k: order.append(("site", k))
+    )
+
+
+@pytest.mark.parametrize("evening", [False, True])
+def test_t0_and_the_mix_run_before_the_site_json(tmp_path, monkeypatch, evening):
+    _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
+    order = []
+    _record_t0_and_mix(monkeypatch, order)
+    _run_nets(tmp_path, t0_shadow=True, evening=evening)
+    assert [o[0] for o in order] == ["t0", "mix", "site"]
+    t0_args, mix_args = order[0][1], order[1][1]
+    assert t0_args[-1] is evening
+    assert mix_args[2] == "T0 ROWS" and mix_args[-1] is evening  # this run's t0 rows
+
+
+def test_retry_reruns_t0_and_the_mix_when_the_mix_lacks_t0(tmp_path, monkeypatch):
+    from pred_el_prices import daily_forecast
+    from pred_el_prices.production import mix
+
+    delivery = pd.Timestamp("2026-10-25", tz="UTC")
+    nets_calls = _nets_wiring(tmp_path, monkeypatch, delivery)
+    _standing_lear(tmp_path, delivery)
+    monkeypatch.setattr(daily_forecast, "nets_logged", lambda *a: True)  # 09:15 nets stand
+    monkeypatch.setattr(mix, "mix_logged", lambda *a: False)  # its t0 had failed
+    order = []
+    _record_t0_and_mix(monkeypatch, order)
+    _run_nets(tmp_path, t0_shadow=True)
+    assert nets_calls == []  # the standing nets are not redone
+    assert [o[0] for o in order] == ["t0", "mix", "site"]
+    assert order[1][1][2] == "T0 ROWS"
 
 
 def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatch):
@@ -578,12 +629,7 @@ def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatc
 def test_nets_retry_gets_the_same_load_fallback(tmp_path, monkeypatch):
     delivery = pd.Timestamp("2026-10-25", tz="UTC")
     calls = _nets_wiring(tmp_path, monkeypatch, delivery)
-    (tmp_path / "site").mkdir()
-    lear = pd.DataFrame({"forecast": 1.0}, pd.date_range(delivery, periods=24, freq="1h"))
-    lear["generated_utc"] = "2026-10-24T09:30:00+00:00"
-    lear["evening"] = False
-    lear["load_surrogate"] = False
-    lear.to_parquet(tmp_path / "site" / "forecast_log.parquet")
+    _standing_lear(tmp_path, delivery)
     _run_nets(tmp_path)  # LEAR stands, no nets rows: the 09:50 slot retries the nets
     assert len(calls) == 1
     fallback = calls[0]["load_de_fallback"]

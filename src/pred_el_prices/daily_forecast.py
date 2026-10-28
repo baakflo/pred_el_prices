@@ -819,6 +819,61 @@ def nets_step(
         return False
 
 
+def flag_of(rows: pd.DataFrame, col: str) -> bool:
+    """Whether a (possibly absent, object-dtype) boolean log column is set on any row."""
+    return bool(rows.get(col, pd.Series(False, index=rows.index)).eq(True).any())
+
+
+def retry_morning_steps(
+    bundle_path: Path,
+    cache_dir: Path,
+    dataset: pd.DataFrame,
+    features: pd.DataFrame,
+    delivery: pd.Timestamp,
+    out_dir: Path,
+    prices: pd.Series,
+    generated_utc: str,
+    weather_vintage: str,
+    allow_load_surrogate: bool,
+    t0_shadow: bool,
+) -> None:
+    """A pre-gate morning slot behind a standing LEAR forecast: rerun the nets when no
+    morning nets forecast stands, and t0 + the mix when no morning mix with t0 does.
+    Fail-soft like the steps themselves; LEAR is not touched.
+
+    The inputs are rebuilt as the first attempt built them, the DE load fallback included:
+    without it a gap only the nets' copy has fails every retry (2026-10-25, both slots).
+    `allow_load_surrogate`: the slot's own permission, or the standing LEAR rows used it.
+    """
+    from pred_el_prices.production.mix import mix_logged, mix_step
+
+    redo_nets = not nets_logged(out_dir, delivery)
+    redo_t0 = t0_shadow and not mix_logged(out_dir, delivery)
+    if not (redo_nets or redo_t0):
+        return
+    load_d = res_parts = None
+    load_surrogate = False
+    try:
+        load_d, load_surrogate = delivery_load(cache_dir, features, delivery, allow_load_surrogate)
+        res_parts = own_res_parts(features, dataset, cache_dir, delivery)
+    except Exception as e:  # noqa: BLE001 - the steps below fail soft on their own
+        print(f"WARN: retry inputs incomplete ({type(e).__name__}: {e})")
+    if redo_nets:
+        nets_step(
+            bundle_path, cache_dir, dataset, features, delivery, out_dir, prices, generated_utc,
+            weather_vintage, load_de_fallback=load_d, res_parts=res_parts,
+        )  # fmt: skip
+    t0_rows = None
+    if t0_shadow and load_d is not None and res_parts is not None:
+        from pred_el_prices.production.t0_shadow import t0_step
+
+        t0_rows = t0_step(
+            out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+            generated_utc, weather_vintage, load_surrogate, False,
+        )  # fmt: skip
+    mix_step(out_dir, delivery, t0_rows, generated_utc)
+
+
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
     """Decide what a run does when `delivery` already has logged rows.
 
@@ -866,7 +921,8 @@ def run_daily(
     fail-soft: LEAR publishes whatever happens to the networks.
 
     `t0_shadow`: also run the t0 foundation model (production/t0_shadow.py) on
-    forecast runs of both editions, logged to t0_log/; fail-soft.
+    forecast runs of both editions, logged to t0_log/; fail-soft. Every run with
+    the nets also logs the nets+t0 mix (production/mix.py) to mix_log/.
     `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
     (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
 
@@ -1009,26 +1065,14 @@ def run_daily(
             action = standing_day_action(day_rows, evening, now, delivery)
             if action == "keep":
                 print(f"forecast for {delivery:%Y-%m-%d} already logged; refreshing site JSON only")
-                # a slot whose nets step failed gets retried by the next pre-gate slot
-                retry = run_nets and not evening and pd.Timestamp(now) <= gate
-                if retry and not nets_logged(out_dir, delivery):
-                    # the same DE load fallback as the first attempt: without it a gap only
-                    # the nets' copy has fails every retry (2026-10-25, both morning slots)
-                    surrogate = bool(
-                        day_rows.get("load_surrogate", pd.Series(False)).eq(True).any()
-                    )
-                    try:
-                        load_d, _ = delivery_load(
-                            cache_dir, features, delivery, allow_load_surrogate or surrogate
-                        )
-                    except Exception as e:  # noqa: BLE001 - the nets may not need it
-                        print(f"WARN: no DE load fallback for the nets retry ({e})")
-                        load_d = None
-                    nets_step(
+                # a slot whose nets (or t0/mix) step failed gets retried by the next
+                # pre-gate slot
+                if run_nets and not evening and pd.Timestamp(now) <= gate:
+                    retry_morning_steps(
                         nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
                         now.isoformat(timespec="seconds"),
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
-                        load_de_fallback=load_d,
+                        allow_load_surrogate or flag_of(day_rows, "load_surrogate"), t0_shadow,
                     )  # fmt: skip
                 write_site_json(out_dir, log_path, prices, prices_qh)
                 return None
@@ -1104,10 +1148,11 @@ def run_daily(
         )  # fmt: skip
     # before the site JSON: the nets+t0 mix may be the published forecast; both
     # editions, on the inputs this run already built (fail-soft)
+    t0_rows = None
     if t0_shadow:
         from pred_el_prices.production.t0_shadow import t0_step
 
-        t0_step(
+        t0_rows = t0_step(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
             entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1], load_surrogate,
             evening,
@@ -1120,6 +1165,10 @@ def run_daily(
                 entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
                 load_surrogate, checkpoint=t0_all_checkpoint,
             )  # fmt: skip
+    if run_nets:  # shadow-logged every run; without t0 the mix is the nets, flagged
+        from pred_el_prices.production.mix import mix_step
+
+        mix_step(out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening)
     write_site_json(out_dir, log_path, prices, prices_qh)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"
