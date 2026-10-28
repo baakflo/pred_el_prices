@@ -205,6 +205,35 @@ def load_surrogate_forecast(
     return pd.Series(pred, index=delivery_hours)
 
 
+def delivery_load(
+    cache_dir: Path, features: pd.DataFrame, delivery: pd.Timestamp, allow_surrogate: bool
+) -> tuple[pd.Series, bool]:
+    """The DE load input for `delivery` (24 UTC hours) and whether it is the surrogate.
+
+    The TSO day-ahead forecast; more than 4 hours missing is the surrogate when
+    `allow_surrogate`, else a loud failure (a later slot retries).
+    """
+    load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
+    delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
+    load_d = load_fc.reindex(delivery_hours)
+    missing = load_d.isna()
+    if missing.sum() > 4:
+        if not allow_surrogate:
+            raise RuntimeError(
+                f"ENTSO-E load forecast for {delivery:%Y-%m-%d} not yet published; retry later"
+            )
+        print(f"load input: surrogate model (TSO forecast for {delivery:%Y-%m-%d} unavailable)")
+        return load_surrogate_forecast(features, cache_dir, delivery), True
+    if missing.any():
+        # ENTSO-E publishes local (CET/CEST) days: the last 1-2 hours of the
+        # UTC delivery block belong to the next local day and do not exist
+        # pre-gate. Fill from 24 h earlier (published, flat night load).
+        lagged = load_fc.reindex(delivery_hours - pd.Timedelta(days=1))
+        load_d = load_d.fillna(pd.Series(lagged.to_numpy(), index=delivery_hours))
+        print(f"filled {int(missing.sum())} boundary hour(s) of load forecast from 24h-lag")
+    return load_d, False
+
+
 def lear_forecast(
     dataset: pd.DataFrame,
     delivery: pd.Timestamp,
@@ -937,10 +966,23 @@ def run_daily(
                 # a slot whose nets step failed gets retried by the next pre-gate slot
                 retry = run_nets and not evening and pd.Timestamp(now) <= gate
                 if retry and not nets_logged(out_dir, delivery):
+                    # the same DE load fallback as the first attempt: without it a gap only
+                    # the nets' copy has fails every retry (2026-10-25, both morning slots)
+                    surrogate = bool(
+                        day_rows.get("load_surrogate", pd.Series(False)).eq(True).any()
+                    )
+                    try:
+                        load_d, _ = delivery_load(
+                            cache_dir, features, delivery, allow_load_surrogate or surrogate
+                        )
+                    except Exception as e:  # noqa: BLE001 - the nets may not need it
+                        print(f"WARN: no DE load fallback for the nets retry ({e})")
+                        load_d = None
                     nets_step(
                         nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
                         now.isoformat(timespec="seconds"),
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
+                        load_de_fallback=load_d,
                     )  # fmt: skip
                 write_site_json(out_dir, log_path, prices, prices_qh)
                 return None
@@ -953,26 +995,8 @@ def run_daily(
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
-    load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
-    load_d = load_fc.reindex(delivery_hours)
-    missing = load_d.isna()
-    load_surrogate = False
-    if missing.sum() > 4:
-        if not allow_load_surrogate:
-            raise RuntimeError(
-                f"ENTSO-E load forecast for {delivery:%Y-%m-%d} not yet published; retry later"
-            )
-        load_d = load_surrogate_forecast(features, cache_dir, delivery)
-        load_surrogate = True
-        print(f"load input: surrogate model (TSO forecast for {delivery:%Y-%m-%d} unavailable)")
-    elif missing.any():
-        # ENTSO-E publishes local (CET/CEST) days: the last 1-2 hours of the
-        # UTC delivery block belong to the next local day and do not exist
-        # pre-gate. Fill from 24 h earlier (published, flat night load).
-        lagged = load_fc.reindex(delivery_hours - pd.Timedelta(days=1))
-        load_d = load_d.fillna(pd.Series(lagged.to_numpy(), index=delivery_hours))
-        print(f"filled {int(missing.sum())} boundary hour(s) of load forecast from 24h-lag")
+    load_d, load_surrogate = delivery_load(cache_dir, features, delivery, allow_load_surrogate)
 
     # Multi-day outage: ENTSO-E gaps in the trailing days would starve LEAR's
     # calibration lags (exog at d, d-1, d-7) even though prices kept flowing
@@ -1024,7 +1048,12 @@ def run_daily(
         nets_step(
             nets_bundle, cache_dir, dataset, features, delivery, out_dir, prices,
             entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
-            load_de_fallback=load_d if load_surrogate or evening else None,
+            # LEAR's load input on every run, not only behind the surrogate: the nets
+            # build their own gate-time copy (UTC 22-23 always from 24 h earlier, <= 2 gap
+            # hours) and fall back to this one, flagged load_surrogate, where LEAR's copes.
+            # 2026-10-25 (DST day): the cache lacked UTC 10-24 22:00, the first hour of
+            # the 25-hour local day; LEAR never reads it, the nets' copy has no fill for it
+            load_de_fallback=load_d,
             res_parts=res_parts, evening=evening,
         )  # fmt: skip
     write_site_json(out_dir, log_path, prices, prices_qh)

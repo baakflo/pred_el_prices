@@ -190,6 +190,23 @@ class TestGateInputs:
         with pytest.raises(RuntimeError, match="load forecast"):
             nets.gate_inputs(root, d, surrogate)
 
+    def test_dst_day_hole_falls_back_to_lears_load(self, tmp_path):
+        # 2026-10-25 as the morning slots saw it: the cache lacked UTC 10-24 22:00 (the
+        # first hour of the 25-hour local day), which the nets copy into D's 22:00
+        ds = _dataset(20, start="2026-10-10")
+        d = pd.Timestamp("2026-10-25", tz="UTC")
+        root = _cache(tmp_path, ds[ds.index < d + pd.Timedelta(hours=23)])
+        hole = pd.date_range("2026-10-24 22:00", periods=4, freq="15min", tz="UTC")
+        de = cache.load(root, "entsoe/load_forecast")
+        de.loc[hole, "Forecasted Load"] = np.nan
+        cache.upsert(root, "entsoe/load_forecast", de)
+        with pytest.raises(RuntimeError, match="DE load"):
+            nets.gate_inputs(root, d)
+        lear_load = ds["load_forecast_mw"].reindex(pd.date_range(d, periods=24, freq="1h"))
+        got = nets.gate_inputs(root, d, lear_load)
+        pd.testing.assert_series_equal(got["load_de"], lear_load)
+        assert got["flags"]["load_surrogate"] is True
+
 
 class TestRecalibration:
     def _hist(self, n_days=60):

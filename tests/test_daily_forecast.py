@@ -1,6 +1,7 @@
 """Offline tests for the daily production forecast (synthetic log/prices)."""
 
 import json
+from datetime import UTC, datetime
 
 import numpy as np
 import pandas as pd
@@ -520,6 +521,73 @@ def test_smard_feature_refresh_failure_is_not_fatal(tmp_path, monkeypatch):
 
     monkeypatch.setattr(smard, "update_cache", broken)
     refresh_smard_features(tmp_path, pd.Timestamp("2026-10-15", tz="UTC"))  # must not raise
+
+
+class _Clock(datetime):  # the 2026-10-24 09:50 UTC slot, 10 min before the gate
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 10, 24, 9, 50, tzinfo=UTC)
+
+
+def _nets_wiring(tmp_path, monkeypatch, delivery):
+    """run_daily on stubs around a recording nets_step; TSO load as the 2026-10-24 slots
+    had it (UTC 23 of the DST day 10-25 is local 10-26, unpublished)."""
+    from pred_el_prices import daily_forecast
+
+    hours = pd.date_range(delivery, periods=24, freq="1h")
+    features = pd.DataFrame({"run_date": pd.Timestamp("2026-10-24")}, index=hours)
+    tso = pd.date_range(delivery - pd.Timedelta(days=1), periods=47, freq="1h")
+    cache.upsert(
+        tmp_path / "cache", "entsoe/load_forecast", pd.DataFrame({"Forecasted Load": 1.0}, tso)
+    )
+    monkeypatch.setattr(daily_forecast, "datetime", _Clock)
+    monkeypatch.setattr(daily_forecast, "update_features", lambda *a: features)
+    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (pd.DataFrame(), None))
+    monkeypatch.setattr(daily_forecast, "site_prices", lambda c: pd.Series(dtype=float))
+    monkeypatch.setattr(daily_forecast, "quarter_prices", lambda c: pd.Series(dtype=float))
+    monkeypatch.setattr(
+        daily_forecast,
+        "own_res_parts",
+        lambda *a: pd.DataFrame({c: 1.0 for c in daily_forecast.RES_TARGETS}, hours),
+    )
+    monkeypatch.setattr(
+        daily_forecast, "lear_forecast", lambda *a: pd.Series(1.0, hours, name="forecast")
+    )
+    monkeypatch.setattr(daily_forecast, "write_site_json", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(daily_forecast, "nets_step", lambda *a, **k: calls.append(k) or True)
+    return calls
+
+
+def _run_nets(tmp_path):
+    run_daily(
+        tmp_path / "cache", tmp_path, tmp_path / "features.parquet", tmp_path / "site",
+        delivery_day="2026-10-25", skip_fetch=True, nets_bundle=tmp_path / "nets.pt",
+    )  # fmt: skip
+
+
+def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatch):
+    """2026-10-25: LEAR ran on the TSO load (one boundary hour lag-filled), the nets' own
+    gate-time copy was an hour short, and no fallback was handed over."""
+    calls = _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
+    _run_nets(tmp_path)
+    fallback = calls[0]["load_de_fallback"]
+    assert fallback is not None and len(fallback) == 24 and fallback.notna().all()
+
+
+def test_nets_retry_gets_the_same_load_fallback(tmp_path, monkeypatch):
+    delivery = pd.Timestamp("2026-10-25", tz="UTC")
+    calls = _nets_wiring(tmp_path, monkeypatch, delivery)
+    (tmp_path / "site").mkdir()
+    lear = pd.DataFrame({"forecast": 1.0}, pd.date_range(delivery, periods=24, freq="1h"))
+    lear["generated_utc"] = "2026-10-24T09:30:00+00:00"
+    lear["evening"] = False
+    lear["load_surrogate"] = False
+    lear.to_parquet(tmp_path / "site" / "forecast_log.parquet")
+    _run_nets(tmp_path)  # LEAR stands, no nets rows: the 09:50 slot retries the nets
+    assert len(calls) == 1
+    fallback = calls[0]["load_de_fallback"]
+    assert fallback is not None and len(fallback) == 24 and fallback.notna().all()
 
 
 def test_run_daily_refresh_only_without_log_is_a_noop(tmp_path):
