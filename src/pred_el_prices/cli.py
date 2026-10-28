@@ -234,7 +234,7 @@ def main() -> None:
         "--t0-shadow",
         action="store_true",
         help="Also log a shadow forecast of the t0 foundation model (needs the t0 extra; "
-        "never published, fail-soft; skipped on evening and refresh runs)",
+        "fail-soft; both editions, skipped on refresh runs)",
     )
     fc.add_argument(
         "--t0-all-checkpoint",

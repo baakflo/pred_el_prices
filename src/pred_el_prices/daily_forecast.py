@@ -866,7 +866,7 @@ def run_daily(
     fail-soft: LEAR publishes whatever happens to the networks.
 
     `t0_shadow`: also run the t0 foundation model (production/t0_shadow.py) on
-    morning forecast runs, logged to t0_log/ only, never published; fail-soft.
+    forecast runs of both editions, logged to t0_log/; fail-soft.
     `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
     (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
 
@@ -1102,15 +1102,15 @@ def run_daily(
             load_de_fallback=load_d,
             res_parts=res_parts, evening=evening,
         )  # fmt: skip
-    write_site_json(out_dir, log_path, prices, prices_qh)
-    print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
-    # after the site JSON: the shadow model feeds no published file
-    if t0_shadow and not evening:
+    # before the site JSON: the nets+t0 mix may be the published forecast; both
+    # editions, on the inputs this run already built (fail-soft)
+    if t0_shadow:
         from pred_el_prices.production.t0_shadow import t0_step
 
         t0_step(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
             entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1], load_surrogate,
+            evening,
         )  # fmt: skip
         if t0_all_checkpoint is not None:
             from pred_el_prices.production.t0_all_shadow import t0_all_step
@@ -1120,4 +1120,6 @@ def run_daily(
                 entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
                 load_surrogate, checkpoint=t0_all_checkpoint,
             )  # fmt: skip
+    write_site_json(out_dir, log_path, prices, prices_qh)
+    print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

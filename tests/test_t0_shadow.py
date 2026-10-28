@@ -89,24 +89,28 @@ def test_missing_own_res_of_d_minus_1_falls_back_to_d():
     np.testing.assert_allclose(cov[0][48:50], 1000.0 - 50.0)
 
 
-def _step(tmp_path, model):
-    delivery = pd.Timestamp("2026-07-15", tz="UTC")
+def _step(tmp_path, model, day="2026-07-15", evening=False):
+    delivery = pd.Timestamp(day, tz="UTC")
     ds = _dataset(delivery)
     return t0_shadow.t0_step(
         tmp_path, tmp_path, ds, pd.DataFrame(), delivery, pd.Series(50.0, index=ds.index),
         _day(delivery, 2000.0), pd.DataFrame({c: _day(delivery, 20.0) for c in RES_COLS}),
-        "2026-07-14T09:20:00+00:00", "00Z", False, model=model,
+        "2026-07-14T09:20:00+00:00", "00Z", evening, evening, model=model,
     )  # fmt: skip
 
 
-def test_t0_step_logs_24_hours(tmp_path, monkeypatch, capsys):
+def _own_res(monkeypatch):
     monkeypatch.setattr(
         t0_shadow,
         "own_res_parts",
         lambda f, d, c, day: pd.DataFrame({c: _day(day, 25.0) for c in RES_COLS}),
     )
+
+
+def test_t0_step_logs_24_hours(tmp_path, monkeypatch, capsys):
+    _own_res(monkeypatch)
     model = FakeT0()
-    assert _step(tmp_path, model) is True
+    rows = _step(tmp_path, model)
     ctx, cov = model.calls[0]
     assert ctx.shape == (1, t0_shadow.CONTEXT) and cov.shape == (1, 2, t0_shadow.CONTEXT + 26)
     log = pd.read_parquet(tmp_path / t0_shadow.LOG_DIR / "2026-07.parquet")
@@ -115,14 +119,31 @@ def test_t0_step_logs_24_hours(tmp_path, monkeypatch, capsys):
         "generated_utc",
         "weather_vintage",
         "load_surrogate",
+        "evening",
         *Q_NAMES,
         "median",
     ]
     np.testing.assert_allclose(log["q05"], 5.0)
     np.testing.assert_allclose(log["median"], 50.0)
     assert (log["weather_vintage"] == "00Z").all() and not log["load_surrogate"].any()
+    assert not log["evening"].any()
     assert len(Q_NAMES) == len(LEVELS) == 21
     assert "t0 shadow" in capsys.readouterr().out
+    pd.testing.assert_frame_equal(rows, log, check_freq=False, check_index_type=False)
+
+
+def test_evening_rows_are_flagged(tmp_path, monkeypatch):
+    _own_res(monkeypatch)
+    rows = _step(tmp_path, FakeT0(), evening=True)
+    assert rows["evening"].all() and rows["load_surrogate"].all()
+
+
+@pytest.mark.parametrize("day", ["2026-10-25", "2027-03-28"])  # DST end (25 h), start (23 h)
+def test_dst_days_are_24_utc_hours(tmp_path, monkeypatch, day):
+    # delivery blocks are UTC days; only the origin (local midnight) moves with the clock
+    _own_res(monkeypatch)
+    rows = _step(tmp_path, FakeT0(), day=day)
+    assert (rows.index == pd.date_range(day, periods=24, freq="1h", tz="UTC")).all()
 
 
 @pytest.mark.parametrize("failure", ["model", "inputs"])
@@ -139,13 +160,13 @@ def test_t0_step_never_raises(tmp_path, monkeypatch, capsys, failure):
             pd.Series(dtype=float), pd.Series(dtype=float), pd.DataFrame(), "x", "00Z", False,
             model=FakeT0(),
         )  # fmt: skip
-    assert ok is False
+    assert ok is None
     assert "::warning::t0 shadow step failed" in capsys.readouterr().out
     assert not (tmp_path / t0_shadow.LOG_DIR).exists()
 
 
-@pytest.mark.parametrize("flag", [False, True])
-def test_run_daily_runs_t0_only_on_request(tmp_path, monkeypatch, flag):
+@pytest.mark.parametrize(("flag", "evening"), [(False, False), (True, False), (True, True)])
+def test_run_daily_runs_t0_only_on_request(tmp_path, monkeypatch, flag, evening):
     delivery = pd.Timestamp("2026-07-15", tz="UTC")
     hours = pd.date_range(delivery, periods=24, freq="1h")
     features = pd.DataFrame({"run_date": pd.Timestamp("2026-07-14")}, index=hours)
@@ -153,7 +174,9 @@ def test_run_daily_runs_t0_only_on_request(tmp_path, monkeypatch, flag):
         tmp_path / "cache", "entsoe/load_forecast", pd.DataFrame({"Forecasted Load": 1.0}, hours)
     )
     monkeypatch.setattr(daily_forecast, "update_features", lambda *a: features)
-    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (pd.DataFrame(), None))
+    # no price history: the evening edition's calibration-gap patch has nothing to fill
+    empty = pd.DataFrame({"price_eur_mwh": pd.Series(dtype=float)})
+    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (empty, None))
     monkeypatch.setattr(daily_forecast, "site_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(daily_forecast, "quarter_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(
@@ -162,19 +185,20 @@ def test_run_daily_runs_t0_only_on_request(tmp_path, monkeypatch, flag):
     monkeypatch.setattr(
         daily_forecast, "lear_forecast", lambda *a: pd.Series(1.0, hours, name="forecast")
     )
-    monkeypatch.setattr(daily_forecast, "write_site_json", lambda *a: None)
     calls = []
+    # t0 runs before the site JSON (the mix may publish it)
+    monkeypatch.setattr(daily_forecast, "write_site_json", lambda *a, **k: calls.append("site"))
     monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: calls.append(a))
     monkeypatch.delitem(sys.modules, "t0", raising=False)
 
     daily_forecast.run_daily(
         tmp_path / "cache", tmp_path, tmp_path / "features.parquet", tmp_path / "site",
-        delivery_day="2026-07-15", skip_fetch=True, t0_shadow=flag,
+        delivery_day="2026-07-15", skip_fetch=True, t0_shadow=flag, evening=evening,
     )  # fmt: skip
 
     assert "t0" not in sys.modules  # the model package is never imported by the wiring
-    assert len(calls) == int(flag)
+    assert len(calls) == int(flag) + 1 and calls[-1] == "site"
     if flag:
         args = calls[0]
-        assert args[4] == delivery and args[9:] == ("00Z", False)
+        assert args[4] == delivery and args[9:] == ("00Z", False, evening)
         assert (args[6] == 1.0).all() and list(args[7].columns) == RES_COLS  # reused inputs

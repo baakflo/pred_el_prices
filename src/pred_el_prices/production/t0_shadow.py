@@ -1,8 +1,10 @@
-"""Shadow forecast of the zero-shot foundation model t0-beta: logged, never published.
+"""Shadow forecast of the zero-shot foundation model t0-beta: logged, never published alone.
 
 An out-of-sample forward test of t0 against the live nets (P65-P69 arm B, same
-convention). Rows go to `t0_log/YYYY-MM.parquet` next to the nets log and appear in no
-site JSON. The step is fail-soft: nothing here may cost LEAR or the nets the day.
+convention). Rows go to `t0_log/YYYY-MM.parquet` next to the nets log, in both editions
+(evening rows flagged); on their own they appear in no site JSON, but they feed the
+nets+t0 mix (production/mix.py). The step is fail-soft: nothing here may cost LEAR or the
+nets the day.
 
 Per delivery UTC day D:
 - origin = Berlin-local midnight starting local day D (UTC 23:00 of D-1 in winter,
@@ -137,9 +139,16 @@ def t0_step(
     generated_utc: str,
     weather_vintage: str,
     load_surrogate: bool,
+    evening: bool = False,
     model=None,
-) -> bool:
-    """Shadow t0 forecast for `delivery`, appended to the t0 log. Never raises."""
+) -> pd.DataFrame | None:
+    """Shadow t0 forecast for `delivery`, appended to the t0 log; the logged rows, or None
+    on failure. Never raises.
+
+    `evening`: the 21:35 UTC edition, on its inputs as given (12Z own RES, DE load
+    surrogate); the rows are flagged like the nets log's. The context prices end at local
+    midnight of D, cleared by then in either edition.
+    """
     try:
         t = time.perf_counter()
         prev = delivery - DAY
@@ -157,10 +166,11 @@ def t0_step(
         rows.insert(0, "generated_utc", generated_utc)
         rows.insert(1, "weather_vintage", weather_vintage)
         rows.insert(2, "load_surrogate", bool(load_surrogate))
+        rows.insert(3, "evening", bool(evening))
         rows.index.name = "t"
         _write_partitions(Path(out_dir) / LOG_DIR, rows)
         print(f"t0 shadow: {delivery:%Y-%m-%d} logged in {time.perf_counter() - t:.0f} s")
-        return True
+        return rows
     except Exception as e:  # noqa: BLE001 - shadow path: nothing here may cost LEAR the day
         print(f"::warning::t0 shadow step failed ({type(e).__name__}: {e})")
-        return False
+        return None
