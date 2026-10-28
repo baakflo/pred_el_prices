@@ -32,6 +32,14 @@ on:
         description: "Cron slot this dispatch mirrors (UTC, e.g. 0915)"
         required: false
         default: ""
+      # What the site's nets block publishes: nets, or the nets+t0 mix (falls back to
+      # the nets on days without t0). The live switch is the repository variable
+      # PEP_PRIMARY (cron-job.org dispatches send only the slot); this input overrides
+      # it for one manual run. Unset both: nets.
+      primary:
+        description: "Published primary for this run: nets | mix (empty: vars.PEP_PRIMARY, else nets)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -53,6 +61,8 @@ jobs:
     timeout-minutes: 75
     env:
       SLOT: ${{ inputs.slot }}
+      # every slot passes it, the refresh slots included: they rewrite the site too
+      PRIMARY: ${{ inputs.primary || vars.PEP_PRIMARY || 'nets' }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -124,6 +134,7 @@ jobs:
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
           --out archive_repo/site-state/site
+          --primary "$PRIMARY"
           $( [ -f models/nets.pt ] && echo --nets-bundle models/nets.pt )
           $( [ -f models/t0_all.pt ] && echo --t0-all-checkpoint models/t0_all.pt )
           ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}

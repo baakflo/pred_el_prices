@@ -21,6 +21,7 @@ import pandas as pd
 from pred_el_prices.production.site import (
     LOG_DIR,
     MIX_LOG_DIR,
+    MIX_WITH_T0,
     Q_COLS,
     QUANTILES,
     _write_partitions,
@@ -32,7 +33,7 @@ from pred_el_prices.production.t0_shadow import LEVELS as T0_LEVELS
 from pred_el_prices.production.t0_shadow import Q_NAMES as T0_COLS
 
 PRICE_BOUNDS = (-500.0, 4000.0)  # SDAC limits, as experiments.qnn_de (restated: no torch)
-WITH_T0, NETS_ONLY = "nets+t0", "nets"
+WITH_T0, NETS_ONLY = MIX_WITH_T0, "nets"
 # carried from the nets rows: provenance and substitute-input flags, as in the nets log
 CARRY = [
     "trained_through",

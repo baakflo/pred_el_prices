@@ -279,6 +279,121 @@ def test_day_files_cover_history_only_days_and_are_never_deleted(tmp_path):
     assert (tmp_path / "days" / "2026-01-01.json").exists()
 
 
+# ------------------------------------------------------------------ --primary mix
+
+
+def _t0_rows(lear: pd.DataFrame, day: str) -> pd.DataFrame:
+    """t0 for one day: median 10 above LEAR (the nets' median is LEAR itself), so the
+    equal-weight mix's median sits 5 above LEAR, exactly on the synthetic actuals."""
+    from pred_el_prices.production.t0_shadow import LEVELS, Q_NAMES
+
+    f = lear.loc[lear.index.normalize() == pd.Timestamp(day, tz="UTC"), "forecast"]
+    taus = np.asarray(LEVELS)
+    return pd.DataFrame(f.to_numpy()[:, None] + 10.0 + 40.0 * (taus - 0.5), f.index, Q_NAMES)
+
+
+def _write_mix(tmp_path, primary, t0_days=("2026-08-01", "2026-08-02", "2026-08-03")):
+    """The _write fixture plus a mix log: mix with t0 on `t0_days`, nets-only elsewhere."""
+    from pred_el_prices.production import mix
+
+    lear = _lear_log()
+    lear.to_parquet(tmp_path / "forecast_log.parquet")
+    days = ("2026-08-01", "2026-08-02", "2026-08-03")
+    nets_rows = _nets_log(lear, days)
+    site.append_log(tmp_path / site.LOG_DIR, nets_rows)
+    for day in days:
+        rows = nets_rows[nets_rows.index.normalize() == pd.Timestamp(day, tz="UTC")]
+        t0 = _t0_rows(lear, day) if day in t0_days else None
+        site.append_log(tmp_path / site.MIX_LOG_DIR, mix.mix_rows(rows, t0, "2026-07-31T09:12Z"))
+    prices, prices_qh = _prices(lear)
+    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh, primary=primary)
+    return _read_site(tmp_path)
+
+
+def _read_site(tmp_path) -> dict:
+    """Every published file, as bytes."""
+    files = [tmp_path / "latest.json", tmp_path / "history.json"]
+    files += sorted((tmp_path / "days").glob("*.json"))
+    return {p.relative_to(tmp_path).as_posix(): p.read_bytes() for p in files}
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+def test_primary_nets_ignores_the_mix_log_byte_for_byte(tmp_path, explicit):
+    plain, mixed = tmp_path / "plain", tmp_path / "mixed"
+    plain.mkdir()
+    mixed.mkdir()
+    _write(plain)
+    _write_mix(mixed, "nets")  # the same logs, plus a mix log
+    if not explicit:  # the default
+        write_site_json(mixed, mixed / "forecast_log.parquet", *_prices(_lear_log()))
+    published = _read_site(mixed)
+    assert published == _read_site(plain)
+    assert len(published) == 5 and b'"primary"' not in b"".join(published.values())
+
+
+def test_primary_mix_publishes_the_mix_in_the_nets_block(tmp_path):
+    out = _write_mix(tmp_path, "mix")
+    latest = json.loads(out["latest.json"])
+    n = latest["nets"]
+    assert n["model"] == site.MIX_MODEL_LABEL != site.NETS_MODEL_LABEL
+    assert n["primary"] == "mix" and n["trained_through"] == "2026-07-25"
+    assert len(n["hours"]) == 24 and len(n["quarters"]) == 96
+    q50 = n["hours"][0]["q"][latest["levels"].index(50)]
+    assert round(q50 - latest["hours"][0]["forecast"], 2) == 5.0  # (nets 0 + t0 10) / 2
+    # scoring is unchanged on the mix's 99 levels: its median sits on the actuals
+    history = json.loads(out["history.json"])
+    for d in history["days"]:
+        assert d["nets"]["primary"] == "mix" and d["nets"]["mae"] == 0.0
+        assert d["nets"]["mae_qh"] == 0.0 and d["nets"]["pinball"] is not None
+        assert d["mae"] == 5.0  # v1 (LEAR) untouched
+    day = json.loads(out["days/2026-08-01.json"])
+    assert day["nets"]["model"] == site.MIX_MODEL_LABEL and day["nets"]["mae"] == 0.0
+
+
+def test_primary_mix_falls_back_to_the_nets_without_t0(tmp_path):
+    out = _write_mix(tmp_path, "mix", t0_days=("2026-08-01",))
+    latest = json.loads(out["latest.json"])
+    assert latest["nets"]["primary"] == "nets"  # recorded: the nets were published
+    assert latest["nets"]["model"] == site.NETS_MODEL_LABEL
+    by_day = {d["day"]: d["nets"] for d in json.loads(out["history.json"])["days"]}
+    assert by_day["2026-08-01"]["primary"] == "mix" and by_day["2026-08-01"]["mae"] == 0.0
+    assert by_day["2026-08-02"]["primary"] == "nets" and by_day["2026-08-02"]["mae"] == 5.0
+    assert json.loads(out["days/2026-08-02.json"])["nets"]["primary"] == "nets"
+
+
+def test_primary_mix_skips_a_mix_built_on_an_older_nets_run(tmp_path):
+    _write_mix(tmp_path, "mix")
+    lear = pd.read_parquet(tmp_path / "forecast_log.parquet")
+    rerun = _nets_log(lear, ["2026-08-03"])
+    rerun["generated_utc"] = "2026-08-02T09:50:00+00:00"  # the mix step missed this run
+    site.append_log(tmp_path / site.LOG_DIR, rerun)
+    prices, prices_qh = _prices(lear)
+    write_site_json(tmp_path, tmp_path / "forecast_log.parquet", prices, prices_qh, primary="mix")
+    latest = json.loads((tmp_path / "latest.json").read_text(encoding="utf-8"))
+    assert latest["nets"]["primary"] == "nets"
+    assert latest["nets"]["generated_utc"] == "2026-08-02T09:50:00+00:00"
+
+
+@pytest.mark.parametrize(("argv", "want"), [([], "nets"), (["--primary", "mix"], "mix")])
+def test_cli_passes_the_primary_through(monkeypatch, argv, want):
+    import sys
+
+    from pred_el_prices import cli, daily_forecast
+
+    seen = {}
+    monkeypatch.setattr(daily_forecast, "run_daily", lambda **k: seen.update(k))
+    monkeypatch.setattr(sys, "argv", ["pep", "forecast", *argv])
+    cli.main()
+    assert seen["primary"] == want
+
+
+def test_an_unknown_primary_is_refused(tmp_path):
+    lear = _lear_log()
+    lear.to_parquet(tmp_path / "forecast_log.parquet")
+    with pytest.raises(ValueError, match="primary"):
+        write_site_json(tmp_path, tmp_path / "forecast_log.parquet", *_prices(lear), "t0")
+
+
 def test_build_site_rebuilds_from_existing_logs(tmp_path):
     pytest.importorskip("torch")  # the backfill module loads the network code
     from pred_el_prices.pipeline import cache

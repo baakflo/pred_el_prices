@@ -155,6 +155,29 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
   [--history ...] [--end DAY] --out DIR` writes latest/history/days without running
   any network. `backfill-nets` uses it for its own output.
 
+## nets+t0 mix (`production/mix.py`, shadow from 2026-10-29)
+
+- **What**: the equal-weight average of the nets' recalibrated percentiles and t0-beta's
+  (`production/t0_shadow.py`), level by level. t0's 21 levels go onto the 99-level grid
+  by PCHIP on the quantile function (monotone, exact at t0's levels, no extrapolation
+  beyond its q01/q99). Quarter-hours = the nets' quarter-hours shifted per level by what
+  the mix moved their hour (= the mixed hours + the nets' median shape), sorted, clipped.
+- **Runs**: t0 runs in both editions (evening rows flagged) before the site JSON; every
+  run with the nets logs the mix to `site-state/site/mix_log/YYYY-MM.parquet` (nets log
+  layout, final percentiles only, the nets run's flags, `components` = `nets+t0` or
+  `nets` when t0 failed, `nets_generated_utc`). Never across editions: a morning run whose
+  nets failed logs no mix. A pre-gate morning retry reruns t0 + mix when no morning mix
+  with t0 stands.
+- **Publishing**: `pep forecast --primary mix` (workflow: repository variable
+  `PEP_PRIMARY=mix`, or the dispatch input `primary`; default `nets`). The `nets` block
+  then carries the mix on each day where a mix with t0 stands on the day's nets run,
+  else the nets, and every block (latest, history days, day files) adds
+  `"primary": "mix" | "nets"`; the mix's `model` is "24 networks + t0-beta foundation
+  model, equal-weight quantile mix". Scores are computed on whichever is published (same
+  99 levels). History days are recomputed from the logs, so with `mix` every day the mix
+  log covers switches, back to the start of the shadow log. `--primary nets` leaves the
+  output byte-identical (the mix log is not read).
+
 ## Website (dev branch, local only until approved)
 
 Nets fan (bands 5-95, 10-90, 25-75, median line) is the hero, 15-minute view

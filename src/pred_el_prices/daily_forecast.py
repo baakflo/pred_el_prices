@@ -315,16 +315,27 @@ def lear_forecast(
 
 
 def write_site_json(
-    out_dir: Path, log_path: Path, prices: pd.Series, prices_qh: pd.Series | None = None
+    out_dir: Path,
+    log_path: Path,
+    prices: pd.Series,
+    prices_qh: pd.Series | None = None,
+    primary: str = "nets",
 ) -> None:
     """Derive latest.json, history.json and days/*.json from the logs + known prices.
 
     Site contract v2 (docs/production_v2.md): the v1 fields carry LEAR; when the
     network log (`nets_log/` in `out_dir`) covers a day, a `nets` block is added to
     it. `prices_qh`: 15-minute clearing prices for the quarter-hour actuals.
+
+    `primary` "mix": the `nets` block carries the nets+t0 mix (`mix_log/`) wherever a
+    mix with t0 stands on the day's nets run, else the nets; every block then says which
+    (`primary`), and the mix has its own model label. "nets" (default): the mix log is
+    not read and the output is what it always was.
     """
     from pred_el_prices.production import site as nets_site
 
+    if primary not in nets_site.PRIMARIES:
+        raise ValueError(f"primary must be one of {nets_site.PRIMARIES}, not {primary!r}")
     nets_path = out_dir / nets_site.LOG_DIR
     nets_log = nets_site.read_log(nets_path) if nets_site.log_exists(nets_path) else None
     if prices_qh is None:
@@ -336,6 +347,11 @@ def write_site_json(
     latest_day = log.index.normalize().max()
     lear_days = dict(iter(log.groupby(log.index.normalize())))
     nets_days = nets_site.by_day(nets_log) if nets_log is not None else {}
+    which: dict = {}  # day -> "mix" | "nets", --primary mix only (None: today's blocks)
+    if primary == "mix":
+        mix_log = nets_site.read_partitions(out_dir / nets_site.MIX_LOG_DIR)
+        mix_days = nets_site.by_day(mix_log) if mix_log is not None else {}
+        nets_days, which = nets_site.primary_days(nets_days, mix_days)
     empty = pd.DataFrame(columns=["kind"])
 
     def flag(rows: pd.DataFrame, col: str) -> bool:
@@ -346,7 +362,9 @@ def write_site_json(
         "schema": 2,
         "levels": nets_site.SITE_LEVELS,
     }
-    nets_latest = nets_site.latest_nets(nets_days.get(latest_day, empty), prices, prices_qh)
+    nets_latest = nets_site.latest_nets(
+        nets_days.get(latest_day, empty), prices, prices_qh, which.get(latest_day)
+    )
     if nets_latest is not None:
         latest["nets"] = nets_latest
 
@@ -432,8 +450,10 @@ def write_site_json(
 
     def nets_for(d: str) -> dict:
         # the nets log wins; a published block survives a log loss like the curves do
-        rows = nets_days.get(pd.Timestamp(d, tz="UTC"), empty)
-        block = nets_site.history_nets(rows, prices, prices_qh) or published_nets.get(d)
+        day = pd.Timestamp(d, tz="UTC")
+        rows = nets_days.get(day, empty)
+        block = nets_site.history_nets(rows, prices, prices_qh, which.get(day))
+        block = block or published_nets.get(d)
         return {"nets": block} if block else {}
 
     history = {
@@ -455,7 +475,7 @@ def write_site_json(
     (out_dir / "latest.json").write_text(json.dumps(latest, indent=1), encoding="utf-8")
     (out_dir / "history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
     _write_day_files(
-        out_dir, lear_days, nets_days, published, post_gate, day_flags, prices, prices_qh
+        out_dir, lear_days, nets_days, published, post_gate, day_flags, prices, prices_qh, which
     )
 
 
@@ -510,14 +530,16 @@ def _write_day_files(
     day_flags: dict[str, dict],
     prices: pd.Series,
     prices_qh: pd.Series,
+    which: dict | None = None,
 ) -> int:
     """days/YYYY-MM-DD.json: every delivery day in the detail latest.json has, plus scores.
 
     Sources per day: the LEAR log rows (else the published history curve, for days
-    lost to a log reseed) and the nets log rows. A file is rewritten only when its
-    content changed (new actuals, scores); files are never deleted. Returns the number
-    of files written.
+    lost to a log reseed) and the nets log rows (`which`: what they are, see
+    write_site_json). A file is rewritten only when its content changed (new actuals,
+    scores); files are never deleted. Returns the number of files written.
     """
+    which = which or {}
     from pred_el_prices.production import site as nets_site
 
     days_dir = out_dir / nets_site.DAYS_DIR
@@ -552,7 +574,7 @@ def _write_day_files(
             v1, score = {"delivery_day": key}, {"mae": None}
         payload = {**v1, "schema": 2, "levels": nets_site.SITE_LEVELS, **score}
         if day in nets_days:
-            block = nets_site.day_nets(nets_days[day], prices, prices_qh)
+            block = nets_site.day_nets(nets_days[day], prices, prices_qh, which.get(day))
             if block is not None:
                 payload["nets"] = block
         text = json.dumps(payload, separators=(",", ":"))
@@ -913,6 +935,7 @@ def run_daily(
     nets_bundle: Path | None = None,
     t0_shadow: bool = False,
     t0_all_checkpoint: Path | None = None,
+    primary: str = "nets",
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day.
 
@@ -925,6 +948,9 @@ def run_daily(
     the nets also logs the nets+t0 mix (production/mix.py) to mix_log/.
     `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
     (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
+    `primary`: what the site's `nets` block publishes, "nets" or "mix" (falling back
+    to the nets on days without a mix with t0); see write_site_json. Every slot of a
+    deployment must pass the same value, the refresh slots included.
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -979,7 +1005,9 @@ def run_daily(
             except requests.RequestException as e:
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
             _refresh_fallback_prices(cache_dir, end)
-        write_site_json(out_dir, log_path, site_prices(cache_dir), quarter_prices(cache_dir))
+        write_site_json(
+            out_dir, log_path, site_prices(cache_dir), quarter_prices(cache_dir), primary=primary
+        )
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
 
@@ -1074,14 +1102,14 @@ def run_daily(
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
                         allow_load_surrogate or flag_of(day_rows, "load_surrogate"), t0_shadow,
                     )  # fmt: skip
-                write_site_json(out_dir, log_path, prices, prices_qh)
+                write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
                 return None
             if action == "keep-late":
                 print(
                     f"evening edition for {delivery:%Y-%m-%d} stands; past the gate, "
                     "a post-gate replacement would downgrade the day"
                 )
-                write_site_json(out_dir, log_path, prices, prices_qh)
+                write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
@@ -1169,6 +1197,6 @@ def run_daily(
         from pred_el_prices.production.mix import mix_step
 
         mix_step(out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening)
-    write_site_json(out_dir, log_path, prices, prices_qh)
+    write_site_json(out_dir, log_path, prices, prices_qh, primary=primary)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

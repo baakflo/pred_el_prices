@@ -243,6 +243,14 @@ def main() -> None:
         help="With --t0-shadow: also log the fine-tuned t0 (13 covariate rows) from these "
         "weights to t0_all_log/ (never published, fail-soft; skipped if the file is absent)",
     )
+    fc.add_argument(
+        "--primary",
+        choices=["nets", "mix"],
+        default="nets",
+        help="What the site's nets block publishes: the networks, or the nets+t0 quantile "
+        "mix (falls back to the nets on days without t0; the mix is logged either way). "
+        "Pass the same value on every slot, refresh slots included",
+    )
 
     tn = sub.add_parser(
         "train-nets",
@@ -501,6 +509,7 @@ def main() -> None:
             nets_bundle=args.nets_bundle,
             t0_shadow=args.t0_shadow,
             t0_all_checkpoint=args.t0_all_checkpoint,
+            primary=args.primary,
         )
     elif args.command == "train-nets":
         import time
