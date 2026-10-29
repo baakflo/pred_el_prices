@@ -37,9 +37,9 @@ from pred_el_prices.experiments.qnn_de import (
 )
 from pred_el_prices.features.dataset import FUEL_SETTLEMENT_LAG_DAYS, NEIGHBOUR_ZONES
 from pred_el_prices.features.tso_areas import entsoe_de_series
-from pred_el_prices.models import qh_shape
+from pred_el_prices.models import qh_shape, recalibrate
 from pred_el_prices.models.qnn import FittedNet, QNNConfig, fit, predict
-from pred_el_prices.models.recalibrate import LEVELS, pit, quantile_at
+from pred_el_prices.models.recalibrate import MIN_PIT_DAYS, PIT_WINDOW_DAYS
 from pred_el_prices.pipeline import cache
 from pred_el_prices.pipeline.entsoe import resample_hourly
 from pred_el_prices.production.site import QH_START, R_COLS
@@ -57,8 +57,6 @@ BODY = {
     "weight_decay": 8.548006178626775e-05,
     "batch_size": 32,
 }
-PIT_WINDOW_DAYS = 365
-MIN_PIT_DAYS = 28  # fewer days of PIT history: publish uncalibrated, flagged
 LOAD_NB_COLS = [c.replace("rl_", "load_") for c in NEIGHBOUR_COLS]
 
 
@@ -361,18 +359,9 @@ def recalibrate_day(
     the window count (their prices are known at D's gate). Returns (percentiles, number
     of PIT days used); with fewer than `min_days` the raw percentiles pass through.
     """
-    last = delivery - pd.Timedelta(days=2)
-    h = history[R_COLS].dropna()
-    days = h.index.normalize()
-    a = actual.reindex(h.index)
-    sel = (days <= last) & (days > last - pd.Timedelta(days=window_days)) & a.notna().to_numpy()
-    n_days = int(days[sel].nunique())
-    if n_days < min_days:
-        return raw, 0
-    u = pit(h[sel].to_numpy(dtype=float), a[sel].to_numpy())
-    taus = np.clip(np.quantile(u, LEVELS), 1e-4, 1 - 1e-4)
-    q = np.sort(quantile_at(raw, taus), axis=1)
-    return np.clip(q, *PRICE_BOUNDS), n_days
+    return recalibrate.recalibrate_day(
+        raw, history[R_COLS], actual, delivery, window_days, min_days, PRICE_BOUNDS
+    )
 
 
 def load_history(seed_path: Path | None, log_path: Path | None) -> pd.DataFrame:

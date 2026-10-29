@@ -18,6 +18,10 @@ import pandas as pd
 
 LEVELS = np.arange(1, 100) / 100.0
 _LN5 = np.log(5.0)  # (1 - 0.95) / (1 - 0.99)
+# the production rule (nets and t0 alike): PIT of forecast days <= D-2 in a trailing
+# 365-day window; with fewer PIT days the raw percentiles pass through, flagged
+PIT_WINDOW_DAYS = 365
+MIN_PIT_DAYS = 28
 
 
 def pit(q: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -55,6 +59,37 @@ def quantile_at(q: np.ndarray, taus: np.ndarray) -> np.ndarray:
             w = pos - a
             out[:, j] = (1 - w) * q[:, a] + w * q[:, a + 1]
     return out
+
+
+def recalibrate_day(
+    raw: np.ndarray,
+    history: pd.DataFrame,
+    actual: pd.Series,
+    delivery: pd.Timestamp,
+    window_days: int = PIT_WINDOW_DAYS,
+    min_days: int = MIN_PIT_DAYS,
+    bounds: tuple[float, float] | None = None,
+) -> tuple[np.ndarray, int]:
+    """Rolling PIT recalibration of one delivery day's percentiles `raw` (24, 99).
+
+    `history`: past hourly forecasts, 99 sorted percentile columns (raw, as the model
+    made them); only days <= D-2 inside the window count (their prices are known at D's
+    gate). Returns (percentiles, number of PIT days used); with fewer than `min_days` the
+    raw percentiles pass through unchanged and 0 is returned. `bounds`: clip the
+    recalibrated percentiles (the SDAC limits).
+    """
+    last = delivery - pd.Timedelta(days=2)
+    h = history.dropna()
+    days = h.index.normalize()
+    a = actual.reindex(h.index)
+    sel = (days <= last) & (days > last - pd.Timedelta(days=window_days)) & a.notna().to_numpy()
+    n_days = int(days[sel].nunique())
+    if n_days < min_days:
+        return raw, 0
+    u = pit(h[sel].to_numpy(dtype=float), a[sel].to_numpy())
+    taus = np.clip(np.quantile(u, LEVELS), 1e-4, 1 - 1e-4)
+    q = np.sort(quantile_at(raw, taus), axis=1)
+    return (np.clip(q, *bounds) if bounds is not None else q), n_days
 
 
 def recalibrate(
