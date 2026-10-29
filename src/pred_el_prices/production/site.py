@@ -25,8 +25,12 @@ R_COLS = [c.replace("q", "r") for c in Q_COLS]
 SITE_LEVELS = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 SITE_COLS = [f"q{lv:02d}" for lv in SITE_LEVELS]
 NETS_MODEL_LABEL = "24 networks (12 JSU + 12 quantile), recalibrated"
+T0_MODEL_LABEL = "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid"
 MIX_MODEL_LABEL = "24 networks + t0-beta foundation model, equal-weight quantile mix"
-PRIMARIES = ("nets", "mix")  # what the `nets` block publishes (pep forecast --primary)
+# the site's model blocks (pep forecast --site-models), each one a sibling key of the
+# same shape; "nets" is always among them, alone it is the site as it always was
+SITE_MODELS = ("nets", "t0", "mix")
+MODEL_LABELS = {"nets": NETS_MODEL_LABEL, "t0": T0_MODEL_LABEL, "mix": MIX_MODEL_LABEL}
 LOG_DIR = "nets_log"  # monthly partitions
 LOG_NAME = "nets_log.parquet"  # single-file layout (legacy state, backfill outputs)
 MIX_LOG_DIR = "mix_log"  # nets+t0 mix (production/mix.py), monthly partitions only
@@ -204,13 +208,19 @@ def by_day(log: pd.DataFrame) -> dict:
 
 
 # log flag -> published key; set only when true. "backfill" rows come from
-# `pep backfill-nets` (a replay, not a live forecast); the others mark substitute inputs.
+# `pep backfill-nets` (a replay, not a live forecast); evening/surrogates mark substitute
+# inputs. The last two exist on the t0/mix blocks' rows only (production/mix.site_days):
+# a mix whose nets and t0 came from different editions, t0 quarters without a nets shape.
 NETS_FLAGS = {
     "backfill": "replay",
     "evening": "evening",
     "load_surrogate": "load_surrogate",
     "neighbour_surrogate": "neighbour_surrogate",
+    "mixed_editions": "mixed_editions",
+    "flat_quarters": "flat_quarters",
 }
+# component runs of a mix block, published next to its own generated_utc
+PROVENANCE = ("nets_generated_utc", "t0_generated_utc")
 
 
 def _replay(h: pd.DataFrame) -> dict:
@@ -218,77 +228,43 @@ def _replay(h: pd.DataFrame) -> dict:
     return {key: True for col, key in NETS_FLAGS.items() if col in h and h[col].eq(True).any()}
 
 
-def primary_days(nets_days: dict, mix_days: dict, since: pd.Timestamp) -> tuple[dict, dict]:
-    """Per delivery day, the rows a `--primary mix` site publishes and which model they are.
-
-    From delivery day `since` (the cut-over, UTC) on: the mix where its standing rows
-    include t0 and were built on the standing nets run (a nets rerun the mix step missed
-    must not leave an older mix in front of it); otherwise the nets, recorded as such.
-    Before `since` the nets stand unrecorded, so already-published days keep the blocks
-    (and scores) they went out with. Returns ({day: rows}, {day: "mix" | "nets"}).
-    """
-    rows, which = {}, {}
-    for day in sorted({*nets_days, *mix_days}):
-        nets, mix = nets_days.get(day), mix_days.get(day)
-        if day < since:
-            if nets is not None:
-                rows[day] = nets
-        elif mix is not None and _mix_stands(mix, nets):
-            rows[day], which[day] = mix, "mix"
-        elif nets is not None:
-            rows[day], which[day] = nets, "nets"
-    return rows, which
-
-
-def _mix_stands(mix: pd.DataFrame, nets: pd.DataFrame | None) -> bool:
-    h = mix[mix["kind"] == "h"]
-    if h.empty or not (h["components"] == MIX_WITH_T0).all():
-        return False
-    nets_h = nets[nets["kind"] == "h"] if nets is not None else None
-    if nets_h is None or nets_h.empty:
-        return True
-    return str(nets_h["generated_utc"].iloc[0]) == str(h["nets_generated_utc"].iloc[0])
-
-
-def latest_nets(rows: pd.DataFrame, prices, prices_qh, primary: str | None = None) -> dict | None:
-    """The `nets` block of latest.json from one day's log rows (None without hourly rows).
-
-    `primary` (a `--primary mix` site only): "mix" or "nets", what the rows are; adds the
-    `primary` key and the mix's own model label. None (`--primary nets`): today's block.
-    """
+def latest_nets(rows: pd.DataFrame, prices, prices_qh, model: str = "nets") -> dict | None:
+    """A model block of latest.json from one day's rows in the nets log layout (None
+    without hourly rows): `nets` from the nets log, `t0`/`mix` from mix.site_days. t0 is
+    zero-shot and has no trained_through."""
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
+    trained = h.get("trained_through")  # t0 is zero-shot: none
     return {
-        "model": MIX_MODEL_LABEL if primary == "mix" else NETS_MODEL_LABEL,
-        **({"primary": primary} if primary else {}),
-        "trained_through": str(h["trained_through"].iloc[0]),
+        "model": MODEL_LABELS[model],
+        **({"trained_through": str(trained.iloc[0])} if trained is not None else {}),
         "generated_utc": str(h["generated_utc"].iloc[0]),
+        **{col: str(h[col].iloc[0]) for col in PROVENANCE if col in h},
         **_replay(h),
         "hours": _curve(h, prices),
         "quarters": _curve(qh, prices_qh),
     }
 
 
-def day_nets(rows: pd.DataFrame, prices, prices_qh, primary: str | None = None) -> dict | None:
-    """The `nets` block of a day file: latest.json's block plus the day's scores."""
-    block = latest_nets(rows, prices, prices_qh, primary)
+def day_nets(rows: pd.DataFrame, prices, prices_qh, model: str = "nets") -> dict | None:
+    """A model block of a day file: latest.json's block plus the day's scores."""
+    block = latest_nets(rows, prices, prices_qh, model)
     if block is None:
         return None
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     return {**block, **day_scores(h, qh, prices.reindex(h.index), prices_qh.reindex(qh.index))}
 
 
-def history_nets(rows: pd.DataFrame, prices, prices_qh, primary: str | None = None) -> dict | None:
-    """The `nets` block of a history.json day: scores plus the hourly curve at
-    HISTORY_LEVELS (keys q1, q5, q10, q50, q90, q95, q99); `primary` as latest_nets."""
+def history_nets(rows: pd.DataFrame, prices, prices_qh) -> dict | None:
+    """A model block of a history.json day: scores plus the hourly curve at
+    HISTORY_LEVELS (keys q1, q5, q10, q50, q90, q95, q99)."""
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
     a_h, a_qh = prices.reindex(h.index), prices_qh.reindex(qh.index)
     cols = [f"q{lv:02d}" for lv in HISTORY_LEVELS]
     return {
-        **({"primary": primary} if primary else {}),
         **day_scores(h, qh, a_h, a_qh),
         **_replay(h),
         "hours": [

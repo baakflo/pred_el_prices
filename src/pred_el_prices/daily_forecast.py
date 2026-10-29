@@ -319,6 +319,7 @@ def write_site_json(
     log_path: Path,
     prices: pd.Series,
     prices_qh: pd.Series | None = None,
+    site_models: tuple[str, ...] = ("nets",),
     primary: str = "nets",
     mix_from: str | None = None,
 ) -> None:
@@ -328,19 +329,23 @@ def write_site_json(
     network log (`nets_log/` in `out_dir`) covers a day, a `nets` block is added to
     it. `prices_qh`: 15-minute clearing prices for the quarter-hour actuals.
 
-    `primary` "mix": the `nets` block carries the nets+t0 mix (`mix_log/`) wherever a
-    mix with t0 stands on the day's nets run, else the nets; every block then says which
-    (`primary`), and the mix has its own model label. "nets" (default): the mix log is
-    not read and the output is what it always was. `mix_from` (YYYY-MM-DD, required
-    with "mix"): the cut-over delivery day; earlier days keep their published nets
-    blocks untouched instead of being rewritten from the shadow mix log.
+    `site_models` beyond ("nets",): sibling `t0` / `mix` blocks of the nets block's
+    shape wherever the day has them (production/mix.site_days), and a per-day `primary`
+    key, the model the site shows as its headline fan: `primary` from delivery day
+    `mix_from` (YYYY-MM-DD, the cut-over, required unless "nets") on, "nets" before; a
+    day lacking that model's block falls back to the nets, recorded as
+    `primary_fallback`. The default ("nets",) reads neither the t0 nor the mix log and
+    writes what the site always was, byte for byte.
     """
     from pred_el_prices.production import site as nets_site
 
-    if primary not in nets_site.PRIMARIES:
-        raise ValueError(f"primary must be one of {nets_site.PRIMARIES}, not {primary!r}")
-    if primary == "mix" and not mix_from:
-        raise ValueError("primary 'mix' needs mix_from, the cut-over delivery day")
+    extra = [m for m in site_models if m != "nets"]
+    if "nets" not in site_models or not set(site_models) <= set(nets_site.SITE_MODELS):
+        raise ValueError(f"site_models: 'nets' plus any of t0, mix, not {site_models!r}")
+    if primary not in site_models:
+        raise ValueError(f"primary {primary!r} is not among the site models {site_models!r}")
+    if primary != "nets" and not mix_from:
+        raise ValueError(f"primary {primary!r} needs mix_from, the cut-over delivery day")
     nets_path = out_dir / nets_site.LOG_DIR
     nets_log = nets_site.read_log(nets_path) if nets_site.log_exists(nets_path) else None
     if prices_qh is None:
@@ -352,13 +357,22 @@ def write_site_json(
     latest_day = log.index.normalize().max()
     lear_days = dict(iter(log.groupby(log.index.normalize())))
     nets_days = nets_site.by_day(nets_log) if nets_log is not None else {}
-    which: dict = {}  # day -> "mix" | "nets", --primary mix only (None: today's blocks)
-    if primary == "mix":
-        mix_log = nets_site.read_partitions(out_dir / nets_site.MIX_LOG_DIR)
-        mix_days = nets_site.by_day(mix_log) if mix_log is not None else {}
-        since = pd.Timestamp(mix_from, tz="UTC")
-        nets_days, which = nets_site.primary_days(nets_days, mix_days, since)
+    model_days = {"nets": nets_days}  # model -> {day: rows in the nets log layout}
+    if extra:
+        from pred_el_prices.production.mix import site_days
+
+        model_days |= site_days(out_dir, nets_days, extra)
+    since = pd.Timestamp(mix_from, tz="UTC") if primary != "nets" else None
     empty = pd.DataFrame(columns=["kind"])
+
+    def primary_of(day: str, blocks: dict) -> dict:
+        # the headline model of a day with model blocks (none without: LEAR-only days)
+        if not extra or not blocks:
+            return {}
+        want = primary if since is not None and pd.Timestamp(day, tz="UTC") >= since else "nets"
+        if want in blocks:
+            return {"primary": want}
+        return {"primary": "nets", "primary_fallback": want} if "nets" in blocks else {}
 
     def flag(rows: pd.DataFrame, col: str) -> bool:
         return bool(rows.get(col, pd.Series(False, index=rows.index)).fillna(False).any())
@@ -368,11 +382,12 @@ def write_site_json(
         "schema": 2,
         "levels": nets_site.SITE_LEVELS,
     }
-    nets_latest = nets_site.latest_nets(
-        nets_days.get(latest_day, empty), prices, prices_qh, which.get(latest_day)
-    )
-    if nets_latest is not None:
-        latest["nets"] = nets_latest
+    latest_blocks = {}
+    for model, days_of in model_days.items():
+        block = nets_site.latest_nets(days_of.get(latest_day, empty), prices, prices_qh, model)
+        if block is not None:
+            latest_blocks[model] = block
+    latest |= primary_of(f"{latest_day:%Y-%m-%d}", latest_blocks) | latest_blocks
 
     err = (log["forecast"] - prices.reindex(log.index)).abs()
     daily = err.groupby(err.index.normalize()).agg(["mean", "count"])
@@ -432,13 +447,15 @@ def write_site_json(
         if pd.Timestamp(rows["generated_utc"].iloc[0]) > day_gate:
             post_gate.add(f"{day:%Y-%m-%d}")
     history_path = out_dir / "history.json"
-    published_nets: dict[str, dict] = {}
+    # model -> day -> published block (a site back on nets alone drops the t0/mix ones)
+    published_blocks: dict[str, dict[str, dict]] = {m: {} for m in model_days}
     published: dict[str, dict] = {}
     if history_path.exists():
         for entry in json.loads(history_path.read_text(encoding="utf-8"))["days"]:
             published[entry["day"]] = entry
-            if "nets" in entry:
-                published_nets[entry["day"]] = entry["nets"]
+            for model, blocks in published_blocks.items():
+                if model in entry:
+                    blocks[entry["day"]] = entry[model]
             if entry["day"] not in days:
                 days[entry["day"]] = entry["mae"]
                 if "partial" in entry:
@@ -455,12 +472,15 @@ def write_site_json(
                     day_flags[entry["day"]] = merged
 
     def nets_for(d: str) -> dict:
-        # the nets log wins; a published block survives a log loss like the curves do
+        # the logs win; a published block survives a log loss like the curves do
         day = pd.Timestamp(d, tz="UTC")
-        rows = nets_days.get(day, empty)
-        block = nets_site.history_nets(rows, prices, prices_qh, which.get(day))
-        block = block or published_nets.get(d)
-        return {"nets": block} if block else {}
+        blocks = {}
+        for model, days_of in model_days.items():
+            block = nets_site.history_nets(days_of.get(day, empty), prices, prices_qh)
+            block = block or published_blocks[model].get(d)
+            if block:
+                blocks[model] = block
+        return primary_of(d, blocks) | blocks
 
     history = {
         "days": [
@@ -481,8 +501,9 @@ def write_site_json(
     (out_dir / "latest.json").write_text(json.dumps(latest, indent=1), encoding="utf-8")
     (out_dir / "history.json").write_text(json.dumps(history, indent=1), encoding="utf-8")
     _write_day_files(
-        out_dir, lear_days, nets_days, published, post_gate, day_flags, prices, prices_qh, which
-    )
+        out_dir, lear_days, model_days, published, post_gate, day_flags, prices, prices_qh,
+        primary_of,
+    )  # fmt: skip
 
 
 def _lear_day(day: pd.Timestamp, hours: pd.DataFrame, prices: pd.Series) -> dict:
@@ -530,27 +551,27 @@ def _lear_day(day: pd.Timestamp, hours: pd.DataFrame, prices: pd.Series) -> dict
 def _write_day_files(
     out_dir: Path,
     lear_days: dict,
-    nets_days: dict,
+    model_days: dict[str, dict],
     published: dict[str, dict],
     post_gate: set[str],
     day_flags: dict[str, dict],
     prices: pd.Series,
     prices_qh: pd.Series,
-    which: dict | None = None,
+    primary_of=None,
 ) -> int:
     """days/YYYY-MM-DD.json: every delivery day in the detail latest.json has, plus scores.
 
     Sources per day: the LEAR log rows (else the published history curve, for days
-    lost to a log reseed) and the nets log rows (`which`: what they are, see
-    write_site_json). A file is rewritten only when its content changed (new actuals,
-    scores); files are never deleted. Returns the number of files written.
+    lost to a log reseed) and the model blocks' rows (`model_days`: model -> {day:
+    rows}; `primary_of(day, blocks)`: the day's `primary` keys, see write_site_json).
+    A file is rewritten only when its content changed (new actuals, scores); files are
+    never deleted. Returns the number of files written.
     """
-    which = which or {}
     from pred_el_prices.production import site as nets_site
 
     days_dir = out_dir / nets_site.DAYS_DIR
     days_dir.mkdir(parents=True, exist_ok=True)
-    keys = {f"{d:%Y-%m-%d}" for d in [*lear_days, *nets_days]}
+    keys = {f"{d:%Y-%m-%d}" for d in [*lear_days, *(d for m in model_days.values() for d in m)]}
     keys |= {d for d, e in published.items() if "hours" in e}
     written = 0
     for key in sorted(keys):
@@ -579,10 +600,13 @@ def _write_day_files(
         else:
             v1, score = {"delivery_day": key}, {"mae": None}
         payload = {**v1, "schema": 2, "levels": nets_site.SITE_LEVELS, **score}
-        if day in nets_days:
-            block = nets_site.day_nets(nets_days[day], prices, prices_qh, which.get(day))
-            if block is not None:
-                payload["nets"] = block
+        blocks = {}
+        for model, days_of in model_days.items():
+            if day in days_of:
+                block = nets_site.day_nets(days_of[day], prices, prices_qh, model)
+                if block is not None:
+                    blocks[model] = block
+        payload |= (primary_of(key, blocks) if primary_of else {}) | blocks
         text = json.dumps(payload, separators=(",", ":"))
         path = days_dir / f"{key}.json"
         if path.exists() and path.read_text(encoding="utf-8") == text:
@@ -941,6 +965,7 @@ def run_daily(
     nets_bundle: Path | None = None,
     t0_shadow: bool = False,
     t0_all_checkpoint: Path | None = None,
+    site_models: tuple[str, ...] = ("nets",),
     primary: str = "nets",
     mix_from: str | None = None,
 ) -> Path | None:
@@ -955,10 +980,9 @@ def run_daily(
     the nets also logs the nets+t0 mix (production/mix.py) to mix_log/.
     `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
     (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
-    `primary`: what the site's `nets` block publishes, "nets" or "mix" (falling back
-    to the nets on days without a mix with t0); see write_site_json. Every slot of a
-    deployment must pass the same value, the refresh slots included. `mix_from`: the
-    mix's cut-over delivery day (YYYY-MM-DD), required with "mix".
+    `site_models`, `primary`, `mix_from`: the site's model blocks and headline model,
+    see write_site_json. Every slot of a deployment must pass the same values, the
+    refresh slots included.
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -980,6 +1004,7 @@ def run_daily(
     )
     run_date = (delivery - pd.Timedelta(days=1)).date()
     log_path = out_dir / "forecast_log.parquet"
+    site_kw = {"site_models": tuple(site_models), "primary": primary, "mix_from": mix_from}
 
     if refresh_only:
         # Post-auction slot: auction results publish ~12:45 CET/CEST, so a
@@ -1014,12 +1039,7 @@ def run_daily(
                 print(f"WARN: ENTSO-E refresh failed ({e}); rewriting from cached prices")
             _refresh_fallback_prices(cache_dir, end)
         write_site_json(
-            out_dir,
-            log_path,
-            site_prices(cache_dir),
-            quarter_prices(cache_dir),
-            primary=primary,
-            mix_from=mix_from,
+            out_dir, log_path, site_prices(cache_dir), quarter_prices(cache_dir), **site_kw
         )
         print("refresh-only: site JSON rewritten with current prices")
         return out_dir / "latest.json"
@@ -1115,18 +1135,14 @@ def run_daily(
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
                         allow_load_surrogate or flag_of(day_rows, "load_surrogate"), t0_shadow,
                     )  # fmt: skip
-                write_site_json(
-                    out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from
-                )
+                write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
                 return None
             if action == "keep-late":
                 print(
                     f"evening edition for {delivery:%Y-%m-%d} stands; past the gate, "
                     "a post-gate replacement would downgrade the day"
                 )
-                write_site_json(
-                    out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from
-                )
+                write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
                 return None
             print(f"evening edition for {delivery:%Y-%m-%d} logged; this run replaces it")
 
@@ -1214,6 +1230,6 @@ def run_daily(
         from pred_el_prices.production.mix import mix_step
 
         mix_step(out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening)
-    write_site_json(out_dir, log_path, prices, prices_qh, primary=primary, mix_from=mix_from)
+    write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

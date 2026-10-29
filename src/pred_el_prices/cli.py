@@ -244,18 +244,26 @@ def main() -> None:
         "weights to t0_all_log/ (never published, fail-soft; skipped if the file is absent)",
     )
     fc.add_argument(
-        "--primary",
-        choices=["nets", "mix"],
+        "--site-models",
         default="nets",
-        help="What the site's nets block publishes: the networks, or the nets+t0 quantile "
-        "mix (falls back to the nets on days without t0; the mix is logged either way). "
-        "Pass the same value on every slot, refresh slots included",
+        help="Model blocks of the site JSON, comma-separated: nets plus any of t0, mix "
+        "(sibling blocks of the nets block's shape, and a per-day `primary` key). Default "
+        "nets: the site as it always was. Pass the same value on every slot, refresh "
+        "slots included",
+    )
+    fc.add_argument(
+        "--primary",
+        choices=["nets", "mix", "t0"],
+        default="nets",
+        help="The site's headline model per day (the `primary` key; must be among "
+        "--site-models): from --mix-from on, falling back to the nets on days without "
+        "its block; earlier days stay nets",
     )
     fc.add_argument(
         "--mix-from",
         default=None,
-        help="Cut-over UTC delivery day (YYYY-MM-DD) of --primary mix; required with it. "
-        "Earlier days keep their published nets blocks",
+        help="Cut-over UTC delivery day (YYYY-MM-DD) of a --primary other than nets; "
+        "required with it",
     )
 
     tn = sub.add_parser(
@@ -500,13 +508,21 @@ def main() -> None:
         print(f"report written: {page}")
     elif args.command == "forecast":
         from pred_el_prices.daily_forecast import run_daily
+        from pred_el_prices.production.site import SITE_MODELS
 
-        if args.primary == "mix":
+        wanted = {m.strip() for m in args.site_models.split(",") if m.strip()}
+        if "nets" not in wanted or not wanted <= set(SITE_MODELS):
+            parser.error(f"--site-models: nets plus any of t0, mix, not {args.site_models!r}")
+        site_models = tuple(m for m in SITE_MODELS if m in wanted)  # block order: nets, t0, mix
+        if args.primary not in site_models:
+            parser.error(f"--primary {args.primary} needs it among --site-models")
+        if args.primary != "nets":
             try:
                 date.fromisoformat(args.mix_from or "")
             except ValueError:
                 parser.error(
-                    "--primary mix needs --mix-from YYYY-MM-DD (the cut-over delivery day)"
+                    f"--primary {args.primary} needs --mix-from YYYY-MM-DD "
+                    "(the cut-over delivery day)"
                 )
 
         run_daily(
@@ -523,6 +539,7 @@ def main() -> None:
             nets_bundle=args.nets_bundle,
             t0_shadow=args.t0_shadow,
             t0_all_checkpoint=args.t0_all_checkpoint,
+            site_models=site_models,
             primary=args.primary,
             mix_from=args.mix_from,
         )

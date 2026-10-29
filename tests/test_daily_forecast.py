@@ -593,9 +593,10 @@ def test_t0_and_the_mix_run_before_the_site_json(tmp_path, monkeypatch, evening)
     _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
     order = []
     _record_t0_and_mix(monkeypatch, order)
-    _run_nets(tmp_path, t0_shadow=True, evening=evening, primary="mix", mix_from="2026-10-25")
+    site_kw = {"site_models": ("nets", "t0", "mix"), "primary": "mix", "mix_from": "2026-10-25"}
+    _run_nets(tmp_path, t0_shadow=True, evening=evening, **site_kw)
     assert [o[0] for o in order] == ["t0", "mix", "site"]
-    assert order[2][1]["primary"] == "mix" and order[2][1]["mix_from"] == "2026-10-25"
+    assert order[2][1] == site_kw
     t0_args, mix_args = order[0][1], order[1][1]
     assert t0_args[-1] is evening
     assert mix_args[2] == "T0 ROWS" and mix_args[-1] is evening  # this run's t0 rows
@@ -612,10 +613,10 @@ def test_retry_reruns_t0_and_the_mix_when_the_mix_lacks_t0(tmp_path, monkeypatch
     monkeypatch.setattr(mix, "mix_logged", lambda *a: False)  # its t0 had failed
     order = []
     _record_t0_and_mix(monkeypatch, order)
-    _run_nets(tmp_path, t0_shadow=True, primary="mix")
+    _run_nets(tmp_path, t0_shadow=True, site_models=("nets", "mix"), primary="mix")
     assert nets_calls == []  # the standing nets are not redone
     assert [o[0] for o in order] == ["t0", "mix", "site"]
-    assert order[1][1][2] == "T0 ROWS" and order[2][1]["primary"] == "mix"
+    assert order[1][1][2] == "T0 ROWS" and order[2][1]["site_models"] == ("nets", "mix")
 
 
 def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatch):

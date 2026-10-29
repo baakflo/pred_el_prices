@@ -10,7 +10,12 @@ log, in the nets log's layout (kind "h": 24 hourly rows, kind "qh": 96 quarter-h
 final percentiles only - nothing recalibrates on the mix), with the nets run's flags plus
 `components` ("nets+t0", or "nets" when t0 failed that run: then the rows are the nets'
 own) and `nets_generated_utc` (the nets run the mix was built on). The nets are required:
-without them nothing is logged. Published only with `pep forecast --primary mix`.
+without them nothing is logged.
+
+Published with `pep forecast --site-models nets,t0,mix` as the site's `t0` and `mix`
+blocks (site_days): the mix from this log where it stands on the day's nets run, else
+mixed at site-build time from the standing nets and t0 rows, so the blocks reach back to
+the start of the t0 log.
 """
 
 from pathlib import Path
@@ -25,11 +30,13 @@ from pred_el_prices.production.site import (
     Q_COLS,
     QUANTILES,
     _write_partitions,
+    by_day,
     log_exists,
     read_log,
     read_partitions,
 )
 from pred_el_prices.production.t0_shadow import LEVELS as T0_LEVELS
+from pred_el_prices.production.t0_shadow import LOG_DIR as T0_LOG_DIR
 from pred_el_prices.production.t0_shadow import Q_NAMES as T0_COLS
 
 PRICE_BOUNDS = (-500.0, 4000.0)  # SDAC limits, as experiments.qnn_de (restated: no torch)
@@ -158,3 +165,132 @@ def mix_logged(out_dir: Path, delivery: pd.Timestamp) -> bool:
         return False
     h = log[(log.index.normalize() == delivery) & (log["kind"] == "h")]
     return bool(len(h)) and not _evening(h) and bool((h["components"] == WITH_T0).all())
+
+
+# ------------------------------------------------------------------ site blocks
+
+
+def read_t0(out_dir: Path) -> pd.DataFrame | None:
+    """Standing t0 rows (the last logged run per hour); None without a t0 log."""
+    parts = sorted((Path(out_dir) / T0_LOG_DIR).glob("*.parquet"))
+    if not parts:
+        return None
+    log = pd.concat([pd.read_parquet(p) for p in parts])
+    return log[~log.index.duplicated(keep="last")].sort_index()
+
+
+def _flag(rows: pd.DataFrame | None, col: str) -> bool:
+    return rows is not None and col in rows and bool(rows[col].eq(True).any())
+
+
+def _complete(rows: pd.DataFrame | None):
+    """(hours, quarters) of one day's nets-layout rows, None unless 24 and 96 of them."""
+    if rows is None:
+        return None
+    h = rows[rows["kind"] == "h"].sort_index()
+    qh = rows[rows["kind"] == "qh"].sort_index()
+    return (h, qh) if len(h) == 24 and len(qh) == 96 else None
+
+
+def _layout(h: pd.DataFrame, qh: pd.DataFrame, generated_utc: str, **flags) -> pd.DataFrame:
+    """Hourly + quarter-hour percentiles as nets log rows (kind, generated_utc, flags)."""
+    values = pd.concat([h[Q_COLS].astype("float32"), qh[Q_COLS].astype("float32")])
+    meta = pd.DataFrame(
+        {"kind": ["h"] * len(h) + ["qh"] * len(qh), "generated_utc": generated_utc},
+        index=values.index,
+    ).assign(**flags)
+    rows = pd.concat([meta, values], axis=1)
+    rows.index.name = "t"
+    return rows
+
+
+def _mix_stands(mix: pd.DataFrame, nets: pd.DataFrame | None) -> bool:
+    """Whether a logged mix includes t0 and was built on the standing nets run (a nets
+    rerun the mix step missed must not leave an older mix in front of it)."""
+    h = mix[mix["kind"] == "h"]
+    if h.empty or not (h["components"] == WITH_T0).all():
+        return False
+    nets_h = nets[nets["kind"] == "h"] if nets is not None else None
+    if nets_h is None or nets_h.empty:
+        return True
+    return str(nets_h["generated_utc"].iloc[0]) == str(h["nets_generated_utc"].iloc[0])
+
+
+def t0_site_rows(t0: pd.DataFrame, nets: pd.DataFrame | None) -> pd.DataFrame:
+    """One day's t0 block rows in the nets log layout (24 t0 log rows in).
+
+    Hours: t0 on the 99-level grid (t0_on_grid). Quarters: those hours + the nets'
+    within-hour shape of the day, as for the mix (mix_quarters with t0 in the mix's place:
+    nets_qh + t0_h - nets_h), from whichever nets edition stands: the shape is the nets'
+    quarter-hour model around their own hour, not their forecast of the hour's level.
+    Without complete nets rows for the day the quarters repeat t0's hour (flagged
+    flat_quarters); t0 itself forecasts hours only.
+    """
+    h = t0_on_grid(t0.sort_index())
+    nets_hq = _complete(nets)
+    if nets_hq is not None:
+        qh = mix_quarters(nets_hq[1], nets_hq[0], h)
+    else:
+        qh = h.reindex(pd.date_range(h.index[0], periods=4 * len(h), freq="15min"), method="ffill")
+    return _layout(
+        h,
+        qh,
+        str(t0["generated_utc"].iloc[0]),
+        evening=_flag(t0, "evening"),
+        load_surrogate=_flag(t0, "load_surrogate"),
+        flat_quarters=nets_hq is None,
+    )
+
+
+def site_mix_rows(nets: pd.DataFrame, t0: pd.DataFrame) -> pd.DataFrame:
+    """One day's mix at site-build time from the standing nets and t0 rows: mix_rows, as
+    mix_step logs it, plus t0's run (`t0_generated_utc`). Stamped with the later of the two
+    runs. The flags are either component's (an evening t0 makes an evening mix too), and
+    `mixed_editions` marks nets and t0 from different editions (2026-10-25: the morning
+    nets failed, the evening nets stood next to the morning t0)."""
+    nets_gen = str(nets.loc[nets["kind"] == "h", "generated_utc"].iloc[0])
+    t0_gen = str(t0["generated_utc"].iloc[0])
+    stamp = max((nets_gen, t0_gen), key=pd.Timestamp)
+    rows = mix_rows(nets, t0.sort_index(), stamp)
+    return rows.assign(
+        t0_generated_utc=t0_gen,
+        evening=_flag(nets, "evening") or _flag(t0, "evening"),
+        load_surrogate=_flag(nets, "load_surrogate") or _flag(t0, "load_surrogate"),
+        mixed_editions=_flag(nets, "evening") != _flag(t0, "evening"),
+    )
+
+
+def site_days(out_dir: Path, nets_days: dict, models=("t0", "mix")) -> dict[str, dict]:
+    """Per site model in `models` ("t0", "mix"): {UTC delivery day: rows in the nets log
+    layout} for the site's t0/mix blocks (site.latest_nets and siblings).
+
+    Per day: t0 from its standing log rows (complete days only). The mix from the mix
+    log where a mix with t0 stands on the day's standing nets run (`t0_generated_utc` =
+    the run's: mix_step mixes its own t0, never across editions), else mixed here from
+    the standing nets and t0 rows (site_mix_rows), so it reaches back to the start of the
+    t0 log. A day failing here loses its t0/mix blocks only.
+    """
+    t0_log = read_t0(out_dir)
+    t0_days = by_day(t0_log) if t0_log is not None else {}
+    mix_log = read_partitions(Path(out_dir) / MIX_LOG_DIR) if "mix" in models else None
+    logged = by_day(mix_log) if mix_log is not None else {}
+    out: dict[str, dict] = {m: {} for m in models}
+    for day in sorted({*t0_days, *logged}):
+        nets, t0, mix = nets_days.get(day), t0_days.get(day), logged.get(day)
+        if t0 is not None and len(t0) != 24:
+            print(f"site: t0 rows for {day:%Y-%m-%d} incomplete ({len(t0)} hours), not used")
+            t0 = None
+        try:
+            if "t0" in models and t0 is not None:
+                out["t0"][day] = t0_site_rows(t0, nets)
+            if "mix" not in models:
+                continue
+            if mix is not None and _mix_stands(mix, nets):
+                out["mix"][day] = mix.assign(
+                    t0_generated_utc=mix["generated_utc"], mixed_editions=False
+                )
+            elif t0 is not None and _complete(nets) is not None:
+                out["mix"][day] = site_mix_rows(nets, t0)
+        except Exception as e:  # noqa: BLE001 - one day's blocks, never the site
+            print(f"::warning::site: t0/mix blocks of {day:%Y-%m-%d} skipped ({e})")
+    return out

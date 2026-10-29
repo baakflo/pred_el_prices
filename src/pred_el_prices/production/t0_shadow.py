@@ -1,10 +1,10 @@
-"""Shadow forecast of the zero-shot foundation model t0-beta: logged, never published alone.
+"""Shadow forecast of the zero-shot foundation model t0-beta, logged every forecast run.
 
 An out-of-sample forward test of t0 against the live nets (P65-P69 arm B, same
 convention). Rows go to `t0_log/YYYY-MM.parquet` next to the nets log, in both editions
-(evening rows flagged); on their own they appear in no site JSON, but they feed the
-nets+t0 mix (production/mix.py). The step is fail-soft: nothing here may cost LEAR or the
-nets the day.
+(evening rows flagged); they feed the nets+t0 mix (production/mix.py) and, with
+`pep forecast --site-models` naming t0, the site's own `t0` block. The step is fail-soft:
+nothing here may cost LEAR or the nets the day.
 
 Per delivery UTC day D:
 - origin = Berlin-local midnight starting local day D (UTC 23:00 of D-1 in winter,

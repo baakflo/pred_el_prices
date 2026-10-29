@@ -172,6 +172,50 @@ def test_mix_log_ignores_a_legacy_nets_file_next_to_it(tmp_path):
     assert not (tmp_path / site.MIX_LOG_DIR).exists()
 
 
+# ------------------------------------------------------------------ site blocks
+
+
+def _t0_logged(day="2026-08-03", generated="2026-08-02T09:20:00+00:00", **flags):
+    return _t0(day).assign(generated_utc=generated, **flags)
+
+
+def test_t0_site_quarters_are_t0s_hours_plus_the_nets_shape():
+    rows = mix.t0_site_rows(_t0_logged(), _nets_rows())
+    h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
+    np.testing.assert_allclose(h[site.Q_COLS].iloc[0], np.arange(1, 100), atol=1e-4)
+    want = h[site.Q_COLS].to_numpy().repeat(4, 0) + SHAPE[:, None]
+    np.testing.assert_allclose(qh[site.Q_COLS].to_numpy(), want, atol=1e-4)
+    assert not rows["flat_quarters"].any() and not rows["evening"].any()
+    assert (rows["generated_utc"] == "2026-08-02T09:20:00+00:00").all()
+
+
+def test_t0_site_quarters_without_nets_repeat_the_hour():
+    rows = mix.t0_site_rows(_t0_logged(evening=True), None)
+    h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
+    assert len(qh) == 96 and rows["flat_quarters"].all() and rows["evening"].all()
+    np.testing.assert_allclose(qh[site.Q_COLS].to_numpy(), h[site.Q_COLS].to_numpy().repeat(4, 0))
+
+
+def test_site_mix_rows_equal_the_logged_mix_and_flag_mixed_editions():
+    nets = _nets_rows(evening=True)
+    t0 = _t0_logged(generated="2026-08-02T09:50:00+00:00", evening=False)
+    rows = mix.site_mix_rows(nets, t0)
+    logged = mix.mix_rows(nets, t0, "x")
+    np.testing.assert_allclose(rows[site.Q_COLS].to_numpy(), logged[site.Q_COLS].to_numpy())
+    assert rows["mixed_editions"].all() and rows["evening"].all()
+    assert (rows["generated_utc"] == "2026-08-02T09:50:00+00:00").all()  # the later run
+    assert (rows["t0_generated_utc"] == "2026-08-02T09:50:00+00:00").all()
+    assert (rows["nets_generated_utc"] == "2026-08-02T09:20:00+00:00").all()
+
+
+def test_site_days_skip_incomplete_t0_days(tmp_path, capsys):
+    site._write_partitions(tmp_path / "t0_log", _t0_logged().iloc[:20])
+    nets = {pd.Timestamp("2026-08-03", tz="UTC"): _nets_rows()}
+    assert mix.site_days(tmp_path, nets) == {"t0": {}, "mix": {}}
+    assert "incomplete (20 hours)" in capsys.readouterr().out
+    assert mix.site_days(tmp_path / "none", nets, ("t0",)) == {"t0": {}}
+
+
 @pytest.mark.parametrize("day", ["2026-10-25", "2027-03-28"])  # DST end (25 h), start (23 h)
 def test_dst_days_mix_24_hours_and_96_quarters(tmp_path, day):
     site.append_log(tmp_path / site.LOG_DIR, _nets_rows(day))
