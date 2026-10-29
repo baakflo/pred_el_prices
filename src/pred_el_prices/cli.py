@@ -293,6 +293,16 @@ def main() -> None:
     )
     sp.add_argument("--out", type=Path, required=True, help="Seed parquet to write")
 
+    st = sub.add_parser(
+        "seed-t0-pit",
+        help="Seed t0's PIT history from a gate-safe t0 backtest (t0_pit_seed.parquet)",
+    )
+    st.add_argument(
+        "--quantiles", type=Path, required=True, help="t0 backtest rows (q01..q99, 21 levels)"
+    )
+    st.add_argument("--before", required=True, help="Use backtest hours before this UTC day")
+    st.add_argument("--out", type=Path, required=True, help="Seed parquet to write")
+
     bn = sub.add_parser(
         "backfill-nets",
         help="Replay the production network path over past days (weekly bundles, own RES)",
@@ -578,6 +588,17 @@ def main() -> None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         seed.to_parquet(args.out)
         print(f"PIT seed {args.out}: {len(seed)} hours, {seed.index.min()} .. {seed.index.max()}")
+    elif args.command == "seed-t0-pit":
+        import pandas as pd
+
+        from pred_el_prices.production.mix import seed_t0_pit
+
+        seed = seed_t0_pit(args.quantiles, pd.Timestamp(args.before, tz="UTC"))
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        seed.to_parquet(args.out)
+        print(
+            f"t0 PIT seed {args.out}: {len(seed)} hours, {seed.index.min()} .. {seed.index.max()}"
+        )
     elif args.command == "backfill-nets":
         import json
         import time

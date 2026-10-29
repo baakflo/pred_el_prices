@@ -25,7 +25,9 @@ R_COLS = [c.replace("q", "r") for c in Q_COLS]
 SITE_LEVELS = [1, 5, 10, 25, 50, 75, 90, 95, 99]
 SITE_COLS = [f"q{lv:02d}" for lv in SITE_LEVELS]
 NETS_MODEL_LABEL = "24 networks (12 JSU + 12 quantile), recalibrated"
-T0_MODEL_LABEL = "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid"
+T0_MODEL_LABEL = (
+    "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid, recalibrated"
+)
 MIX_MODEL_LABEL = "24 networks + t0-beta foundation model, equal-weight quantile mix"
 # the site's model blocks (pep forecast --site-models), each one a sibling key of the
 # same shape; "nets" is always among them, alone it is the site as it always was
@@ -36,6 +38,7 @@ LOG_NAME = "nets_log.parquet"  # single-file layout (legacy state, backfill outp
 MIX_LOG_DIR = "mix_log"  # nets+t0 mix (production/mix.py), monthly partitions only
 MIX_WITH_T0 = "nets+t0"  # the mix log's `components` when t0 made it in
 SEED_NAME = "nets_pit_seed.parquet"  # PIT/median history before go-live (pep seed-nets-pit)
+T0_SEED_NAME = "t0_pit_seed.parquet"  # t0's PIT history before its log (pep seed-t0-pit)
 DAYS_DIR = "days"  # per-delivery-day detail files for the site
 # the 15-minute MTU went live in SDAC on 2025-10-01; before it the cache is hourly
 QH_START = pd.Timestamp("2025-10-01", tz="UTC")
@@ -225,7 +228,20 @@ PROVENANCE = ("nets_generated_utc", "t0_generated_utc")
 
 def _replay(h: pd.DataFrame) -> dict:
     """Provenance and substitute-input flags of one day's hourly rows."""
-    return {key: True for col, key in NETS_FLAGS.items() if col in h and h[col].eq(True).any()}
+    flags = {key: True for col, key in NETS_FLAGS.items() if col in h and h[col].eq(True).any()}
+    return flags | _t0_recal(h)
+
+
+def _t0_recal(h: pd.DataFrame) -> dict:
+    """t0's PIT recalibration on the t0/mix blocks (production/mix.T0Calibration):
+    `t0_recal_days` (PIT days used) and `t0_uncalibrated` when that is 0 (too little
+    history: t0's own percentiles), as the nets log's recal_days. Absent on the nets
+    block and wherever no t0 was recalibrated."""
+    days = h["t0_recal_days"].dropna() if "t0_recal_days" in h else pd.Series(dtype=float)
+    if days.empty:
+        return {}
+    n = int(days.iloc[0])
+    return {"t0_recal_days": n, **({"t0_uncalibrated": True} if n == 0 else {})}
 
 
 def latest_nets(rows: pd.DataFrame, prices, prices_qh, model: str = "nets") -> dict | None:

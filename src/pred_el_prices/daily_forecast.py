@@ -361,7 +361,7 @@ def write_site_json(
     if extra:
         from pred_el_prices.production.mix import site_days
 
-        model_days |= site_days(out_dir, nets_days, extra)
+        model_days |= site_days(out_dir, nets_days, extra, prices)  # t0 recalibrated
     since = pd.Timestamp(mix_from, tz="UTC") if primary != "nets" else None
     empty = pd.DataFrame(columns=["kind"])
 
@@ -923,7 +923,7 @@ def retry_morning_steps(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
             generated_utc, weather_vintage, load_surrogate, False,
         )  # fmt: skip
-    mix_step(out_dir, delivery, t0_rows, generated_utc)
+    mix_step(out_dir, delivery, t0_rows, generated_utc, prices=prices)
 
 
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
@@ -1229,7 +1229,9 @@ def run_daily(
     if run_nets:  # shadow-logged every run; without t0 the mix is the nets, flagged
         from pred_el_prices.production.mix import mix_step
 
-        mix_step(out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening)
+        mix_step(
+            out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening, prices=prices
+        )
     write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

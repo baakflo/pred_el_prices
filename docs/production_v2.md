@@ -115,7 +115,7 @@ actuals or scores) and is never deleted. The publish job copies them to the webs
 
 Code: `production/nets.py` (training, gate row, recalibration, 15-min shape),
 `production/site.py` (log + v2 JSON blocks, torch-free), `production/backfill.py`;
-CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `backfill-nets`, `build-site`;
+CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `seed-t0-pit`, `backfill-nets`, `build-site`;
 workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
 
 - **Delivery blocks are UTC days**, as in v1 and every backtest: always 24 hours and
@@ -162,11 +162,24 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
   by PCHIP on the quantile function (monotone, exact at t0's levels, no extrapolation
   beyond its q01/q99). Quarter-hours = the nets' quarter-hours shifted per level by what
   the mix moved their hour (= the mixed hours + the nets' median shape), sorted, clipped.
+- **t0 is recalibrated** where it is consumed (t0 block, mix, mix log), never in the t0
+  log (raw, as the model made it): the nets' rule (`models.recalibrate.recalibrate_day`)
+  on the 99-level grid, PIT of t0's own past forecasts against the clearing prices,
+  forecast days <= D-2 in a 365-day window, raw below 28 PIT days. Any edition, as the
+  nets: the standing row per hour (morning replaces evening). Reproducible from the logs:
+  every site build recalibrates each day on its own history.
+- **t0 PIT seed** (`site-state/site/t0_pit_seed.parquet`, `pep seed-t0-pit --quantiles
+  runs/t0-compare/t0_B.parquet --before 2026-09-30`): the P65-P69 arm B year of the
+  neural repo, 2025-09-01..2026-09-24 (384 days; 08-12..08-17 skipped there), t0's 21
+  levels. Gate-safe on the shadow's conventions (context to local midnight of D,
+  residual load = TSO load - own RES of D from the 00Z ENS, i.e. the morning edition;
+  same weights, which MODEL_REVISION pins). The t0 log wins where both exist; without
+  the seed only days with 28 live PIT days recalibrate (from 2026-10-30).
 - **Runs**: t0 runs in both editions (evening rows flagged) before the site JSON; every
   run with the nets logs the mix to `site-state/site/mix_log/YYYY-MM.parquet` (nets log
   layout, final percentiles only, the nets run's flags, `components` = `nets+t0` or
-  `nets` when t0 failed, `nets_generated_utc`). Never across editions: a morning run whose
-  nets failed logs no mix. A pre-gate morning retry reruns t0 + mix when no morning mix
+  `nets` when t0 failed, `nets_generated_utc`, `t0_recal_days`). Never across editions:
+  a morning run whose nets failed logs no mix. A pre-gate morning retry reruns t0 + mix when no morning mix
   with t0 stands.
 - **Publishing**: `pep forecast --site-models nets,t0,mix --primary mix --mix-from
   YYYY-MM-DD` (workflow: repository variables `PEP_SITE_MODELS`, `PEP_PRIMARY`,
@@ -178,11 +191,14 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
     hours, quarters, the same scores on the 99 levels, the same flags. Absent for a day
     without them (history days before the t0 log: none). The `nets` block is always the
     nets.
-  - **t0**: its standing log rows on the 99-level grid (PCHIP, as for the mix); no
-    `trained_through` (zero-shot). Quarters = t0's hours + the nets' within-hour shape of
-    the day, from whichever nets edition stands; a day without nets rows repeats t0's
-    hour (`flat_quarters: true`).
-  - **mix**: from the mix log where a mix with t0 stands on the day's standing nets run,
+  - **t0**: its standing log rows on the 99-level grid (PCHIP, as for the mix),
+    recalibrated; no `trained_through` (zero-shot). Quarters = t0's recalibrated hours +
+    the nets' within-hour shape of the day, from whichever nets edition stands; a day
+    without nets rows repeats t0's hour (`flat_quarters: true`). The t0 and mix blocks
+    carry `t0_recal_days` (t0's PIT days) and `t0_uncalibrated: true` when that is 0
+    (raw t0); the nets block does not.
+  - **mix**: from the mix log where a mix with recalibrated t0 (`t0_recal_days` logged)
+    stands on the day's standing nets run,
     else mixed at site-build time from the standing nets and t0 rows (same math), so the
     blocks reach back to the start of the t0 log (2026-09-24). Adds `nets_generated_utc`
     and `t0_generated_utc` (its `generated_utc` = the later of the two). Flags are either
@@ -200,11 +216,12 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
 ```json
 "primary": "mix",
 "nets": {...},
-"t0":  {"model": "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid",
-        "generated_utc": "...", "hours": [...], "quarters": [...]},
+"t0":  {"model": "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid, recalibrated",
+        "generated_utc": "...", "t0_recal_days": 354, "hours": [...], "quarters": [...]},
 "mix": {"model": "24 networks + t0-beta foundation model, equal-weight quantile mix",
         "trained_through": "YYYY-MM-DD", "generated_utc": "...",
         "nets_generated_utc": "...", "t0_generated_utc": "...", "mixed_editions": true,
+        "t0_recal_days": 354,
         "evening": true, "hours": [...], "quarters": [...]}
 ```
 

@@ -175,8 +175,9 @@ def test_mix_log_ignores_a_legacy_nets_file_next_to_it(tmp_path):
 # ------------------------------------------------------------------ site blocks
 
 
-def _t0_logged(day="2026-08-03", generated="2026-08-02T09:20:00+00:00", **flags):
-    return _t0(day).assign(generated_utc=generated, **flags)
+def _t0_logged(day="2026-08-03", generated="2026-08-02T09:20:00+00:00", fn=None, **flags):
+    t0 = _t0(day) if fn is None else _t0(day, fn)
+    return t0.assign(generated_utc=generated, **flags)
 
 
 def test_t0_site_quarters_are_t0s_hours_plus_the_nets_shape():
@@ -214,6 +215,113 @@ def test_site_days_skip_incomplete_t0_days(tmp_path, capsys):
     assert mix.site_days(tmp_path, nets) == {"t0": {}, "mix": {}}
     assert "incomplete (20 hours)" in capsys.readouterr().out
     assert mix.site_days(tmp_path / "none", nets, ("t0",)) == {"t0": {}}
+
+
+# ------------------------------------------------------------------ t0 recalibration
+
+D = pd.Timestamp("2026-08-03", tz="UTC")
+
+
+def _t0_history(first="2026-06-01", last="2026-08-03", fn=lambda tau: 100.0 * tau):
+    """Logged t0 rows for every day first..last (the delivery day D among them)."""
+    days = pd.date_range(first, last, freq="D", tz="UTC")
+    return pd.concat([_t0_logged(f"{d:%Y-%m-%d}", generated="g", fn=fn) for d in days])
+
+
+def _actuals(first="2026-06-01", last="2026-08-04", value=95.0):
+    """Clearing prices: always near t0's 95th percentile (t0's tails far too low)."""
+    idx = pd.date_range(first, pd.Timestamp(last) + pd.Timedelta(hours=23), freq="1h", tz="UTC")
+    rng = np.random.default_rng(0)
+    return pd.Series(value + rng.normal(0, 2, len(idx)), idx)
+
+
+def test_t0_recalibration_moves_the_lopsided_tails():
+    cal = mix.T0Calibration(_t0_history(), _actuals())
+    q, n = cal.hourly(_t0_logged())
+    assert n == len(pd.date_range("2026-06-01", "2026-08-01"))  # days <= D-2 only
+    raw = mix.t0_on_grid(_t0_logged())
+    assert (q["q50"] > raw["q50"] + 30).all()  # the actuals sat near t0's 95th percentile
+    assert (np.diff(q.to_numpy(), axis=1) >= 0).all()
+
+
+def test_t0_recalibration_never_reads_d_minus_1_or_d():
+    hist, prices = _t0_history(), _actuals()
+    want, n = mix.T0Calibration(hist[hist.index < D - pd.Timedelta(days=1)], prices).hourly(_t0())
+    # D-1's and D's forecasts and prices wildly different: nothing may change
+    late = hist.index >= D - pd.Timedelta(days=1)
+    hist.loc[late, Q_NAMES] = hist.loc[late, Q_NAMES] * 10.0 - 500.0
+    prices[prices.index >= D - pd.Timedelta(days=1)] = 3000.0
+    got, m = mix.T0Calibration(hist, prices).hourly(_t0())
+    assert m == n
+    pd.testing.assert_frame_equal(got, want)
+
+
+@pytest.mark.parametrize("n_days, recalibrated", [(27, False), (28, True)])
+def test_t0_below_28_pit_days_stays_raw(n_days, recalibrated):
+    first = D - pd.Timedelta(days=n_days + 1)  # n_days days up to D-2, plus D-1 and D
+    hist = _t0_history(first=f"{first:%Y-%m-%d}")
+    q, n = mix.T0Calibration(hist, _actuals()).hourly(_t0())
+    raw = mix.t0_on_grid(_t0())
+    assert n == (n_days if recalibrated else 0)
+    assert np.allclose(q.to_numpy(), raw.to_numpy()) is not recalibrated
+
+
+def test_the_mix_uses_the_recalibrated_t0():
+    cal = mix.T0Calibration(_t0_history(), _actuals())
+    nets_rows = _nets_rows()
+    rows = mix.mix_rows(nets_rows, _t0(), "x", cal)
+    h = rows[rows["kind"] == "h"]
+    t0_99, n = cal.hourly(_t0())
+    want = 0.5 * (
+        nets_rows.loc[nets_rows["kind"] == "h", site.Q_COLS].to_numpy() + t0_99.to_numpy()
+    )
+    np.testing.assert_allclose(h[site.Q_COLS].to_numpy(), want, atol=1e-3)
+    assert (rows["t0_recal_days"] == n).all() and n > 0
+    assert "t0_recal_days" not in mix.mix_rows(nets_rows, None, "x", cal)  # nets only
+
+
+def test_t0_history_is_the_seed_then_the_log(tmp_path):
+    seed = _t0_history("2026-06-01", "2026-07-31", fn=lambda tau: 50.0 * tau)[Q_NAMES]
+    seed.to_parquet(tmp_path / site.T0_SEED_NAME)
+    site._write_partitions(tmp_path / "t0_log", _t0_history("2026-07-30", "2026-08-03"))
+    hist = mix.t0_history(tmp_path)
+    assert hist.index.is_unique and len(hist) == 24 * len(pd.date_range("2026-06-01", "2026-08-03"))
+    assert hist.loc["2026-07-29", "q99"].eq(49.5).all()  # seed
+    assert hist.loc["2026-07-30", "q99"].eq(99.0).all()  # the log wins where both exist
+
+
+def test_seed_t0_pit_keeps_the_400_days_before_the_first_log_day(tmp_path):
+    backtest = _t0_history("2025-08-01", "2026-09-24")
+    backtest.insert(0, "delivery_day", backtest.index.normalize())
+    backtest.to_parquet(tmp_path / "t0_B.parquet")
+    seed = mix.seed_t0_pit(tmp_path / "t0_B.parquet", pd.Timestamp("2026-09-30", tz="UTC"))
+    assert list(seed.columns) == Q_NAMES and seed.index.name == "t"
+    assert seed.index.min() == pd.Timestamp("2025-08-26", tz="UTC")  # 365 + 35 days
+    assert seed.index.max() == pd.Timestamp("2026-09-24 23:00", tz="UTC")
+
+
+def test_mix_step_recalibrates_and_leaves_the_t0_log_raw(tmp_path):
+    site._write_partitions(tmp_path / "t0_log", _t0_history())
+    site.append_log(tmp_path / site.LOG_DIR, _nets_rows())
+    before = {p.name: p.read_bytes() for p in (tmp_path / "t0_log").glob("*")}
+    assert mix.mix_step(tmp_path, D, _t0(), "x", prices=_actuals())
+    log = site.read_partitions(tmp_path / site.MIX_LOG_DIR)
+    assert (log["t0_recal_days"] == 62).all()
+    days = mix.site_days(tmp_path, {D: _nets_rows()}, prices=_actuals())
+    assert {p.name: p.read_bytes() for p in (tmp_path / "t0_log").glob("*")} == before
+    t0_rows = days["t0"][D]
+    want, _ = mix.T0Calibration(_t0_history(), _actuals()).hourly(_t0())
+    np.testing.assert_allclose(
+        t0_rows.loc[t0_rows["kind"] == "h", site.Q_COLS].to_numpy(), want.to_numpy(), atol=1e-3
+    )
+    assert (t0_rows["t0_recal_days"] == 62).all()
+    # the logged mix (recalibrated) stands; a mix logged on raw t0 is mixed anew
+    np.testing.assert_allclose(
+        days["mix"][D][site.Q_COLS].to_numpy(), log[site.Q_COLS].to_numpy(), atol=1e-3
+    )
+    raw_mix = mix.mix_rows(_nets_rows(), _t0(), "x")
+    assert not mix._mix_stands(raw_mix, _nets_rows(), recal=True)
+    assert mix._mix_stands(raw_mix, _nets_rows(), recal=False)
 
 
 @pytest.mark.parametrize("day", ["2026-10-25", "2027-03-28"])  # DST end (25 h), start (23 h)

@@ -283,6 +283,7 @@ def test_day_files_cover_history_only_days_and_are_never_deleted(tmp_path):
 
 THREE = ("nets", "t0", "mix")
 DAYS = ("2026-08-01", "2026-08-02", "2026-08-03")
+RAW_T0 = {"t0_recal_days", "t0_uncalibrated"}  # t0/mix blocks, too little PIT history
 
 
 def _t0_rows(lear: pd.DataFrame, day: str, generated="2026-07-31T09:12:00+00:00", **flags):
@@ -312,10 +313,12 @@ def _logs(tmp_path, t0_days=DAYS, mix_days=DAYS, nets_days=DAYS):
     site.append_log(tmp_path / site.LOG_DIR, nets_rows)
     for day in t0_days:
         site._write_partitions(tmp_path / "t0_log", _t0_rows(lear, day))
+    cal = mix.T0Calibration.from_dir(tmp_path, _prices(lear)[0])  # as mix_step logs it
     for day in mix_days:
         rows = nets_rows[nets_rows.index.normalize() == pd.Timestamp(day, tz="UTC")]
         t0 = _t0_rows(lear, day) if day in t0_days else None
-        site.append_log(tmp_path / site.MIX_LOG_DIR, mix.mix_rows(rows, t0, "2026-07-31T09:12Z"))
+        logged = mix.mix_rows(rows, t0, "2026-07-31T09:12Z", cal)
+        site.append_log(tmp_path / site.MIX_LOG_DIR, logged)
     return lear
 
 
@@ -346,7 +349,9 @@ def test_default_site_models_ignore_the_t0_and_mix_logs_byte_for_byte(tmp_path, 
     plain.mkdir()
     more.mkdir()
     _write(plain)
-    lear = _logs(more)  # the same logs, plus a t0 log and a mix log
+    lear = _logs(more)  # the same logs, plus a t0 log, a mix log and a t0 PIT seed
+    seed = _t0_rows(lear, "2026-08-01").drop(columns="generated_utc")
+    seed.set_axis(seed.index - pd.Timedelta(days=30)).to_parquet(more / site.T0_SEED_NAME)
     kw = {"site_models": ("nets",), "primary": "nets", "mix_from": None} if explicit else {}
     published = _site(more, lear, **kw)
     assert published == _read_site(plain)
@@ -382,11 +387,13 @@ def test_three_models_publish_sibling_blocks_of_the_nets_shape(tmp_path):
         assert d["primary"] == "mix" and d["mae"] == 5.0  # v1 (LEAR) untouched
         assert d["nets"]["mae"] == 5.0 and d["t0"]["mae"] == 5.0 and d["mix"]["mae"] == 0.0
         assert d["t0"]["mae_qh"] == 5.0 and d["mix"]["mae_qh"] == 0.0
-        assert set(d["t0"]) == set(d["mix"]) == set(d["nets"])
+        assert set(d["t0"]) == set(d["mix"]) == set(d["nets"]) | RAW_T0
+        assert d["t0"]["t0_recal_days"] == d["mix"]["t0_recal_days"] == 0  # 3 days of history
     day = _json(out, "days/2026-08-01.json")
     assert day["primary"] == "mix" and day["mix"]["mae"] == 0.0 and day["t0"]["pinball"]
-    assert set(day["t0"]) == set(day["nets"]) - {"trained_through"}
-    assert set(day["mix"]) == set(day["nets"]) | {"nets_generated_utc", "t0_generated_utc"}
+    assert set(day["t0"]) == set(day["nets"]) - {"trained_through"} | RAW_T0
+    assert set(day["mix"]) == set(day["nets"]) | {"nets_generated_utc", "t0_generated_utc"} | RAW_T0
+    assert latest["t0"]["t0_uncalibrated"] is True and "t0_recal_days" not in latest["nets"]
 
 
 def test_the_mix_is_mixed_at_site_build_time_without_a_mix_log(tmp_path):
