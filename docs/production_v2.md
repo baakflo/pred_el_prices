@@ -168,17 +168,45 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
   `nets` when t0 failed, `nets_generated_utc`). Never across editions: a morning run whose
   nets failed logs no mix. A pre-gate morning retry reruns t0 + mix when no morning mix
   with t0 stands.
-- **Publishing**: `pep forecast --primary mix --mix-from YYYY-MM-DD` (workflow:
-  repository variables `PEP_PRIMARY=mix` and `PEP_MIX_FROM`, or the dispatch input
-  `primary`; default `nets`). `--mix-from` is the cut-over UTC delivery day and is
-  required with `mix`. From it on, the `nets` block carries the mix on each day where a
-  mix with t0 stands on the day's nets run, else the nets, and every such block (latest,
-  history days, day files) adds `"primary": "mix" | "nets"`; the mix's `model` is "24
-  networks + t0-beta foundation model, equal-weight quantile mix". Scores are computed on
-  whichever is published (same 99 levels). Days before the cut-over keep the nets blocks
-  they were published with, unchanged and without a `primary` key, although history is
-  recomputed from the logs and the shadow mix log covers them. `--primary nets` leaves
-  the output byte-identical (the mix log is not read).
+- **Publishing**: `pep forecast --site-models nets,t0,mix --primary mix --mix-from
+  YYYY-MM-DD` (workflow: repository variables `PEP_SITE_MODELS`, `PEP_PRIMARY`,
+  `PEP_MIX_FROM`, or the dispatch input `primary` for one run). Default `--site-models
+  nets`: neither the t0 nor the mix log is read and the site JSON is byte-identical to
+  the nets-only site. LEAR stays as it is either way (v1 fields, `forecast_log`).
+  - **Sibling blocks** `t0` and `mix` next to `nets`, wherever `nets` appears (latest,
+    history days, day files), in the nets block's shape: own `model`, the 9 `levels`,
+    hours, quarters, the same scores on the 99 levels, the same flags. Absent for a day
+    without them (history days before the t0 log: none). The `nets` block is always the
+    nets.
+  - **t0**: its standing log rows on the 99-level grid (PCHIP, as for the mix); no
+    `trained_through` (zero-shot). Quarters = t0's hours + the nets' within-hour shape of
+    the day, from whichever nets edition stands; a day without nets rows repeats t0's
+    hour (`flat_quarters: true`).
+  - **mix**: from the mix log where a mix with t0 stands on the day's standing nets run,
+    else mixed at site-build time from the standing nets and t0 rows (same math), so the
+    blocks reach back to the start of the t0 log (2026-09-24). Adds `nets_generated_utc`
+    and `t0_generated_utc` (its `generated_utc` = the later of the two). Flags are either
+    component's, and `mixed_editions: true` marks nets and t0 from different editions
+    (2026-10-25: the morning nets failed, the evening nets stood next to the morning t0).
+  - **`primary`** (per day: latest, history days, day files): the model the site shows
+    as its headline fan, `nets` | `mix` | `t0`. `--primary` from the cut-over
+    `--mix-from` (UTC delivery day, required unless `nets`) on, `nets` before. A day
+    without that model's block falls back to `nets`, recorded as `"primary_fallback":
+    "<wanted>"`. Days without any model block (LEAR only) carry no `primary`.
+  - **History merge**: a block of a published history day survives a loss of its log, as
+    the nets blocks do; back on `--site-models nets` the t0/mix blocks and `primary` are
+    dropped.
+
+```json
+"primary": "mix",
+"nets": {...},
+"t0":  {"model": "t0-beta foundation model (zero-shot), 21 levels on the 99-level grid",
+        "generated_utc": "...", "hours": [...], "quarters": [...]},
+"mix": {"model": "24 networks + t0-beta foundation model, equal-weight quantile mix",
+        "trained_through": "YYYY-MM-DD", "generated_utc": "...",
+        "nets_generated_utc": "...", "t0_generated_utc": "...", "mixed_editions": true,
+        "evening": true, "hours": [...], "quarters": [...]}
+```
 
 ## Website (dev branch, local only until approved)
 

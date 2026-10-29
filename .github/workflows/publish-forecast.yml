@@ -32,12 +32,12 @@ on:
         description: "Cron slot this dispatch mirrors (UTC, e.g. 0915)"
         required: false
         default: ""
-      # What the site's nets block publishes: nets, or the nets+t0 mix (falls back to
-      # the nets on days without t0). The live switch is the repository variable
-      # PEP_PRIMARY (cron-job.org dispatches send only the slot); this input overrides
-      # it for one manual run. Unset both: nets.
+      # The site's headline model per day (the `primary` key: nets, mix or t0; falls
+      # back to the nets on days without that block). The live switch is the
+      # repository variable PEP_PRIMARY (cron-job.org dispatches send only the slot);
+      # this input overrides it for one manual run. Unset both: nets.
       primary:
-        description: "Published primary for this run: nets | mix (empty: vars.PEP_PRIMARY, else nets)"
+        description: "Headline model for this run: nets | mix | t0 (empty: vars.PEP_PRIMARY, else nets)"
         required: false
         default: ""
 
@@ -61,10 +61,13 @@ jobs:
     timeout-minutes: 75
     env:
       SLOT: ${{ inputs.slot }}
-      # every slot passes it, the refresh slots included: they rewrite the site too
+      # Every slot passes these, the refresh slots included: they rewrite the site too.
+      # The site's model blocks: nets plus any of t0, mix (e.g. nets,t0,mix); unset =
+      # nets, the site JSON exactly as before. PEP_PRIMARY must be among them.
+      SITE_MODELS: ${{ vars.PEP_SITE_MODELS || 'nets' }}
       PRIMARY: ${{ inputs.primary || vars.PEP_PRIMARY || 'nets' }}
-      # the mix's cut-over UTC delivery day (YYYY-MM-DD), required with mix: earlier
-      # days keep the nets blocks they were published with
+      # the headline's cut-over UTC delivery day (YYYY-MM-DD), required unless the
+      # primary is nets: earlier days keep "primary": "nets"
       MIX_FROM: ${{ vars.PEP_MIX_FROM }}
     steps:
       - uses: actions/checkout@v7
@@ -137,6 +140,7 @@ jobs:
           --features archive_repo/site-state/ens_features.parquet
           --archive-dir archive_repo
           --out archive_repo/site-state/site
+          --site-models "$SITE_MODELS"
           --primary "$PRIMARY"
           $( [ -n "$MIX_FROM" ] && echo --mix-from "$MIX_FROM" )
           $( [ -f models/nets.pt ] && echo --nets-bundle models/nets.pt )
