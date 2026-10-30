@@ -79,7 +79,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-theforecastingcompany-t0-beta
+          # bump with MODEL_REVISION in t0_shadow.py: a hit never re-saves the cache
+          key: hf-theforecastingcompany-t0-beta-941e522
 
       # The weekly network bundle (train-nets.yml). Missing or broken, LEAR
       # still publishes: the forecast runs without --nets-bundle, or its nets
