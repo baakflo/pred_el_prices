@@ -257,6 +257,22 @@ class TestTraining:
         np.testing.assert_allclose(x, x2, rtol=1e-14, atol=0)
         np.testing.assert_array_equal(y, y2)
 
+    def test_incomplete_day_costs_only_its_lag_rows(self):
+        """2026-10-31: one day without TSO wind/solar 7 days before the cutoff left 0 rows."""
+        ds = _dataset(80)
+        monday = pd.Timestamp("2024-03-11", tz="UTC")
+        gap = monday - pd.Timedelta(days=9)
+        ds.loc[(ds.index >= gap) & (ds.index < gap + pd.Timedelta(hours=22)), RES_COLS[0]] = np.nan
+        x, _, rows = nets.training_set(ds, monday, window_days=30)
+        # the 7 complete days after the gap can't fill a row's lags: training ends before it
+        assert rows.max() == gap - pd.Timedelta(days=1)
+        # the gap day and the 7 days whose lags reach into it drop out, nothing else
+        assert len(rows) == 30 - 8
+        assert not rows.isin(pd.date_range(gap, periods=8, freq="D")).any()
+        full_x, _, full_rows = nets.training_set(_dataset(80), monday, window_days=30)
+        keep = full_rows.isin(rows)
+        np.testing.assert_allclose(x, full_x[keep], rtol=1e-12, atol=0)
+
     def test_bundle_round_trip_and_forecast(self, tmp_path):
         ds = _dataset(80)
         monday = pd.Timestamp("2024-03-11", tz="UTC")

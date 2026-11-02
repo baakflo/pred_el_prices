@@ -31,9 +31,9 @@ from pred_el_prices.experiments.qnn_de import (
     PRICE_COL,
     Q_COLS,
     RES_COLS,
-    days_from_frame,
     design,
     fuel_cost,
+    stretches_from_frame,
 )
 from pred_el_prices.features.dataset import FUEL_SETTLEMENT_LAG_DAYS, NEIGHBOUR_ZONES
 from pred_el_prices.models import qh_shape
@@ -93,8 +93,20 @@ def training_set(dataset: pd.DataFrame, monday: pd.Timestamp, window_days: int =
     last = monday - pd.Timedelta(days=2)
     # nothing after the last training day may shorten the contiguous stretch
     ds = dataset[dataset.index < last + pd.Timedelta(days=1)]
-    prices, exog, fuels, days, _ = days_from_frame(ds, TRAIN_START, [], neighbours="load")
-    x, y, row_days = design(prices / fuel_cost(fuels)[:, None], exog, fuels, days)
+    # every contiguous stretch, not only the last: an incomplete day drops just the
+    # rows whose lags reach it (8 days), the rest of the window still trains
+    parts = [
+        design(prices / fuel_cost(fuels)[:, None], exog, fuels, days)
+        for prices, exog, fuels, days, _ in stretches_from_frame(
+            ds, TRAIN_START, [], neighbours="load"
+        )
+        if len(days) > 7
+    ]
+    if not parts:
+        return np.empty((0, 0)), np.empty((0, 24)), pd.DatetimeIndex([], tz="UTC")
+    x = np.vstack([p[0] for p in parts])
+    y = np.vstack([p[1] for p in parts])
+    row_days = parts[0][2].append([p[2] for p in parts[1:]])
     train = (row_days <= last) & (row_days > last - pd.Timedelta(days=window_days))
     return x[train], y[train], row_days[train]
 
@@ -115,8 +127,8 @@ def train_ensemble(
     x, y, row_days = training_set(dataset, monday, window_days)
     if len(row_days) < min_days:
         raise RuntimeError(
-            f"only {len(row_days)} contiguous training days before {monday:%Y-%m-%d} "
-            f"(need {min_days}): a gap in the cache cut the window"
+            f"only {len(row_days)} complete training days before {monday:%Y-%m-%d} "
+            f"(need {min_days}): the cache lacks inputs over much of the window"
         )
     last = monday - pd.Timedelta(days=2)
     if row_days.max() != last:

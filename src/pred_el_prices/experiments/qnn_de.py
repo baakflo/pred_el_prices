@@ -47,6 +47,39 @@ def days_from_frame(
     ds: pd.DataFrame, train_start: str, exog_extra: list[str], neighbours: str = "rl"
 ):
     """load_days on an in-memory dataset (the production path builds it from the caches)."""
+    frame = _complete_days(ds, train_start, exog_extra, neighbours)
+    days = pd.DatetimeIndex(sorted(set(frame.index.normalize())))
+    gaps = (days[1:] - days[:-1]) != pd.Timedelta(days=1)
+    if gaps.any():
+        # keep the last contiguous stretch
+        start = days[1:][gaps][-1]
+        frame = frame[frame.index >= start]
+    return _arrays(frame, exog_extra)
+
+
+def stretches_from_frame(
+    ds: pd.DataFrame, train_start: str, exog_extra: list[str], neighbours: str = "rl"
+):
+    """days_from_frame for every contiguous stretch of complete days, oldest first.
+
+    A day the sources never completed (2026-10-24: no TSO wind/solar forecast at
+    ENTSO-E or SMARD) then costs only the rows whose lags touch it, not every day
+    before it.
+    """
+    frame = _complete_days(ds, train_start, exog_extra, neighbours)
+    days = pd.DatetimeIndex(sorted(set(frame.index.normalize())))
+    if days.empty:
+        return []
+    starts = [days[0], *days[1:][(days[1:] - days[:-1]) != pd.Timedelta(days=1)]]
+    bounds = [*starts[1:], days[-1] + pd.Timedelta(days=1)]
+    return [
+        _arrays(frame[(frame.index >= a) & (frame.index < b)], exog_extra)
+        for a, b in zip(starts, bounds)
+    ]
+
+
+def _complete_days(ds, train_start, exog_extra, neighbours):
+    """The hourly model frame, restricted to days with all 24 hours complete."""
     ds = ds[ds.index >= pd.Timestamp(train_start, tz="UTC")]
     frame = pd.DataFrame(index=ds.index)
     frame["price"] = ds[PRICE_COL]
@@ -67,15 +100,12 @@ def days_from_frame(
 
     frame = frame.dropna()
     sizes = frame.groupby(frame.index.normalize()).size()
-    frame = frame[frame.index.normalize().isin(sizes[sizes == 24].index)]
-    days = pd.DatetimeIndex(sorted(set(frame.index.normalize())))
-    gaps = (days[1:] - days[:-1]) != pd.Timedelta(days=1)
-    if gaps.any():
-        # keep the last contiguous stretch
-        start = days[1:][gaps][-1]
-        frame = frame[frame.index >= start]
-        days = days[days >= start]
+    return frame[frame.index.normalize().isin(sizes[sizes == 24].index)]
 
+
+def _arrays(frame, exog_extra):
+    """(prices, exog, fuels, days, index) of a frame of whole contiguous days."""
+    days = pd.DatetimeIndex(sorted(set(frame.index.normalize())))
     prices = frame["price"].to_numpy().reshape(-1, 24)
     exog_cols = ["load", "res", "rl_neighbours", *exog_extra]
     exog = np.stack([frame[c].to_numpy().reshape(-1, 24) for c in exog_cols], axis=2)
