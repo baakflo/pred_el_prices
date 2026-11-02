@@ -176,8 +176,9 @@ def load_surrogate_forecast(
     at the price level: +0.31 EUR/MWh MAE (plan addendum 2026-08-31).
     """
     from pred_el_prices.features.holidays import holiday_share
+    from pred_el_prices.features.tso_areas import entsoe_de_series
 
-    load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
+    load_fc = entsoe_de_series(cache_dir, "load_forecast_mw")
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
     if not delivery_hours.isin(features.index).all():
         # same loud check own_res_forecast has — without it a missing
@@ -211,9 +212,12 @@ def delivery_load(
     """The DE load input for `delivery` (24 UTC hours) and whether it is the surrogate.
 
     The TSO day-ahead forecast; more than 4 hours missing is the surrogate when
-    `allow_surrogate`, else a loud failure (a later slot retries).
+    `allow_surrogate`, else a loud failure (a later slot retries). Hours the
+    aggregate lacks but a control area reported are rebuilt from the areas first.
     """
-    load_fc = resample_hourly(cache.load(cache_dir, "entsoe/load_forecast"))["Forecasted Load"]
+    from pred_el_prices.features.tso_areas import entsoe_de_series
+
+    load_fc = entsoe_de_series(cache_dir, "load_forecast_mw")
     delivery_hours = pd.date_range(delivery, periods=24, freq="1h", tz="UTC")
     load_d = load_fc.reindex(delivery_hours)
     missing = load_d.isna()
@@ -702,6 +706,44 @@ def fetch_neighbour_loads(client, cache_dir: Path, end: pd.Timestamp) -> list[st
     return done
 
 
+AREA_SEED_DAYS = 60  # a missing area cache seeds this much (the share window + margin)
+
+
+def fetch_control_areas(client, cache_dir: Path, end: pd.Timestamp) -> list[str]:
+    """Best-effort top-up of the four German control areas' TSO day-ahead forecasts.
+
+    They back the DE_LU step-in (features/tso_areas.py) when one TSO never submits
+    (2026-10-24, TransnetBW). Each area/dataset resumes from its cache tail (one or
+    two monthly calls per run); a missing cache seeds the last AREA_SEED_DAYS only,
+    longer history is a one-off `pep fetch-entsoe --zones DE_50HZ ...`. Never fatal:
+    the first platform error ends the sweep, anything else skips just that area.
+    """
+    import requests
+
+    from pred_el_prices.features.tso_areas import AREA_DATASETS, CONTROL_AREAS
+    from pred_el_prices.pipeline import entsoe as entsoe_pipeline
+
+    done = []
+    for area in CONTROL_AREAS:
+        try:
+            for dataset in AREA_DATASETS:
+                seeded = cache.last_timestamp(cache_dir, f"entsoe/{area}/{dataset}") is not None
+                start = (
+                    pd.Timestamp("2015-01-01", tz="UTC")
+                    if seeded
+                    else end.normalize() - pd.Timedelta(days=AREA_SEED_DAYS)
+                )
+                entsoe_pipeline.backfill(client, [dataset], start, end, cache_dir, zone=area)
+        except requests.RequestException as e:
+            print(f"WARN: control-area refresh failed at {area} ({e}); using cached data")
+            break
+        except Exception as e:  # noqa: BLE001 - insurance only: nothing may cost the run
+            print(f"WARN: control-area refresh failed at {area} ({e})")
+            continue
+        done.append(area)
+    return done
+
+
 def refresh_fuels(cache_dir: Path) -> None:
     """Best-effort top-up of the daily fuel settlements (network inputs, lagged 2 days)."""
     try:
@@ -911,6 +953,7 @@ def run_daily(
         # network inputs; skipped when the platform just failed (no second ladder)
         if entsoe_ok:
             fetch_neighbour_loads(client, cache_dir, delivery + pd.Timedelta(days=1))
+            fetch_control_areas(client, cache_dir, delivery + pd.Timedelta(days=1))
         refresh_fuels(cache_dir)
         _refresh_fallback_prices(cache_dir, delivery + pd.Timedelta(days=1))
         refresh_smard_features(cache_dir, delivery + pd.Timedelta(days=1))

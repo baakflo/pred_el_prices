@@ -61,6 +61,18 @@ jobs:
             --datasets load_forecast --zones FR NL BE AT PL CZ CH DK_1 DK_2
           uv run --extra nn pep fetch-fuels --cache-dir archive_repo/site-state/cache
 
+      # German control areas: the DE_LU step-in when one TSO never submits
+      # (features/tso_areas.py). Own step: a failure must not skip the fuels above.
+      # Resumes from the cache tail the daily forecast job keeps fresh.
+      - name: Refresh control areas
+        continue-on-error: true
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+        run: >
+          uv run --extra nn pep fetch-entsoe --cache-dir archive_repo/site-state/cache
+          --datasets load_forecast wind_solar_forecast --start 2024-01-01
+          --zones DE_50HZ DE_AMPRION DE_TENNET DE_TRANSNET
+
       - name: Train
         run: >
           uv run --extra nn pep train-nets

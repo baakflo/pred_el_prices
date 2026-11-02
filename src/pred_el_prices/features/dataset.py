@@ -10,7 +10,9 @@ Leakage rules (auction gate 12:00 CET on D-1):
 ENTSO-E is the primary source (15-min native, resampled to hourly means);
 SMARD (hourly) patches the ENTSO-E gaps — chiefly the Sep-Dec 2018 zone-split
 teething and two 2022 outage days — and energy-charts patches the price
-target when both miss a day (first seen 2026-09-07). The target index is
+target when both miss a day (first seen 2026-09-07). A TSO forecast hour both
+outlets miss because a German control area never submitted (2026-10-24) is
+rebuilt from the areas that did (features/tso_areas.py). The target index is
 defined by the price series. Fuel columns keep NaN before their sources begin (TTF 2017-10,
 EUA proxy 2021-10); models must handle or drop those spans.
 """
@@ -20,6 +22,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from pred_el_prices.features.tso_areas import fill_de_forecast
 from pred_el_prices.pipeline import cache
 from pred_el_prices.pipeline.entsoe import resample_hourly
 
@@ -94,11 +97,20 @@ def build_dataset(cache_root: Path) -> tuple[pd.DataFrame, dict]:
         fallback = cache.load(cache_root, s_ds)[s_col].reindex(index)
         gaps = primary.isna() & fallback.notna()
         merged = primary.where(~gaps, fallback)
+        # last rung: a TSO that never submitted (2026-10-24, TransnetBW) leaves the
+        # aggregate NaN on both outlets; rebuild it from the control areas that did
+        merged, area_info = fill_de_forecast(cache_root, col, merged)
+        merged = merged.reindex(index)
         out[col] = merged
         patches[col] = {
             "patched_from_smard": int(gaps.sum()),
+            "filled_from_areas": int(area_info["filled"]),
             "still_missing": int(merged.isna().sum()),
         }
+        if area_info["missing_sets"]:
+            patches[col]["areas_missing"] = area_info["missing_sets"]
+        if area_info["capped"]:
+            patches[col]["area_fill_capped"] = int(area_info["capped"])
     summary["forecast_patches"] = patches
 
     out["residual_load_forecast_mw"] = (

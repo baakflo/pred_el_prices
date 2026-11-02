@@ -36,6 +36,7 @@ from pred_el_prices.experiments.qnn_de import (
     stretches_from_frame,
 )
 from pred_el_prices.features.dataset import FUEL_SETTLEMENT_LAG_DAYS, NEIGHBOUR_ZONES
+from pred_el_prices.features.tso_areas import entsoe_de_series
 from pred_el_prices.models import qh_shape
 from pred_el_prices.models.qnn import FittedNet, QNNConfig, fit, predict
 from pred_el_prices.models.recalibrate import LEVELS, pit, quantile_at
@@ -200,8 +201,8 @@ def gate_inputs(
             s.iloc[24:] = s.iloc[24:].fillna(pd.Series(s.iloc[:24].to_numpy(), index=day))
         return None if s.iloc[24:].isna().any() else s.iloc[24:]
 
-    de = cache.load(cache_dir, "entsoe/load_forecast")
-    load_de = at_gate(resample_hourly(de[["Forecasted Load"]])["Forecasted Load"], "DE")
+    # hours the aggregate lacks but a control area reported: rebuilt from the areas
+    load_de = at_gate(entsoe_de_series(cache_dir, "load_forecast_mw"), "DE")
     if load_de is None:
         if load_de_fallback is None:
             raise RuntimeError(f"DE load forecast for {delivery:%Y-%m-%d} missing")
@@ -412,12 +413,16 @@ class QHInputs:
         from pred_el_prices.production.site import quarter_prices
 
         start = QH_START - pd.Timedelta(days=2)
-        load15 = cache.load(cache_dir, "entsoe/load_forecast", start=start)["Forecasted Load"]
-        ws = resample_hourly(cache.load(cache_dir, "entsoe/wind_solar_forecast", start=start))
+        # the DE_LU aggregates with the control-area step-in (features/tso_areas.py)
+        load15 = entsoe_de_series(cache_dir, "load_forecast_mw", "15min", start)
+        ws = {
+            c: entsoe_de_series(cache_dir, c, "1h", start)
+            for c in ("solar_forecast_mw", "wind_onshore_forecast_mw", "wind_offshore_forecast_mw")
+        }
         return cls(
             load15.dropna(),
-            ws["Solar"],
-            ws["Wind Onshore"] + ws["Wind Offshore"],
+            ws["solar_forecast_mw"],
+            ws["wind_onshore_forecast_mw"] + ws["wind_offshore_forecast_mw"],
             quarter_prices(cache_dir),
         )
 
