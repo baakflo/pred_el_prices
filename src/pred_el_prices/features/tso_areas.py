@@ -13,7 +13,9 @@ area of R are complete (per hour of day where `PER_HOUR`, else pooled). The shar
 absorbs Luxembourg and any area-sum != aggregate offset.
 
 Rules: it only steps in where the DE_LU value is missing after the caller's
-ENTSO-E -> SMARD ladder AND at least one area reported; a ladder value is never
+ENTSO-E -> SMARD ladder, inside the series (at least one day's worth of DE_LU
+values follows: the not-yet-published tail is never filled), AND at least one
+area reported; a ladder value is never
 touched; no area reported -> no fill; a failed guard (fewer than `MIN_DAYS`
 complete days, share not finite or outside (SHARE_FLOOR, SHARE_CEIL)) leaves NaN.
 Night solar with no defined share (0/0) is 0 only if the reporting areas say 0
@@ -121,15 +123,24 @@ def fill_from_areas(
         return out, info
     areas = areas.reindex(target.index)
     present = areas.notna()
-    cand = target.isna().to_numpy() & present.any(axis=1).to_numpy()
+    idx = target.index
+    per_day = _steps_per_day(idx)
+    orig_ok = target.notna().to_numpy()
+    # Interior gaps only: a TSO that never submitted leaves a hole the aggregate later
+    # publishes past; the tail is "not yet published" and stays NaN (the live slots
+    # retry or fall back as before). A full day of later DE_LU values, not one stray
+    # row, proves the publication moved on: the aggregate publishes whole local days
+    # (2024-01..2026-11: every interior gap was followed by >= 868 present
+    # quarter-hours, and the tail always ends on a local-day boundary), so the
+    # day's margin costs no real gap and blocks any still-trickling publication.
+    present_after = np.cumsum(orig_ok[::-1])[::-1] - orig_ok
+    interior = present_after >= per_day
+    cand = target.isna().to_numpy() & present.any(axis=1).to_numpy() & interior
     if not cand.any():
         return out, info
 
-    idx = target.index
     day = idx.normalize()
     hod = idx.hour
-    per_day = _steps_per_day(idx)
-    orig_ok = target.notna().to_numpy()
     vals = areas.to_numpy(dtype=float)
     tgt = target.to_numpy(dtype=float)
     cols = list(areas.columns)

@@ -37,8 +37,10 @@ def _areas(de):
     return pd.DataFrame({a: de * s for a, s in SHARES.items()})
 
 
-def _last_day(idx):
-    return idx >= idx[-1].normalize()
+def _gap_day(idx):
+    """The day before the last: an interior gap, a full published day follows it."""
+    last = idx[-1].normalize()
+    return (idx >= last - pd.Timedelta(days=1)) & (idx < last)
 
 
 def test_fills_only_missing_hours_with_a_reporting_area():
@@ -46,7 +48,7 @@ def test_fills_only_missing_hours_with_a_reporting_area():
     de = _wind(idx)
     areas = _areas(de)
     target = de.copy()
-    last = _last_day(idx)
+    last = _gap_day(idx)
     target[last] = np.nan
     areas.loc[last, "DE_TRANSNET"] = np.nan  # the 2026-10-24 pattern
     no_area = idx[last][5]
@@ -65,17 +67,53 @@ def test_never_overwrites_a_ladder_value():
     de = _wind(idx)
     areas = _areas(de) * 1.3  # areas disagree with the aggregate
     target = de.copy()
-    target.iloc[-3:] = np.nan
+    hole = np.zeros(len(idx), dtype=bool)
+    hole[-30:-27] = True
+    target[hole] = np.nan
     filled, info = fill_from_areas(target, areas, per_hour=False)
-    pd.testing.assert_series_equal(filled.iloc[:-3], target.iloc[:-3])
+    pd.testing.assert_series_equal(filled[~hole], target[~hole])
     assert info["filled"] == 3
+
+
+def test_tail_gap_is_not_filled_interior_gap_is():
+    # not yet published (tail) vs never submitted (a hole the aggregate moved past)
+    idx = _index()
+    de = _wind(idx)
+    areas = _areas(de)
+    tail = idx >= idx[-1].normalize()
+    target = de.where(~tail)
+    filled, info = fill_from_areas(target, areas, per_hour=False)
+    assert filled[tail].isna().all() and info["filled"] == 0
+    # the same hole with a full day published after it is filled
+    gap = _gap_day(idx)
+    filled, info = fill_from_areas(de.where(~gap), areas, per_hour=False)
+    np.testing.assert_allclose(filled[gap], de[gap], rtol=1e-9)
+    assert info["filled"] == 24
+    # a stray present hour after the hole is no proof the publication moved on
+    target = de.where(~(gap | tail))
+    target[idx[-1]] = de[idx[-1]]
+    filled, info = fill_from_areas(target, areas, per_hour=False)
+    assert filled[gap | tail].isna().sum() == 47 and info["filled"] == 0
+
+
+def test_partial_publication_tail_is_not_filled():
+    # 2026-11-02 23:00: three areas had published the next local day, DE_LU not yet
+    idx = _index(freq="15min")
+    de = _wind(idx)
+    areas = _areas(de)
+    tail = idx >= idx[-1].normalize() + pd.Timedelta(hours=23)
+    areas.loc[tail, "DE_50HZ"] = np.nan
+    target = de.where(~tail)
+    filled, info = fill_from_areas(target, areas, per_hour=True)
+    assert filled[tail].isna().all()
+    assert info == {"filled": 0, "guarded": 0, "capped": 0, "missing_sets": {}}
 
 
 @pytest.mark.parametrize("per_hour", [True, False])
 def test_every_subset_of_missing_areas_is_reconstructed(per_hour):
     idx = _index()
     de = _solar(idx) + 1000.0
-    last = _last_day(idx)
+    last = _gap_day(idx)
     for k in (1, 2, 3):
         for missing in itertools.combinations(CONTROL_AREAS, k):
             areas = _areas(de)
@@ -90,16 +128,16 @@ def test_guard_too_few_complete_days_leaves_nan():
     idx = _index(n_days=12)
     de = _wind(idx)
     areas = _areas(de)
-    target = de.where(~_last_day(idx))
+    target = de.where(~_gap_day(idx))
     filled, info = fill_from_areas(target, areas, per_hour=False)
-    assert filled[_last_day(idx)].isna().all()
+    assert filled[_gap_day(idx)].isna().all()
     assert info == {"filled": 0, "guarded": 24, "capped": 0, "missing_sets": {}}
 
 
 def test_cap_refuses_a_fill_from_too_small_a_share():
     idx = _index()
     de = _wind(idx)
-    last = _last_day(idx)
+    last = _gap_day(idx)
     areas = _areas(de)
     areas.loc[last, ["DE_50HZ", "DE_AMPRION"]] = np.nan  # reporting share 0.28
     target = de.where(~last)
@@ -118,7 +156,7 @@ def test_incomplete_history_days_do_not_count():
     areas = _areas(de)
     # TransnetBW lacks one hour on every day: no complete day for a set containing it
     areas.loc[idx.hour == 3, "DE_TRANSNET"] = np.nan
-    target = de.where(~_last_day(idx))
+    target = de.where(~_gap_day(idx))
     _, info = fill_from_areas(target, areas, per_hour=False)
     assert info["guarded"] == 23  # hours where TransnetBW reported: R incl. it, no history
     assert info["filled"] == 1  # hour 3: R = the other three, complete days exist
@@ -128,7 +166,7 @@ def test_night_solar_is_zero_only_when_reporters_say_zero():
     idx = _index()
     de = _solar(idx)
     areas = _areas(de)
-    last = _last_day(idx)
+    last = _gap_day(idx)
     areas.loc[last, "DE_TRANSNET"] = np.nan
     target = de.where(~last)
     night = last & (idx.hour == 2)
@@ -147,9 +185,9 @@ def test_absent_rows_count_as_missing_and_quarter_hours_work(tmp_path):
     for a, s in SHARES.items():
         cache.upsert(tmp_path, f"entsoe/{a}/load_forecast", (de * s).to_frame("Forecasted Load"))
     agg = de.to_frame("Forecasted Load")
-    cache.upsert(tmp_path, "entsoe/load_forecast", agg[idx < idx[-1].normalize()])
+    last = _gap_day(idx)
+    cache.upsert(tmp_path, "entsoe/load_forecast", agg[~last])  # rows absent, not NaN
     s = entsoe_de_series(tmp_path, "load_forecast_mw", "15min")
-    last = _last_day(idx)
     np.testing.assert_allclose(s.reindex(idx[last]), de[last], rtol=1e-9)
     _, info = fill_de_forecast(tmp_path, "load_forecast_mw", de[~last].resample("1h").mean(), "1h")
     assert info["filled"] == 24
@@ -187,7 +225,7 @@ def test_control_area_refresh_is_best_effort(tmp_path, monkeypatch):
 
 def test_build_dataset_counts_area_fills(tmp_path):
     idx = _index()
-    last = _last_day(idx)
+    last = _gap_day(idx)
     cache.upsert(
         tmp_path, "entsoe/day_ahead_prices", pd.DataFrame({"price_eur_mwh": 80.0}, index=idx)
     )
