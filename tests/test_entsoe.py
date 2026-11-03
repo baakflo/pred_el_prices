@@ -3,10 +3,12 @@
 import numpy as np
 import pandas as pd
 import pytest
+import requests
 
 from pred_el_prices.pipeline import cache
 from pred_el_prices.pipeline.entsoe import (
     ZONE_SPLIT_UTC,
+    _is_retryable,
     _normalize,
     _zone_windows,
     default_fetch_end,
@@ -27,6 +29,35 @@ class TestDefaultFetchEnd:
 
     def test_exactly_midnight_still_reaches_a_full_day_ahead(self):
         assert default_fetch_end(ts("2026-10-10 00:00")) == ts("2026-10-11")
+
+
+def _http_error(status: int, body: str = "") -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status
+    response._content = body.encode()
+    return requests.HTTPError(response=response)
+
+
+class TestIsRetryable:
+    def test_server_faults_retry(self):
+        for status in (408, 429, 500, 502, 503, 504, 599):
+            assert _is_retryable(_http_error(status))
+
+    def test_400_with_reason_999_retries(self):
+        # 2026-11-03: "An unexpected error occurred: I/O error", fine minutes later
+        body = "<Reason><code>999</code><text>An unexpected error occurred: I/O error</text>"
+        assert _is_retryable(_http_error(400, body))
+
+    def test_genuine_bad_request_fails_fast(self):
+        assert not _is_retryable(_http_error(400, "<Reason><code>Y</code></Reason>"))
+        assert not _is_retryable(_http_error(400))
+        assert not _is_retryable(_http_error(401))
+        assert not _is_retryable(_http_error(404))
+
+    def test_connection_errors_retry(self):
+        assert _is_retryable(requests.ConnectionError())
+        assert _is_retryable(requests.Timeout())
+        assert not _is_retryable(ValueError())
 
 
 class TestZoneWindows:

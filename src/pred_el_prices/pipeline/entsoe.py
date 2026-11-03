@@ -56,7 +56,14 @@ def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
         return True
     if isinstance(exc, requests.HTTPError) and exc.response is not None:
-        return exc.response.status_code in (408, 429, 500, 502, 503, 504)
+        status = exc.response.status_code
+        # 599: the gateway's own code while struggling. 400 with reason code 999
+        # ("An unexpected error occurred: I/O error"): a server fault dressed as a
+        # bad request; the identical query succeeded minutes later (2026-11-03).
+        # A genuine bad request carries another reason code and still fails fast.
+        if status == 400:
+            return "<code>999</code>" in (exc.response.text or "")
+        return status in (408, 429, 500, 502, 503, 504, 599)
     return False
 
 
