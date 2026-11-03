@@ -924,6 +924,13 @@ def retry_morning_steps(
             generated_utc, weather_vintage, load_surrogate, False,
         )  # fmt: skip
     mix_step(out_dir, delivery, t0_rows, generated_utc, prices=prices)
+    if t0_rows is not None:
+        from pred_el_prices.production.mix_learned import learned_step
+
+        learned_step(
+            out_dir, delivery, t0_rows, generated_utc, prices=prices, load_d=load_d,
+            own_res=own_res_total(res_parts), dataset=dataset,
+        )  # fmt: skip
 
 
 def standing_day_action(day_rows: pd.DataFrame, evening: bool, now, delivery: pd.Timestamp) -> str:
@@ -1232,6 +1239,13 @@ def run_daily(
         mix_step(
             out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening, prices=prices
         )
+        if t0_rows is not None:  # learned mixes M1/M3: shadow log only, fail-soft
+            from pred_el_prices.production.mix_learned import learned_step
+
+            learned_step(
+                out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening,
+                prices=prices, load_d=load_d, own_res=own_res, dataset=dataset,
+            )  # fmt: skip
     write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

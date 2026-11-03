@@ -115,7 +115,7 @@ actuals or scores) and is never deleted. The publish job copies them to the webs
 
 Code: `production/nets.py` (training, gate row, recalibration, 15-min shape),
 `production/site.py` (log + v2 JSON blocks, torch-free), `production/backfill.py`;
-CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `seed-t0-pit`, `backfill-nets`, `build-site`;
+CLI `train-nets`, `forecast --nets-bundle`, `seed-nets-pit`, `seed-t0-pit`, `seed-mix-learned`, `backfill-nets`, `build-site`;
 workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
 
 - **Delivery blocks are UTC days**, as in v1 and every backtest: always 24 hours and
@@ -224,6 +224,56 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
         "t0_recal_days": 354,
         "evening": true, "hours": [...], "quarters": [...]}
 ```
+
+### Learned mixes M1 / M3 (`production/mix_learned.py`, shadow log only)
+
+- **What**: the mix with a fitted nets weight w instead of 0.5, q = w·q_nets + (1−w)·q_t0
+  level by level (clipped), on exactly the equal mix's inputs (nets final, t0 recalibrated
+  on the 99 grid). Settings = the neural repo's learned-mix experiment (`_scratch/mix/`,
+  `runs/mix-learned`, plan Step 1, results 2026-11-03), chosen there on Oct–Mar:
+  - **M1**: one w per UTC hour, minimising window-mean 99-level pinball + λ(w−0.5)², λ = 1,
+    + μ·Σ(w_h−w_h+1)², μ = 3; exact on a 0.02 grid (dynamic programming over the hours).
+  - **M3**: w = sigmoid(θ·x), 16 gate-safe features (hour sin/cos ×3, Saturday, Sunday,
+    holiday share, residual load = DE load − own RES, own-RES share, D−1 mean price UTC
+    00–21, nets−t0 median spread signed and absolute, both q90−q10 widths), standardised on
+    the window, ridge 0.1. Refit every run, cold start (the experiment refit weekly,
+    warm-started: weights differ by ≤ 3e-4).
+  - Fit window: the last 90 calendar days up to D−2 with both models and all 24 prices
+    (M3: and complete features). Fewer than 60 such days: w = 0.5, `fallback: true`.
+  - Parity with the experiment, fed its inputs: M1 weights identical on all 172 report-half
+    days; M3 max |Δw| 3.2e-4, max |Δq| 0.05 €/MWh (12 days). The seed reproduces the
+    experiment's arrays exactly (175 days, nets/t0/features/prices Δ = 0).
+- **History**: nets = the standing nets log rows from 2026-10-17 on (`NETS_LIVE_FROM`:
+  the live nets before ran with EUA = 0), else the seed's; t0 = the standing t0 log rows,
+  each day recalibrated on its own PIT history (as the site does), else the seed's; live
+  wins per component. M3 features: those logged with M3's rows, else the seed's, else
+  rebuilt from the dataset (`proxy_days`): TSO load forecast as the run had it, and the
+  TSO RES forecast in place of the unlogged own RES (a published value for a day <= D−2;
+  the experiment used own RES). Only live days before the M3 log starts need this.
+  - Day-D features: the run's own DE load input (UTC 22–23 from 24 h earlier or the
+    surrogate; the experiment's `load_tso` had the TSO's own value there), own RES of D
+    (12Z in the evening edition), holiday share, D−1 prices.
+- **Seed** (`site-state/site/mix_learned_seed.parquet`, 175 days, 4.9 MB), built from the
+  neural repo's backtests as the experiment built them (nets = morning replay log, t0-B
+  recalibrated with its own rows as PIT history, features from the t0 comparison's inputs):
+
+  ```
+  pep seed-mix-learned --nets-logs runs/replay-2526/morning/nets_log.parquet \
+      --t0 runs/t0-compare/t0_B.parquet --inputs runs/t0-compare/inputs \
+      --cache-dir data/cache --before 2026-09-25 --out site-state/site/mix_learned_seed.parquet
+  ```
+  Without it M1/M3 log `fallback: true` (w = 0.5) until 60 live days exist; nothing fails.
+- **Log**: `mix_m1_log/` and `mix_m3_log/` (monthly partitions), every run with t0 in both
+  editions, the mix log's layout (24 `h` + 96 `qh` rows; quarters = the nets' quarters
+  shifted by what the mix moved their hour) and flags (evening etc., `components`,
+  `nets_generated_utc`, `t0_recal_days`), plus `variant`, `w` (the hour's weight, repeated on
+  its quarters), `fallback`, `fit_days`, `seed_days`; M3's `h` rows add the raw features
+  `f_load`, `f_res`, `f_holiday`, `f_price_dm1` (the history for later fits) and
+  `proxy_days`. The equal `mix_log/` is not touched. No t0 rows: nothing logged.
+- **Fail-soft**: any error logs `::warning::learned mix ...` and skips only those rows (one
+  variant or both); the forecast, the equal mix and the site JSON are unaffected. Not on
+  the site, not a `--primary` choice. Runtime ~1–2 s per run (history 0.5 s on the real
+  seed, M1 0.3 s, M3 0.1 s).
 
 ## Website (dev branch, local only until approved)
 

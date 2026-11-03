@@ -303,6 +303,24 @@ def main() -> None:
     st.add_argument("--before", required=True, help="Use backtest hours before this UTC day")
     st.add_argument("--out", type=Path, required=True, help="Seed parquet to write")
 
+    sm = sub.add_parser(
+        "seed-mix-learned",
+        help="Seed the learned mixes' (M1/M3) fit history from the nets replay + t0-B backtest",
+    )
+    sm.add_argument(
+        "--nets-logs", type=Path, nargs="+", required=True,
+        help="Replay nets_log.parquet file(s), final percentiles (the later wins)",
+    )  # fmt: skip
+    sm.add_argument("--t0", type=Path, required=True, help="t0 backtest rows (21 levels, raw)")
+    sm.add_argument(
+        "--inputs", type=Path, required=True,
+        help="t0 comparison inputs dir (hourly.parquet, own_res.parquet): M3 features",
+    )  # fmt: skip
+    sm.add_argument("--cache-dir", type=Path, default=Path("data/cache"), help="Clearing prices")
+    sm.add_argument("--before", required=True, help="First live UTC day: seed the days before")
+    sm.add_argument("--days", type=int, default=180, help="Days before --before to seed")
+    sm.add_argument("--out", type=Path, required=True, help="Seed parquet to write")
+
     bn = sub.add_parser(
         "backfill-nets",
         help="Replay the production network path over past days (weekly bundles, own RES)",
@@ -598,6 +616,24 @@ def main() -> None:
         seed.to_parquet(args.out)
         print(
             f"t0 PIT seed {args.out}: {len(seed)} hours, {seed.index.min()} .. {seed.index.max()}"
+        )
+    elif args.command == "seed-mix-learned":
+        import pandas as pd
+
+        from pred_el_prices.daily_forecast import site_prices
+        from pred_el_prices.production.mix_learned import seed_mix_learned
+
+        seed = seed_mix_learned(
+            tuple(args.nets_logs), args.t0, args.inputs, site_prices(args.cache_dir),
+            pd.Timestamp(args.before, tz="UTC"), args.days,
+        )  # fmt: skip
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        seed.to_parquet(args.out)
+        has = seed[["f_load", "f_res", "f_holiday", "f_price_dm1"]].notna().all(axis=1)
+        n_feat = int(has.groupby(seed.index.normalize()).all().sum())
+        print(
+            f"learned-mix seed {args.out}: {len(seed) // 24} days, {seed.index.min()} .. "
+            f"{seed.index.max()}, {n_feat} days with M3 features"
         )
     elif args.command == "backfill-nets":
         import json

@@ -577,12 +577,16 @@ def _standing_lear(tmp_path, delivery):
     lear.to_parquet(tmp_path / "site" / "forecast_log.parquet")
 
 
-def _record_t0_and_mix(monkeypatch, order):
+def _record_t0_and_mix(monkeypatch, order, learned=True):
     from pred_el_prices import daily_forecast
-    from pred_el_prices.production import mix, t0_shadow
+    from pred_el_prices.production import mix, mix_learned, t0_shadow
 
     monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: order.append(("t0", a)) or "T0 ROWS")
     monkeypatch.setattr(mix, "mix_step", lambda *a, **k: order.append(("mix", a, k)))
+    if learned:
+        monkeypatch.setattr(
+            mix_learned, "learned_step", lambda *a, **k: order.append(("learned", a, k))
+        )
     monkeypatch.setattr(
         daily_forecast, "write_site_json", lambda *a, **k: order.append(("site", k))
     )
@@ -595,12 +599,46 @@ def test_t0_and_the_mix_run_before_the_site_json(tmp_path, monkeypatch, evening)
     _record_t0_and_mix(monkeypatch, order)
     site_kw = {"site_models": ("nets", "t0", "mix"), "primary": "mix", "mix_from": "2026-10-25"}
     _run_nets(tmp_path, t0_shadow=True, evening=evening, **site_kw)
-    assert [o[0] for o in order] == ["t0", "mix", "site"]
-    assert order[2][1] == site_kw
+    assert [o[0] for o in order] == ["t0", "mix", "learned", "site"]
+    assert order[3][1] == site_kw
     t0_args, mix_args = order[0][1], order[1][1]
     assert t0_args[-1] is evening
     assert mix_args[2] == "T0 ROWS" and mix_args[-1] is evening  # this run's t0 rows
     assert order[1][2]["prices"] is not None  # the clearing prices t0 is recalibrated on
+    learned_args, learned_kw = order[2][1], order[2][2]
+    assert learned_args[2] == "T0 ROWS" and learned_args[-1] is evening
+    assert learned_kw["load_d"] is not None and learned_kw["own_res"] is not None
+
+
+def test_a_failing_learned_mix_costs_neither_the_mix_nor_the_site(tmp_path, monkeypatch, capsys):
+    from pred_el_prices.production import mix_learned
+
+    _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
+    order = []
+    _record_t0_and_mix(monkeypatch, order, learned=False)  # the real learned step runs
+
+    def boom(*a, **k):
+        raise RuntimeError("t0 calibration exploded")
+
+    monkeypatch.setattr(mix_learned.T0Calibration, "from_dir", boom)
+    monkeypatch.setattr(mix_learned, "read_log", lambda p: _nets_rows_for_learned())
+    monkeypatch.setattr(mix_learned, "log_exists", lambda p: True)
+    _run_nets(tmp_path, t0_shadow=True)
+    assert [o[0] for o in order] == ["t0", "mix", "site"]
+    out = capsys.readouterr().out
+    assert "::warning::learned mix step failed (RuntimeError: t0 calibration exploded)" in out
+    assert not any((tmp_path / "site").glob("mix_m*_log"))
+
+
+def _nets_rows_for_learned():
+    from pred_el_prices.production import site
+
+    day = "2026-10-25"
+    hours = pd.date_range(day, periods=24, freq="1h", tz="UTC")
+    hourly = pd.DataFrame(1.0, hours, columns=site.Q_COLS + site.R_COLS)
+    quarters = pd.DataFrame(1.0, pd.date_range(day, periods=96, freq="15min", tz="UTC"),
+                            columns=site.Q_COLS)  # fmt: skip
+    return site.log_rows(hourly, quarters, {"evening": False}, "g")
 
 
 def test_retry_reruns_t0_and_the_mix_when_the_mix_lacks_t0(tmp_path, monkeypatch):
@@ -616,9 +654,10 @@ def test_retry_reruns_t0_and_the_mix_when_the_mix_lacks_t0(tmp_path, monkeypatch
     _record_t0_and_mix(monkeypatch, order)
     _run_nets(tmp_path, t0_shadow=True, site_models=("nets", "mix"), primary="mix")
     assert nets_calls == []  # the standing nets are not redone
-    assert [o[0] for o in order] == ["t0", "mix", "site"]
-    assert order[1][1][2] == "T0 ROWS" and order[2][1]["site_models"] == ("nets", "mix")
+    assert [o[0] for o in order] == ["t0", "mix", "learned", "site"]
+    assert order[1][1][2] == "T0 ROWS" and order[3][1]["site_models"] == ("nets", "mix")
     assert order[1][2]["prices"] is not None
+    assert order[2][1][2] == "T0 ROWS" and order[2][2]["own_res"] is not None
 
 
 def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatch):
