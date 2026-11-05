@@ -32,7 +32,9 @@ import pandas as pd
 from pred_el_prices.daily_forecast import RES_TARGETS, own_res_parts, own_res_total
 from pred_el_prices.features.dataset import FUEL_SETTLEMENT_LAG_DAYS, NEIGHBOUR_ZONES
 from pred_el_prices.features.holidays import holiday_share
+from pred_el_prices.features.tso_areas import entsoe_de_series
 from pred_el_prices.pipeline import cache
+from pred_el_prices.pipeline.entsoe import resample_hourly
 from pred_el_prices.production import t0_shadow as T0
 from pred_el_prices.production.site import _write_partitions
 
@@ -95,20 +97,46 @@ def lagged_horizon(series: pd.Series, hz: pd.DatetimeIndex, day: pd.Timestamp) -
     return v
 
 
+def gate_loads(cache_dir: Path, start: pd.Timestamp) -> dict[str, pd.Series]:
+    """The pre-gate TSO load forecasts straight from the cache: the DE aggregate (areas
+    stepped in) and the 9-neighbour sum. `dataset` rows exist only where a price cleared,
+    so at the morning run it lacks local day D; training read D's forecast (its days
+    had cleared), so the horizon must too."""
+    zones = []
+    for z in NEIGHBOUR_ZONES:
+        df = cache.load(cache_dir, f"entsoe/{z}/load_forecast", start=start)
+        if len(df):
+            zones.append(resample_hourly(df[["Forecasted Load"]])["Forecasted Load"].rename(z))
+    nb = (
+        pd.concat(zones, axis=1).sum(axis=1, min_count=len(NEIGHBOUR_ZONES))
+        if len(zones) == len(NEIGHBOUR_ZONES)
+        else pd.Series(dtype=float)
+    )
+    return {"load": entsoe_de_series(cache_dir, "load_forecast_mw", start=start), "nb": nb}
+
+
 def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev,
-                 context=T0.CONTEXT):  # fmt: skip
+                 context=T0.CONTEXT, gate=None):  # fmt: skip
     """Model inputs for `delivery`: (context prices, covariates [13, context + HORIZON],
     kept horizon hours, keep mask). `res_d` / `res_prev`: own RES parts (columns
-    RES_TARGETS) of D and of D-1 (or None). Raises on a missing horizon value."""
+    RES_TARGETS) of D and of D-1 (or None). `gate`: `gate_loads`, filling the horizon
+    hours `dataset` lacks (the context stays the dataset's, as in training). Raises on a
+    missing horizon value."""
     o = T0.origin_of(delivery)
     ctx = pd.date_range(o - context * H, periods=context, freq="1h")
     hz = pd.date_range(o, periods=T0.HORIZON, freq="1h")
     keep = hz.normalize() == delivery
     every = ctx.append(hz)
     ctx_prices = prices.reindex(ctx).to_numpy(np.float32)
+    nb_cols = [f"load_{z.lower()}_mw" for z in NEIGHBOUR_ZONES]
+    nb = dataset[nb_cols].sum(axis=1, min_count=len(nb_cols))
+    load_src, nb_src = dataset["load_forecast_mw"], nb
+    if gate is not None:
+        load_src = load_src.combine_first(gate["load"])
+        nb_src = nb_src.combine_first(gate["nb"])
 
     load_c = dataset["load_forecast_mw"].reindex(ctx).to_numpy(dtype=float)
-    load_h = T0.horizon_load(dataset["load_forecast_mw"], load_d, hz, delivery)
+    load_h = T0.horizon_load(load_src, load_d, hz, delivery)
     parts = {}
     for row, col in PARTS.items():
         prev = None if res_prev is None else res_prev[col]
@@ -123,8 +151,6 @@ def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev
     )
     fuel = gate_safe_fuels(fuels_daily, every)
     cal = calendar_flags(every)
-    nb_cols = [f"load_{z.lower()}_mw" for z in NEIGHBOUR_ZONES]
-    nb = dataset[nb_cols].sum(axis=1, min_count=len(nb_cols))
 
     rows = {
         "rl": (load_c - res_c, load_h - res_h),
@@ -136,7 +162,7 @@ def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev
             for f in FUELS
         },
         **{c: cal[c].to_numpy() for c in ["sat", "sun", "mon", "bridge"]},
-        "nb_sum": (nb.reindex(ctx).to_numpy(dtype=float), lagged_horizon(nb, hz, delivery)),
+        "nb_sum": (nb.reindex(ctx).to_numpy(dtype=float), lagged_horizon(nb_src, hz, delivery)),
     }
     cov = []
     for r in ROWS:
@@ -162,9 +188,10 @@ def load_model(checkpoint: Path):
     return model.eval(), str(ck.get("name", checkpoint.name))
 
 
-def forecast_day(model, delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev):
+def forecast_day(model, delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev,
+                 gate=None):  # fmt: skip
     ctx, cov, hours, keep = build_inputs(
-        delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev
+        delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev, gate=gate
     )
     fc = model.predict(
         ctx[None], horizon=T0.HORIZON, quantile_levels=T0.LEVELS, future_covariates=cov[None]
@@ -206,8 +233,9 @@ def t0_all_step(
             res_prev = None
         model, name = load_model(Path(checkpoint)) if model is None else model
         fuels_daily = cache.load(cache_dir, "fuels_daily")
+        gate = gate_loads(cache_dir, delivery - 7 * DAY)
         rows = forecast_day(
-            model, delivery, prices, dataset, fuels_daily, load_d, res_parts, res_prev
+            model, delivery, prices, dataset, fuels_daily, load_d, res_parts, res_prev, gate
         ).astype("float32")
         rows.insert(0, "generated_utc", generated_utc)
         rows.insert(1, "weather_vintage", weather_vintage)

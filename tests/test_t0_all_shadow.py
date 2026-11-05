@@ -15,6 +15,7 @@ from pred_el_prices.production.t0_shadow import Q_NAMES, RES_COLS
 from test_t0_shadow import TSO_POST_GATE, FakeT0, _dataset, _day
 
 NB_COLS = [f"load_{z.lower()}_mw" for z in NEIGHBOUR_ZONES]
+T0_ORIGIN = t0_shadow.origin_of
 
 
 def _dataset_all(delivery):
@@ -77,6 +78,32 @@ def test_rows_follow_the_training_rules(day):
     assert r["mon"][48:][keep].max() == float(dow == 0)
 
 
+@pytest.mark.parametrize("day", ["2026-07-15", "2026-01-15"])
+def test_horizon_reads_day_d_from_the_cache_when_the_dataset_ends_at_the_origin(day):
+    # the morning run: D has not cleared, so `dataset` (price hours only) stops at the
+    # origin; D's neighbour and DE load forecasts are in the cache (training saw them)
+    delivery = pd.Timestamp(day, tz="UTC")
+    ds = _dataset_all(delivery)
+    ds = ds[ds.index < T0_ORIGIN(delivery)]
+    local_d = pd.date_range(delivery - pd.Timedelta(hours=2), periods=28, freq="1h")
+    local_d = local_d[local_d.tz_convert("Europe/Berlin").date == delivery.date()]
+    gate = {"load": pd.Series(3000.0, local_d), "nb": pd.Series(50.0, local_d)}
+    prev = _parts(delivery - pd.Timedelta(days=1), (7.0, 8.0, 9.0))
+    args = (delivery, pd.Series(50.0, index=ds.index), ds, _fuels(), _day(delivery, 2000.0),
+            _parts(delivery), prev)  # fmt: skip
+    _, cov, _, keep = T.build_inputs(*args, context=48, gate=gate)
+    r = dict(zip(T.ROWS, cov, strict=True))
+    lead = int((~keep[: np.argmax(keep)]).sum())
+    np.testing.assert_allclose(r["nb_sum"][:48], 90.0)  # context: the dataset's
+    np.testing.assert_allclose(r["nb_sum"][48:], 50.0)  # local D (+1 from 24 h earlier)
+    np.testing.assert_allclose(r["load"][48:][:lead], 3000.0)
+    np.testing.assert_allclose(r["rl"][48:][:lead], 3000.0 - 24.0)
+    np.testing.assert_allclose(r["load"][48:][keep], 2000.0)
+    # without the cache the horizon would quietly fall back to D-1's forecast
+    _, cov, _, _ = T.build_inputs(*args, context=48)
+    np.testing.assert_allclose(cov[T.ROWS.index("nb_sum")][48:], 90.0)
+
+
 def test_bridge_day_and_weekday_flags():
     # Ascension 2026-05-14 (Thu): Fri 05-15 is a bridge day; Mon 05-18 is not
     idx = pd.date_range("2026-05-14", "2026-05-19", freq="1h", tz="Europe/Berlin").tz_convert("UTC")
@@ -113,7 +140,7 @@ def _step(tmp_path, monkeypatch, model):
     delivery = pd.Timestamp("2026-07-15", tz="UTC")
     monkeypatch.setattr(T, "own_res_parts", lambda f, d, c, day: _parts(day))
     monkeypatch.setattr(t0_shadow, "CONTEXT", 48)
-    monkeypatch.setattr(T.build_inputs, "__defaults__", (48,))
+    monkeypatch.setattr(T.build_inputs, "__defaults__", (48, None))
     cache.upsert(tmp_path / "cache", "fuels_daily", _fuels())
     ds = _dataset_all(delivery)
     return T.t0_all_step(
