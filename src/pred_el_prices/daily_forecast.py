@@ -857,6 +857,7 @@ def run_daily(
     allow_load_surrogate: bool = False,
     nets_bundle: Path | None = None,
     t0_shadow: bool = False,
+    t0_all_checkpoint: Path | None = None,
 ) -> Path | None:
     """Produce and publish the forecast for the next UTC day. Idempotent per day.
 
@@ -866,6 +867,8 @@ def run_daily(
 
     `t0_shadow`: also run the t0 foundation model (production/t0_shadow.py) on
     morning forecast runs, logged to t0_log/ only, never published; fail-soft.
+    `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
+    (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
 
     `evening` is the evening edition (plan addendum 2026-08-31): runs the
     night before the normal slot, targets the day AFTER tomorrow, builds on
@@ -1109,4 +1112,12 @@ def run_daily(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
             entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1], load_surrogate,
         )  # fmt: skip
+        if t0_all_checkpoint is not None:
+            from pred_el_prices.production.t0_all_shadow import t0_all_step
+
+            t0_all_step(
+                out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+                entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
+                load_surrogate, checkpoint=t0_all_checkpoint,
+            )  # fmt: skip
     return out_dir / "latest.json"

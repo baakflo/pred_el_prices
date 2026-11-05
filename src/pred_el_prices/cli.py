@@ -236,6 +236,13 @@ def main() -> None:
         help="Also log a shadow forecast of the t0 foundation model (needs the t0 extra; "
         "never published, fail-soft; skipped on evening and refresh runs)",
     )
+    fc.add_argument(
+        "--t0-all-checkpoint",
+        type=Path,
+        default=None,
+        help="With --t0-shadow: also log the fine-tuned t0 (13 covariate rows) from these "
+        "weights to t0_all_log/ (never published, fail-soft; skipped if the file is absent)",
+    )
 
     tn = sub.add_parser(
         "train-nets",
@@ -493,6 +500,7 @@ def main() -> None:
             allow_load_surrogate=args.allow_load_surrogate,
             nets_bundle=args.nets_bundle,
             t0_shadow=args.t0_shadow,
+            t0_all_checkpoint=args.t0_all_checkpoint,
         )
     elif args.command == "train-nets":
         import time

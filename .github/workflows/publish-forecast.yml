@@ -93,6 +93,18 @@ jobs:
           gh release download models-latest --pattern nets.pt --dir models --clobber \
             || echo "::warning::no network bundle; LEAR publishes alone"
 
+      # The fine-tuned t0 for its shadow log (production/t0_all_shadow.py), ~1 GB of
+      # weights on a release of the PRIVATE nl repo (read-only token NL_RELEASE_TOKEN).
+      # Missing token or asset: the shadow step is skipped, nothing else changes.
+      - name: Fetch fine-tuned t0 weights
+        if: env.SLOT == '0915' || env.SLOT == '0950' || env.SLOT == ''
+        env:
+          GH_TOKEN: ${{ secrets.NL_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "::warning::NL_RELEASE_TOKEN not set; t0-all shadow skipped"; exit 0; fi
+          gh release download t0-all --repo baakflo/pred_el_prices_nl --pattern t0_all.pt \
+            --dir models --clobber || echo "::warning::no fine-tuned t0 weights; t0-all shadow skipped"
+
       # Idempotent: if a pre-gate forecast for tomorrow is already logged, this
       # only refreshes the site JSON (fills in actuals). If the load forecast
       # is not yet published, it fails loudly and the 09:50 slot retries.
@@ -113,6 +125,7 @@ jobs:
           --archive-dir archive_repo
           --out archive_repo/site-state/site
           $( [ -f models/nets.pt ] && echo --nets-bundle models/nets.pt )
+          $( [ -f models/t0_all.pt ] && echo --t0-all-checkpoint models/t0_all.pt )
           ${{ env.SLOT != '0915' && '--allow-ens-fallback' || '' }}
           ${{ env.SLOT != '0915' && '--allow-load-surrogate' || '' }}
           ${{ (env.SLOT == '1115' || env.SLOT == '1215' || env.SLOT == '1515') && '--refresh-only' || '' }}
