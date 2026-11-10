@@ -32,12 +32,13 @@ on:
         description: "Cron slot this dispatch mirrors (UTC, e.g. 0915)"
         required: false
         default: ""
-      # The site's headline model per day (the `primary` key: nets, mix or t0; falls
-      # back to the nets on days without that block). The live switch is the
-      # repository variable PEP_PRIMARY (cron-job.org dispatches send only the slot);
-      # this input overrides it for one manual run. Unset both: nets.
+      # The published model. Default mix: the equal-weight nets + t0-all mix, inside the
+      # site's nets block (with PEP_SITE_MODELS unset), from delivery 2026-11-12 on. The
+      # repository variable PEP_PRIMARY overrides the default (cron-job.org dispatches
+      # send only the slot); this input overrides both for one manual run. nets: the
+      # networks alone, as before 2026-11-12.
       primary:
-        description: "Headline model for this run: nets | mix | t0 (empty: vars.PEP_PRIMARY, else nets)"
+        description: "Published model for this run: mix | nets | t0 (empty: vars.PEP_PRIMARY, else mix)"
         required: false
         default: ""
 
@@ -63,12 +64,14 @@ jobs:
       SLOT: ${{ inputs.slot }}
       # Every slot passes these, the refresh slots included: they rewrite the site too.
       # The site's model blocks: nets plus any of t0, mix (e.g. nets,t0,mix); unset =
-      # nets, the site JSON exactly as before. PEP_PRIMARY must be among them.
+      # nets, the site JSON's shape exactly as before. With sibling blocks PEP_PRIMARY
+      # must be among them; with nets alone, primary mix = the mix inside the nets block.
       SITE_MODELS: ${{ vars.PEP_SITE_MODELS || 'nets' }}
-      PRIMARY: ${{ inputs.primary || vars.PEP_PRIMARY || 'nets' }}
-      # the headline's cut-over UTC delivery day (YYYY-MM-DD), required unless the
-      # primary is nets: earlier days keep "primary": "nets"
-      MIX_FROM: ${{ vars.PEP_MIX_FROM }}
+      PRIMARY: ${{ inputs.primary || vars.PEP_PRIMARY || 'mix' }}
+      # the published mix's cut-over UTC delivery day (YYYY-MM-DD), required unless the
+      # primary is nets: earlier days keep their nets blocks. 2026-11-12 = the first
+      # evening edition after the t0-all go-live (delivery 11-11 went out as nets).
+      MIX_FROM: ${{ vars.PEP_MIX_FROM || '2026-11-12' }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v9.0.0
@@ -109,17 +112,18 @@ jobs:
           gh release download models-latest --pattern nets.pt --dir models --clobber \
             || echo "::warning::no network bundle; LEAR publishes alone"
 
-      # The fine-tuned t0 for its shadow log (production/t0_all_shadow.py), ~1 GB of
-      # weights on a release of the PRIVATE nl repo (read-only token NL_RELEASE_TOKEN).
-      # Missing token or asset: the shadow step is skipped, nothing else changes.
+      # The fine-tuned t0, half of the published mix (production/t0_all_shadow.py), ~1 GB
+      # of weights on a release of the PRIVATE nl repo (read-only token NL_RELEASE_TOKEN).
+      # Every forecast slot, the evening edition included. Missing token or asset: the
+      # nets publish alone (as before the mix), flagged t0_missing in mix_log/.
       - name: Fetch fine-tuned t0 weights
-        if: env.SLOT == '0915' || env.SLOT == '0950' || env.SLOT == ''
+        if: env.SLOT == '0915' || env.SLOT == '0950' || env.SLOT == '2135' || env.SLOT == ''
         env:
           GH_TOKEN: ${{ secrets.NL_RELEASE_TOKEN }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then echo "::warning::NL_RELEASE_TOKEN not set; t0-all shadow skipped"; exit 0; fi
+          if [ -z "$GH_TOKEN" ]; then echo "::warning::NL_RELEASE_TOKEN not set; no t0-all, the nets publish alone"; exit 0; fi
           gh release download t0-all --repo baakflo/pred_el_prices_nl --pattern t0_all.pt \
-            --dir models --clobber || echo "::warning::no fine-tuned t0 weights; t0-all shadow skipped"
+            --dir models --clobber || echo "::warning::no fine-tuned t0 weights; the nets publish alone"
 
       # Idempotent: if a pre-gate forecast for tomorrow is already logged, this
       # only refreshes the site JSON (fills in actuals). If the load forecast
