@@ -20,10 +20,17 @@ the nets' own), `nets_generated_utc` (the nets run the mix was built on) and
 `t0_recal_days` (t0's PIT days; 0: raw t0). The nets are required: without them nothing
 is logged.
 
-Published with `pep forecast --site-models nets,t0,mix` as the site's `t0` and `mix`
-blocks (site_days): the mix from this log where it stands on the day's nets run, else
-mixed at site-build time from the standing nets and t0 rows, so the blocks reach back to
-the start of the t0 log.
+Since the t0-all go-live (cut-over delivery 2026-11-12) the mix this log holds is the
+PUBLISHED forecast: the nets and the fine-tuned t0 (production/t0_all_shadow.py), t0-all
+raw (no PIT seed exists for it) on the 99-level grid, `components` "nets+t0-all";
+`pep forecast --primary mix` (site models nets alone) publishes it inside the site's
+`nets` block (site.nets_block_days). A run whose t0-all failed logs the nets' own rows,
+`components` "nets" and `t0_missing` True, and the nets block shows the nets.
+
+With `pep forecast --site-models nets,t0,mix` the site's `t0` and `mix` sibling blocks
+(site_days) stay the zero-shot t0 and its mix, mixed at site-build time from the standing
+nets and t0 rows (a logged mix stands only with zero-shot components), so the blocks reach
+back to the start of the t0 log.
 """
 
 from pathlib import Path
@@ -36,6 +43,7 @@ from pred_el_prices.production.site import (
     LOG_DIR,
     MIX_LOG_DIR,
     MIX_WITH_T0,
+    MIX_WITH_T0_ALL,
     Q_COLS,
     QUANTILES,
     T0_SEED_NAME,
@@ -50,7 +58,7 @@ from pred_el_prices.production.t0_shadow import LOG_DIR as T0_LOG_DIR
 from pred_el_prices.production.t0_shadow import Q_NAMES as T0_COLS
 
 PRICE_BOUNDS = (-500.0, 4000.0)  # SDAC limits, as experiments.qnn_de (restated: no torch)
-WITH_T0, NETS_ONLY = MIX_WITH_T0, "nets"
+WITH_T0, WITH_T0_ALL, NETS_ONLY = MIX_WITH_T0, MIX_WITH_T0_ALL, "nets"
 # carried from the nets rows: provenance and substitute-input flags, as in the nets log
 CARRY = [
     "trained_through",
@@ -182,10 +190,12 @@ def mix_rows(
     t0: pd.DataFrame | None,
     generated_utc: str,
     cal: T0Calibration | None = None,
+    label: str = WITH_T0,
 ):
     """One run's mix log rows from one day's standing nets rows and t0's rows (or None).
 
-    `cal`: t0 recalibrated first (production); its PIT days go to `t0_recal_days`."""
+    `cal`: t0 recalibrated first (production); its PIT days go to `t0_recal_days`.
+    `label`: the `components` of a mix with t0 (WITH_T0_ALL: the fine-tuned t0)."""
     h = nets_rows[nets_rows["kind"] == "h"].sort_index()
     qh = nets_rows[nets_rows["kind"] == "qh"].sort_index()
     if len(h) != 24 or len(qh) != 96:
@@ -196,7 +206,7 @@ def mix_rows(
     else:
         t0_99, recal = t0_hourly(t0, cal)
         values_h = mix_hourly(h, t0_99)
-        values_qh, components = mix_quarters(qh, h, values_h), WITH_T0
+        values_qh, components = mix_quarters(qh, h, values_h), label
     values = pd.concat([values_h.astype("float32"), values_qh.astype("float32")])
     meta = pd.DataFrame(
         {
@@ -228,12 +238,15 @@ def mix_step(
     generated_utc: str,
     evening: bool = False,
     prices: pd.Series | None = None,
+    label: str = WITH_T0,
 ) -> bool:
     """Mix for `delivery` from its standing nets rows and this run's t0 rows (None: t0
     failed or did not run), appended to the mix log. Never raises.
 
     `prices`: hourly clearing prices; t0 is then recalibrated (T0Calibration on the
-    seed + t0 log in `out_dir`), as the site's t0 block is. Without them t0 mixes raw.
+    seed + t0 log in `out_dir`), as the site's t0 block is. Without them t0 mixes raw
+    (the published t0-all mix: `label` WITH_T0_ALL). Without t0 the rows are the nets'
+    own, flagged `t0_missing`.
     Nothing is logged when no nets forecast of this run's edition stands: a morning run
     whose nets failed must not mix the evening nets with the morning t0.
     """
@@ -249,7 +262,8 @@ def mix_step(
             if t0 is not None and prices is not None
             else None
         )
-        out = mix_rows(rows, t0, generated_utc, cal)
+        out = mix_rows(rows, t0, generated_utc, cal, label)
+        out["t0_missing"] = t0 is None
         _write_partitions(Path(out_dir) / MIX_LOG_DIR, out)
         recal = f", t0 PIT days {out['t0_recal_days'].iloc[0]}" if "t0_recal_days" in out else ""
         print(f"mix: {delivery:%Y-%m-%d} logged ({out['components'].iloc[0]}{recal})")
@@ -259,13 +273,14 @@ def mix_step(
         return False
 
 
-def mix_logged(out_dir: Path, delivery: pd.Timestamp) -> bool:
-    """Whether a standing morning mix WITH t0 exists for `delivery` (a retry slot's test)."""
+def mix_logged(out_dir: Path, delivery: pd.Timestamp, label: str = WITH_T0) -> bool:
+    """Whether a standing morning mix with t0 (`components` == `label`) exists for
+    `delivery` (a retry slot's test)."""
     log = read_partitions(Path(out_dir) / MIX_LOG_DIR)
     if log is None:
         return False
     h = log[(log.index.normalize() == delivery) & (log["kind"] == "h")]
-    return bool(len(h)) and not _evening(h) and bool((h["components"] == WITH_T0).all())
+    return bool(len(h)) and not _evening(h) and bool((h["components"] == label).all())
 
 
 # ------------------------------------------------------------------ site blocks

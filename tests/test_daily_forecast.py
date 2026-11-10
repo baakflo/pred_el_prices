@@ -579,9 +579,12 @@ def _standing_lear(tmp_path, delivery):
 
 def _record_t0_and_mix(monkeypatch, order, learned=True):
     from pred_el_prices import daily_forecast
-    from pred_el_prices.production import mix, mix_learned, t0_shadow
+    from pred_el_prices.production import mix, mix_learned, t0_all_shadow, t0_shadow
 
     monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: order.append(("t0", a)) or "T0 ROWS")
+    monkeypatch.setattr(
+        t0_all_shadow, "t0_all_step", lambda *a, **k: order.append(("t0_all", a, k)) or "T0ALL"
+    )
     monkeypatch.setattr(mix, "mix_step", lambda *a, **k: order.append(("mix", a, k)))
     if learned:
         monkeypatch.setattr(
@@ -597,16 +600,21 @@ def test_t0_and_the_mix_run_before_the_site_json(tmp_path, monkeypatch, evening)
     _nets_wiring(tmp_path, monkeypatch, pd.Timestamp("2026-10-25", tz="UTC"))
     order = []
     _record_t0_and_mix(monkeypatch, order)
+    from pred_el_prices.production import mix
+
     site_kw = {"site_models": ("nets", "t0", "mix"), "primary": "mix", "mix_from": "2026-10-25"}
-    _run_nets(tmp_path, t0_shadow=True, evening=evening, **site_kw)
-    assert [o[0] for o in order] == ["t0", "mix", "learned", "site"]
-    assert order[3][1] == site_kw
-    t0_args, mix_args = order[0][1], order[1][1]
-    assert t0_args[-1] is evening
-    assert mix_args[2] == "T0 ROWS" and mix_args[-1] is evening  # this run's t0 rows
-    assert order[1][2]["prices"] is not None  # the clearing prices t0 is recalibrated on
-    learned_args, learned_kw = order[2][1], order[2][2]
-    assert learned_args[2] == "T0 ROWS" and learned_args[-1] is evening
+    _run_nets(tmp_path, t0_shadow=True, evening=evening, t0_all_checkpoint=tmp_path / "w.pt",
+              **site_kw)  # fmt: skip
+    assert [o[0] for o in order] == ["t0", "t0_all", "mix", "learned", "site"]
+    assert order[4][1] == site_kw
+    t0_args, (_, t0_all_args, t0_all_kw), mix_args = order[0][1], order[1], order[2][1]
+    assert t0_args[-1] is evening and t0_all_kw["evening"] is evening
+    assert t0_all_args[6] is not None and t0_all_args[7] is not None  # load_d, res_parts
+    # the published mix: this run's t0-all rows, raw (no prices: no recalibration)
+    assert mix_args[2] == "T0ALL" and mix_args[-1] is evening
+    assert order[2][2] == {"label": mix.WITH_T0_ALL}
+    learned_args, learned_kw = order[3][1], order[3][2]
+    assert learned_args[2] == "T0 ROWS" and learned_args[-1] is evening  # zero-shot t0
     assert learned_kw["load_d"] is not None and learned_kw["own_res"] is not None
 
 
@@ -649,15 +657,35 @@ def test_retry_reruns_t0_and_the_mix_when_the_mix_lacks_t0(tmp_path, monkeypatch
     nets_calls = _nets_wiring(tmp_path, monkeypatch, delivery)
     _standing_lear(tmp_path, delivery)
     monkeypatch.setattr(daily_forecast, "nets_logged", lambda *a: True)  # 09:15 nets stand
-    monkeypatch.setattr(mix, "mix_logged", lambda *a: False)  # its t0 had failed
+    asked = []
+    # its t0-all had failed: no published mix with t0-all stands
+    monkeypatch.setattr(mix, "mix_logged", lambda *a: asked.append(a) and False)
     order = []
     _record_t0_and_mix(monkeypatch, order)
-    _run_nets(tmp_path, t0_shadow=True, site_models=("nets", "mix"), primary="mix")
+    _run_nets(tmp_path, t0_shadow=True, site_models=("nets", "mix"), primary="mix",
+              mix_from="2026-10-25", t0_all_checkpoint=tmp_path / "w.pt")  # fmt: skip
     assert nets_calls == []  # the standing nets are not redone
-    assert [o[0] for o in order] == ["t0", "mix", "learned", "site"]
-    assert order[1][1][2] == "T0 ROWS" and order[3][1]["site_models"] == ("nets", "mix")
-    assert order[1][2]["prices"] is not None
-    assert order[2][1][2] == "T0 ROWS" and order[2][2]["own_res"] is not None
+    assert asked[0][2] == mix.WITH_T0_ALL
+    assert [o[0] for o in order] == ["t0", "t0_all", "mix", "learned", "site"]
+    assert order[1][2]["evening"] is False
+    assert order[2][1][2] == "T0ALL" and order[2][2] == {"label": mix.WITH_T0_ALL}
+    assert order[4][1]["site_models"] == ("nets", "mix")
+    assert order[3][1][2] == "T0 ROWS" and order[3][2]["own_res"] is not None
+
+
+def test_retry_leaves_a_standing_t0_all_mix_alone(tmp_path, monkeypatch):
+    from pred_el_prices import daily_forecast
+    from pred_el_prices.production import mix
+
+    delivery = pd.Timestamp("2026-10-25", tz="UTC")
+    nets_calls = _nets_wiring(tmp_path, monkeypatch, delivery)
+    _standing_lear(tmp_path, delivery)
+    monkeypatch.setattr(daily_forecast, "nets_logged", lambda *a: True)
+    monkeypatch.setattr(mix, "mix_logged", lambda *a: True)
+    order = []
+    _record_t0_and_mix(monkeypatch, order)
+    _run_nets(tmp_path, t0_shadow=True, t0_all_checkpoint=tmp_path / "w.pt")
+    assert nets_calls == [] and [o[0] for o in order] == ["site"]
 
 
 def test_nets_get_lears_load_input_as_fallback_on_every_run(tmp_path, monkeypatch):

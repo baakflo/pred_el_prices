@@ -336,13 +336,20 @@ def write_site_json(
     day lacking that model's block falls back to the nets, recorded as
     `primary_fallback`. The default ("nets",) reads neither the t0 nor the mix log and
     writes what the site always was, byte for byte.
+
+    `primary` "mix" with the nets block alone (site models ("nets",)): the published
+    forecast is the nets + t0-all mix, carried INSIDE the `nets` block from `mix_from` on
+    (site.nets_block_days: same keys, its own `model` label; the nets wherever no mix with
+    t0-all stands on the day's nets run). No `primary` key, no sibling blocks: the JSON
+    keeps the shape the site reads. Earlier days keep their published nets blocks.
     """
     from pred_el_prices.production import site as nets_site
 
     extra = [m for m in site_models if m != "nets"]
     if "nets" not in site_models or not set(site_models) <= set(nets_site.SITE_MODELS):
         raise ValueError(f"site_models: 'nets' plus any of t0, mix, not {site_models!r}")
-    if primary not in site_models:
+    in_nets_block = primary == "mix" and not extra
+    if primary not in site_models and not in_nets_block:
         raise ValueError(f"primary {primary!r} is not among the site models {site_models!r}")
     if primary != "nets" and not mix_from:
         raise ValueError(f"primary {primary!r} needs mix_from, the cut-over delivery day")
@@ -357,12 +364,16 @@ def write_site_json(
     latest_day = log.index.normalize().max()
     lear_days = dict(iter(log.groupby(log.index.normalize())))
     nets_days = nets_site.by_day(nets_log) if nets_log is not None else {}
+    since = pd.Timestamp(mix_from, tz="UTC") if primary != "nets" else None
     model_days = {"nets": nets_days}  # model -> {day: rows in the nets log layout}
+    if in_nets_block:
+        mix_log = nets_site.read_partitions(out_dir / nets_site.MIX_LOG_DIR)
+        mix_days = nets_site.by_day(mix_log) if mix_log is not None else {}
+        model_days["nets"] = nets_site.nets_block_days(nets_days, mix_days, since)
     if extra:
         from pred_el_prices.production.mix import site_days
 
         model_days |= site_days(out_dir, nets_days, extra, prices)  # t0 recalibrated
-    since = pd.Timestamp(mix_from, tz="UTC") if primary != "nets" else None
     empty = pd.DataFrame(columns=["kind"])
 
     def primary_of(day: str, blocks: dict) -> dict:
@@ -876,6 +887,51 @@ def flag_of(rows: pd.DataFrame, col: str) -> bool:
     return bool(rows.get(col, pd.Series(False, index=rows.index)).eq(True).any())
 
 
+def published_mix_step(
+    out_dir: Path,
+    cache_dir: Path,
+    dataset: pd.DataFrame,
+    features: pd.DataFrame,
+    delivery: pd.Timestamp,
+    prices: pd.Series,
+    load_d: pd.Series | None,
+    res_parts: pd.DataFrame | None,
+    generated_utc: str,
+    weather_vintage: str,
+    load_surrogate: bool,
+    evening: bool,
+    t0_all_checkpoint: Path | None,
+    run_nets: bool = True,
+) -> bool:
+    """The published forecast's second half: t0-all (production/t0_all_shadow.py, its own
+    log) on this run's inputs, then the equal-weight nets + t0-all mix of this run's
+    edition to mix_log/ (production/mix.py; t0-all raw on the 99-level grid, quarters =
+    the nets' quarters shifted by what the mix moved their hour, clipped to the SDAC
+    limits). Never raises. Without t0-all rows (no weights, an exception, NaNs) the mix
+    log gets the nets' own rows flagged `t0_missing`, and the site publishes the nets
+    exactly as before. Returns whether a mix with t0-all was logged."""
+    from pred_el_prices.production.mix import WITH_T0_ALL, mix_step
+
+    rows = None
+    if t0_all_checkpoint is not None and load_d is not None and res_parts is not None:
+        from pred_el_prices.production.t0_all_shadow import t0_all_step
+
+        rows = t0_all_step(
+            out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+            generated_utc, weather_vintage, load_surrogate, checkpoint=t0_all_checkpoint,
+            evening=evening,
+        )  # fmt: skip
+    if not run_nets:
+        return False
+    if rows is None:
+        print(
+            f"::warning::PUBLISHED FORECAST FALLBACK: no t0-all forecast for {delivery:%Y-%m-%d} "
+            f"(weights {t0_all_checkpoint}); the nets publish alone, mix log flagged t0_missing"
+        )
+    ok = mix_step(out_dir, delivery, rows, generated_utc, evening, label=WITH_T0_ALL)
+    return ok and rows is not None
+
+
 def retry_morning_steps(
     bundle_path: Path,
     cache_dir: Path,
@@ -888,20 +944,22 @@ def retry_morning_steps(
     weather_vintage: str,
     allow_load_surrogate: bool,
     t0_shadow: bool,
+    t0_all_checkpoint: Path | None = None,
 ) -> None:
     """A pre-gate morning slot behind a standing LEAR forecast: rerun the nets when no
-    morning nets forecast stands, and t0 + the mix when no morning mix with t0 does.
+    morning nets forecast stands, and t0-all + the published mix (plus the zero-shot t0
+    and the learned mixes) when the nets were rerun or no morning mix with t0-all stands.
     Fail-soft like the steps themselves; LEAR is not touched.
 
     The inputs are rebuilt as the first attempt built them, the DE load fallback included:
     without it a gap only the nets' copy has fails every retry (2026-10-25, both slots).
     `allow_load_surrogate`: the slot's own permission, or the standing LEAR rows used it.
     """
-    from pred_el_prices.production.mix import mix_logged, mix_step
+    from pred_el_prices.production.mix import WITH_T0_ALL, mix_logged
 
     redo_nets = not nets_logged(out_dir, delivery)
-    redo_t0 = t0_shadow and not mix_logged(out_dir, delivery)
-    if not (redo_nets or redo_t0):
+    redo_mix = redo_nets or not mix_logged(out_dir, delivery, WITH_T0_ALL)
+    if not (redo_nets or (redo_mix and (t0_shadow or t0_all_checkpoint is not None))):
         return
     load_d = res_parts = None
     load_surrogate = False
@@ -923,7 +981,10 @@ def retry_morning_steps(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
             generated_utc, weather_vintage, load_surrogate, False,
         )  # fmt: skip
-    mix_step(out_dir, delivery, t0_rows, generated_utc, prices=prices)
+    published_mix_step(
+        out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+        generated_utc, weather_vintage, load_surrogate, False, t0_all_checkpoint,
+    )  # fmt: skip
     if t0_rows is not None:
         from pred_el_prices.production.mix_learned import learned_step
 
@@ -983,10 +1044,11 @@ def run_daily(
     fail-soft: LEAR publishes whatever happens to the networks.
 
     `t0_shadow`: also run the t0 foundation model (production/t0_shadow.py) on
-    forecast runs of both editions, logged to t0_log/; fail-soft. Every run with
-    the nets also logs the nets+t0 mix (production/mix.py) to mix_log/.
-    `t0_all_checkpoint`: with `t0_shadow`, also run the fine-tuned t0 from these weights
-    (production/t0_all_shadow.py), logged to t0_all_log/ only; fail-soft.
+    forecast runs of both editions, logged to t0_log/; fail-soft.
+    `t0_all_checkpoint`: run the fine-tuned t0 from these weights on forecast runs of both
+    editions (production/t0_all_shadow.py, t0_all_log/); every run with the nets logs the
+    equal-weight nets + t0-all mix to mix_log/ (published_mix_step), the nets' own rows
+    flagged t0_missing when t0-all failed or has no weights. Fail-soft.
     `site_models`, `primary`, `mix_from`: the site's model blocks and headline model,
     see write_site_json. Every slot of a deployment must pass the same values, the
     refresh slots included.
@@ -1141,6 +1203,7 @@ def run_daily(
                         now.isoformat(timespec="seconds"),
                         vintage_of(pd.date_range(delivery, periods=24, freq="1h", tz="UTC")),
                         allow_load_surrogate or flag_of(day_rows, "load_surrogate"), t0_shadow,
+                        t0_all_checkpoint,
                     )  # fmt: skip
                 write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
                 return None
@@ -1214,38 +1277,28 @@ def run_daily(
             load_de_fallback=load_d,
             res_parts=res_parts, evening=evening,
         )  # fmt: skip
-    # before the site JSON: the nets+t0 mix may be the published forecast; both
+    # before the site JSON: the nets + t0-all mix is the published forecast; both
     # editions, on the inputs this run already built (fail-soft)
+    generated, vintage = entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1]
     t0_rows = None
-    if t0_shadow:
+    if t0_shadow:  # zero-shot t0: shadow log (+ the learned mixes below)
         from pred_el_prices.production.t0_shadow import t0_step
 
         t0_rows = t0_step(
             out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
-            entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1], load_surrogate,
-            evening,
+            generated, vintage, load_surrogate, evening,
         )  # fmt: skip
-        if t0_all_checkpoint is not None:
-            from pred_el_prices.production.t0_all_shadow import t0_all_step
+    published_mix_step(
+        out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
+        generated, vintage, load_surrogate, evening, t0_all_checkpoint, run_nets,
+    )  # fmt: skip
+    if run_nets and t0_rows is not None:  # learned mixes M1/M3: shadow log only, fail-soft
+        from pred_el_prices.production.mix_learned import learned_step
 
-            t0_all_step(
-                out_dir, cache_dir, dataset, features, delivery, prices, load_d, res_parts,
-                entry["generated_utc"].iloc[-1], entry["weather_vintage"].iloc[-1],
-                load_surrogate, checkpoint=t0_all_checkpoint,
-            )  # fmt: skip
-    if run_nets:  # shadow-logged every run; without t0 the mix is the nets, flagged
-        from pred_el_prices.production.mix import mix_step
-
-        mix_step(
-            out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening, prices=prices
-        )
-        if t0_rows is not None:  # learned mixes M1/M3: shadow log only, fail-soft
-            from pred_el_prices.production.mix_learned import learned_step
-
-            learned_step(
-                out_dir, delivery, t0_rows, entry["generated_utc"].iloc[-1], evening,
-                prices=prices, load_d=load_d, own_res=own_res, dataset=dataset,
-            )  # fmt: skip
+        learned_step(
+            out_dir, delivery, t0_rows, generated, evening,
+            prices=prices, load_d=load_d, own_res=own_res, dataset=dataset,
+        )  # fmt: skip
     write_site_json(out_dir, log_path, prices, prices_qh, **site_kw)
     print(f"forecast for {delivery:%Y-%m-%d} written to {out_dir}")
     return out_dir / "latest.json"

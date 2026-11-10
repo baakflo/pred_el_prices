@@ -225,6 +225,34 @@ workflows `train-nets.yml` (new) and `publish-forecast.yml` (bundle download).
         "evening": true, "hours": [...], "quarters": [...]}
 ```
 
+### Published: nets + t0-all mix in the nets block (from delivery 2026-11-12)
+
+- **What is published**: the equal-weight quantile mix of the nets (recalibrated, as
+  published until 11-11) and the fine-tuned t0 (`production/t0_all_shadow.py`, weights
+  `t0_all.pt` from the private nl release `t0-all`). t0-all is mixed RAW (no PIT seed
+  exists for it): its 21 levels onto the 99-level grid by PCHIP, as above; the mix clipped
+  to the SDAC limits. Quarter-hours as above: the nets' quarter-hours shifted per level by
+  what the mix moved their hour (mixed hours + the nets' median shape).
+- **Every forecast run**: morning 09:15, the 09:50 retry (reruns t0-all + mix when the nets
+  were rerun or no morning mix with t0-all stands) and the evening edition. Evening t0-all
+  inputs: no TSO load forecast of local D exists at 21:35 UTC, so the DE load row's horizon
+  is LEAR's DE surrogate and the neighbour-sum row's is `nets.neighbour_load_surrogate`
+  (the evening nets' substitutes; local-D hours on UTC D-1 take the substitute 24 h later,
+  local D+1 hours 24 h earlier), flagged `evening`, `load_surrogate`,
+  `neighbour_surrogate` in `t0_all_log/`. Fuels/RES/calendar as the morning.
+- **mix_log/** holds the published mix: `components` `nets+t0-all`; a run whose t0-all
+  failed (no weights, exception, non-finite output) logs the nets' own rows, `components`
+  `nets`, `t0_missing: true`, with a `::warning::PUBLISHED FORECAST FALLBACK` line.
+- **Site** (`--primary mix --mix-from 2026-11-12`, `--site-models nets`; the workflow
+  defaults, repository variables override): from the cut-over day the `nets` block
+  carries the mix where a mix with t0-all stands on the day's standing nets run, else the
+  nets. Same keys as the nets block (`trained_through` and the flags from the nets run),
+  only `model` reads "Equal-weight quantile mix: 24 networks (12 JSU + 12 quantile,
+  recalibrated) + fine-tuned t0-beta". No `primary` key, no sibling blocks: the JSON keeps
+  the shape the live site reads. Earlier days keep their nets blocks. With sibling blocks
+  enabled the `t0`/`mix` blocks stay the zero-shot t0 and its mix (mixed at site build).
+- The zero-shot t0 (`t0_log/`) and M1/M3 stay shadow logs; their seeds are optional.
+
 ### Learned mixes M1 / M3 (`production/mix_learned.py`, shadow log only)
 
 - **What**: the mix with a fitted nets weight w instead of 0.5, q = w·q_nets + (1−w)·q_t0

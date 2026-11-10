@@ -19,6 +19,13 @@ the order the checkpoint was trained on (it carries the list; a mismatch refuses
   federal holiday and a weekend);
 - nb_sum: summed TSO load forecasts of the 9 neighbour zones, horizon by the training rule
   (local D from the forecast, other hours from 24 h earlier).
+
+Its rows also feed the PUBLISHED forecast: the equal-weight nets + t0-all mix
+(production/mix.py, `pep forecast --primary mix`), so it runs in both editions. The evening
+edition (21:35 UTC on D-2) has no TSO load forecast for local day D, DE or neighbours: the
+horizon's two load rows then come from the substitutes the evening nets use (the DE load
+surrogate LEAR uses, nets.neighbour_load_surrogate for the neighbour sum), whatever a later
+cache holds, and the rows are flagged load_surrogate / neighbour_surrogate (substitute_horizon).
 """
 
 from __future__ import annotations
@@ -97,6 +104,16 @@ def lagged_horizon(series: pd.Series, hz: pd.DatetimeIndex, day: pd.Timestamp) -
     return v
 
 
+def substitute_horizon(sub: pd.Series, hz: pd.DatetimeIndex, day: pd.Timestamp) -> np.ndarray:
+    """A load row's horizon from a substitute covering the UTC hours of D (the evening
+    edition): those hours from it; the local-D hours before them (UTC 22-23 of D-1) its
+    value 24 h later, the same local clock hour; the local D+1 hours after them by
+    training's rule, 24 h earlier."""
+    src = hz.where(hz >= day, hz + DAY)
+    src = src.where(src < day + DAY, src - DAY)
+    return sub.reindex(src).to_numpy(dtype=float)
+
+
 def gate_loads(cache_dir: Path, start: pd.Timestamp) -> dict[str, pd.Series]:
     """The pre-gate TSO load forecasts straight from the cache: the DE aggregate (areas
     stepped in) and the 9-neighbour sum. `dataset` rows exist only where a price cleared,
@@ -116,12 +133,14 @@ def gate_loads(cache_dir: Path, start: pd.Timestamp) -> dict[str, pd.Series]:
 
 
 def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev,
-                 context=T0.CONTEXT, gate=None):  # fmt: skip
+                 context=T0.CONTEXT, gate=None, nb_sub=None):  # fmt: skip
     """Model inputs for `delivery`: (context prices, covariates [13, context + HORIZON],
     kept horizon hours, keep mask). `res_d` / `res_prev`: own RES parts (columns
     RES_TARGETS) of D and of D-1 (or None). `gate`: `gate_loads`, filling the horizon
-    hours `dataset` lacks (the context stays the dataset's, as in training). Raises on a
-    missing horizon value."""
+    hours `dataset` lacks (the context stays the dataset's, as in training). `nb_sub`: the
+    evening edition's neighbour-sum substitute over the UTC hours of D; with it both load
+    rows' horizons come from substitutes (substitute_horizon: `load_d`, the DE surrogate,
+    and `nb_sub`), never from TSO forecasts of local D. Raises on a missing horizon value."""
     o = T0.origin_of(delivery)
     ctx = pd.date_range(o - context * H, periods=context, freq="1h")
     hz = pd.date_range(o, periods=T0.HORIZON, freq="1h")
@@ -136,7 +155,12 @@ def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev
         nb_src = nb_src.combine_first(gate["nb"])
 
     load_c = dataset["load_forecast_mw"].reindex(ctx).to_numpy(dtype=float)
-    load_h = T0.horizon_load(load_src, load_d, hz, delivery)
+    if nb_sub is None:
+        load_h = T0.horizon_load(load_src, load_d, hz, delivery)
+        nb_h = lagged_horizon(nb_src, hz, delivery)
+    else:
+        load_h = substitute_horizon(load_d, hz, delivery)
+        nb_h = substitute_horizon(nb_sub, hz, delivery)
     parts = {}
     for row, col in PARTS.items():
         prev = None if res_prev is None else res_prev[col]
@@ -162,7 +186,7 @@ def build_inputs(delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev
             for f in FUELS
         },
         **{c: cal[c].to_numpy() for c in ["sat", "sun", "mon", "bridge"]},
-        "nb_sum": (nb.reindex(ctx).to_numpy(dtype=float), lagged_horizon(nb_src, hz, delivery)),
+        "nb_sum": (nb.reindex(ctx).to_numpy(dtype=float), nb_h),
     }
     cov = []
     for r in ROWS:
@@ -189,15 +213,18 @@ def load_model(checkpoint: Path):
 
 
 def forecast_day(model, delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev,
-                 gate=None):  # fmt: skip
+                 gate=None, nb_sub=None):  # fmt: skip
     ctx, cov, hours, keep = build_inputs(
-        delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev, gate=gate
-    )
+        delivery, prices, dataset, fuels_daily, load_d, res_d, res_prev, gate=gate,
+        nb_sub=nb_sub,
+    )  # fmt: skip
     fc = model.predict(
         ctx[None], horizon=T0.HORIZON, quantile_levels=T0.LEVELS, future_covariates=cov[None]
     )
     q = fc.quantiles.float().cpu().numpy()[0]
     out = pd.DataFrame(q[keep], index=hours, columns=T0.Q_NAMES)
+    if len(out) != 24 or not np.isfinite(out.to_numpy()).all():
+        raise RuntimeError(f"forecast for {delivery:%Y-%m-%d} incomplete or not finite")
     out["median"] = out["q50"]
     return out
 
@@ -216,14 +243,22 @@ def t0_all_step(
     load_surrogate: bool,
     checkpoint: Path = DEFAULT_CHECKPOINT,
     model=None,
-) -> bool:
-    """Shadow forecast of the fine-tuned t0 for `delivery`, appended to its log. Never
-    raises; skips (False) when the checkpoint is absent. `model`: (model, name), tests."""
+    evening: bool = False,
+) -> pd.DataFrame | None:
+    """Forecast of the fine-tuned t0 for `delivery`, appended to its log: the logged rows,
+    or None (checkpoint absent, or any failure: never raises). `model`: (model, name),
+    tests. `evening`: the 21:35 UTC edition; the load rows' horizons from the evening
+    substitutes (module docstring), flagged."""
     try:
         if model is None and not Path(checkpoint).exists():
-            print(f"t0-all shadow: no checkpoint at {checkpoint}, skipped")
-            return False
+            print(f"::warning::t0-all: no checkpoint at {checkpoint}, skipped")
+            return None
         t = time.perf_counter()
+        nb_sub = None
+        if evening:  # the neighbour substitute the evening nets use (same fit, same seed)
+            from pred_el_prices.production.nets import neighbour_load_surrogate
+
+            nb_sub = neighbour_load_surrogate(features, cache_dir, delivery)
         prev = delivery - DAY
         try:  # own RES parts of D-1 as the D-2 morning run made them (as t0_shadow)
             seen = dataset[dataset.index < prev - 2 * H]
@@ -235,16 +270,19 @@ def t0_all_step(
         fuels_daily = cache.load(cache_dir, "fuels_daily")
         gate = gate_loads(cache_dir, delivery - 7 * DAY)
         rows = forecast_day(
-            model, delivery, prices, dataset, fuels_daily, load_d, res_parts, res_prev, gate
-        ).astype("float32")
+            model, delivery, prices, dataset, fuels_daily, load_d, res_parts, res_prev, gate,
+            nb_sub,
+        ).astype("float32")  # fmt: skip
         rows.insert(0, "generated_utc", generated_utc)
         rows.insert(1, "weather_vintage", weather_vintage)
-        rows.insert(2, "load_surrogate", bool(load_surrogate))
+        rows.insert(2, "load_surrogate", bool(load_surrogate or evening))
         rows.insert(3, "checkpoint", name)
+        rows.insert(4, "evening", bool(evening))
+        rows.insert(5, "neighbour_surrogate", bool(evening))
         rows.index.name = "t"
         _write_partitions(Path(out_dir) / LOG_DIR, rows)
-        print(f"t0-all shadow: {delivery:%Y-%m-%d} logged in {time.perf_counter() - t:.0f} s")
-        return True
-    except Exception as e:  # noqa: BLE001 - shadow path: nothing here may cost LEAR the day
-        print(f"::warning::t0-all shadow step failed ({type(e).__name__}: {e})")
-        return False
+        print(f"t0-all: {delivery:%Y-%m-%d} logged in {time.perf_counter() - t:.0f} s")
+        return rows
+    except Exception as e:  # noqa: BLE001 - nothing here may cost the nets or LEAR the day
+        print(f"::warning::t0-all step failed ({type(e).__name__}: {e})")
+        return None

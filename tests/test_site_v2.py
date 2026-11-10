@@ -495,7 +495,12 @@ def test_published_t0_and_mix_blocks_survive_a_log_loss(tmp_path):
     ("kw", "match"),
     [
         ({"site_models": THREE, "primary": "mix"}, "mix_from"),
-        ({"primary": "mix", "mix_from": "2026-08-01"}, "site models"),
+        # mix with the nets block alone is the published mix (test_published_mix.py)
+        (
+            {"site_models": ("nets", "t0"), "primary": "mix", "mix_from": "2026-08-01"},
+            "site models",
+        ),
+        ({"primary": "t0", "mix_from": "2026-08-01"}, "site models"),
         ({"site_models": ("t0",)}, "site_models"),
         ({"site_models": ("nets", "lear")}, "site_models"),
     ],
@@ -516,6 +521,8 @@ def test_inconsistent_site_settings_are_refused(tmp_path, kw, match):
             (THREE, "mix", "2026-11-05"),
         ),
         (["--site-models", "nets,t0"], (("nets", "t0"), "nets", None)),
+        # the workflow default: the nets + t0-all mix inside the nets block
+        (["--primary", "mix", "--mix-from", "2026-11-12"], (("nets",), "mix", "2026-11-12")),
     ],
 )
 def test_cli_passes_the_site_settings_through(monkeypatch, argv, want):
@@ -535,7 +542,9 @@ def test_cli_passes_the_site_settings_through(monkeypatch, argv, want):
     [
         ["--site-models", "nets,t0,mix", "--primary", "mix"],
         ["--site-models", "nets,t0,mix", "--primary", "mix", "--mix-from", "next week"],
-        ["--primary", "mix", "--mix-from", "2026-11-05"],  # mix not among the site models
+        ["--site-models", "nets,t0", "--primary", "mix", "--mix-from", "2026-11-05"],
+        ["--primary", "t0", "--mix-from", "2026-11-05"],  # t0 not among the site models
+        ["--primary", "mix"],  # the published mix needs its cut-over day
         ["--site-models", "t0,mix"],
         ["--site-models", "nets,lear"],
     ],

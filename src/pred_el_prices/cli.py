@@ -240,8 +240,9 @@ def main() -> None:
         "--t0-all-checkpoint",
         type=Path,
         default=None,
-        help="With --t0-shadow: also log the fine-tuned t0 (13 covariate rows) from these "
-        "weights to t0_all_log/ (never published, fail-soft; skipped if the file is absent)",
+        help="Fine-tuned t0 (13 covariate rows) weights: forecast with it in both editions "
+        "(t0_all_log/) and log the equal-weight nets + t0-all mix (mix_log/), which "
+        "--primary mix publishes. Fail-soft: absent file or a failure, the nets publish",
     )
     fc.add_argument(
         "--site-models",
@@ -257,7 +258,9 @@ def main() -> None:
         default="nets",
         help="The site's headline model per day (the `primary` key; must be among "
         "--site-models): from --mix-from on, falling back to the nets on days without "
-        "its block; earlier days stay nets",
+        "its block; earlier days stay nets. Exception: mix with --site-models nets "
+        "publishes the nets + t0-all mix INSIDE the nets block (same JSON shape, no "
+        "primary key), the nets on days without a mix with t0-all",
     )
     fc.add_argument(
         "--mix-from",
@@ -542,7 +545,8 @@ def main() -> None:
         if "nets" not in wanted or not wanted <= set(SITE_MODELS):
             parser.error(f"--site-models: nets plus any of t0, mix, not {args.site_models!r}")
         site_models = tuple(m for m in SITE_MODELS if m in wanted)  # block order: nets, t0, mix
-        if args.primary not in site_models:
+        in_nets_block = args.primary == "mix" and site_models == ("nets",)
+        if args.primary not in site_models and not in_nets_block:
             parser.error(f"--primary {args.primary} needs it among --site-models")
         if args.primary != "nets":
             try:

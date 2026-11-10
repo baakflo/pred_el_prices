@@ -1,6 +1,7 @@
 """Fine-tuned t0 shadow: the 13 rows as trained, fail-soft step, opt-in wiring (fake model)."""
 
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -12,7 +13,7 @@ from pred_el_prices.pipeline import cache
 from pred_el_prices.production import t0_all_shadow as T
 from pred_el_prices.production import t0_shadow
 from pred_el_prices.production.t0_shadow import Q_NAMES, RES_COLS
-from test_t0_shadow import TSO_POST_GATE, FakeT0, _dataset, _day
+from test_t0_shadow import TSO_POST_GATE, FakeT0, _dataset, _day, _Tensor
 
 NB_COLS = [f"load_{z.lower()}_mw" for z in NEIGHBOUR_ZONES]
 T0_ORIGIN = t0_shadow.origin_of
@@ -136,29 +137,43 @@ def test_missing_neighbour_horizon_raises():
         )  # fmt: skip
 
 
-def _step(tmp_path, monkeypatch, model):
+def _step(tmp_path, monkeypatch, model, evening=False):
     delivery = pd.Timestamp("2026-07-15", tz="UTC")
     monkeypatch.setattr(T, "own_res_parts", lambda f, d, c, day: _parts(day))
     monkeypatch.setattr(t0_shadow, "CONTEXT", 48)
-    monkeypatch.setattr(T.build_inputs, "__defaults__", (48, None))
+    monkeypatch.setattr(T.build_inputs, "__defaults__", (48, None, None))
     cache.upsert(tmp_path / "cache", "fuels_daily", _fuels())
     ds = _dataset_all(delivery)
     return T.t0_all_step(
         tmp_path, tmp_path / "cache", ds, pd.DataFrame(), delivery, pd.Series(50.0, index=ds.index),
         _day(delivery, 2000.0), _parts(delivery), "2026-07-14T09:20:00+00:00", "00Z", False,
-        model=model,
+        model=model, evening=evening,
     )  # fmt: skip
 
 
 def test_step_logs_24_hours_with_checkpoint_name(tmp_path, monkeypatch, capsys):
     fake = FakeT0()
-    assert _step(tmp_path, monkeypatch, (fake, "t0_all_seed2")) is True
+    rows = _step(tmp_path, monkeypatch, (fake, "t0_all_seed2"))
+    assert rows is not None and len(rows) == 24
     assert fake.calls[0][1].shape == (1, 13, 48 + 26)
     log = pd.read_parquet(tmp_path / T.LOG_DIR / "2026-07.parquet")
     assert len(log) == 24 and (log["checkpoint"] == "t0_all_seed2").all()
     assert list(log.columns) == ["generated_utc", "weather_vintage", "load_surrogate",
-                                 "checkpoint", *Q_NAMES, "median"]  # fmt: skip
-    assert "t0-all shadow: 2026-07-15 logged" in capsys.readouterr().out
+                                 "checkpoint", "evening", "neighbour_surrogate", *Q_NAMES,
+                                 "median"]  # fmt: skip
+    assert not log["evening"].any() and not log["neighbour_surrogate"].any()
+    assert "t0-all: 2026-07-15 logged" in capsys.readouterr().out
+
+
+class _Const:
+    """A fake model returning one value at every level (NaN: a broken forecast)."""
+
+    def __init__(self, v):
+        self.v = v
+
+    def predict(self, ctx, horizon, quantile_levels, future_covariates):
+        q = np.full((1, horizon, len(quantile_levels)), self.v, dtype=np.float32)
+        return SimpleNamespace(quantiles=_Tensor(q))
 
 
 def test_step_never_raises_and_skips_without_weights(tmp_path, monkeypatch, capsys):
@@ -166,12 +181,18 @@ def test_step_never_raises_and_skips_without_weights(tmp_path, monkeypatch, caps
         def predict(self, *a, **k):
             raise RuntimeError("out of memory")
 
-    assert _step(tmp_path, monkeypatch, (Broken(), "x")) is False
-    assert "::warning::t0-all shadow step failed" in capsys.readouterr().out
+    assert _step(tmp_path, monkeypatch, (Broken(), "x")) is None
+    assert "::warning::t0-all step failed" in capsys.readouterr().out
     assert not (tmp_path / T.LOG_DIR).exists()
     assert T.t0_all_step(tmp_path, tmp_path, None, None, None, None, None, None, "x", "00Z",
-                         False, checkpoint=tmp_path / "absent.pt") is False  # fmt: skip
+                         False, checkpoint=tmp_path / "absent.pt") is None  # fmt: skip
     assert "no checkpoint" in capsys.readouterr().out
+
+
+def test_step_refuses_a_non_finite_forecast(tmp_path, monkeypatch, capsys):
+    assert _step(tmp_path, monkeypatch, (_Const(float("nan")), "x")) is None
+    assert "not finite" in capsys.readouterr().out
+    assert not (tmp_path / T.LOG_DIR).exists()
 
 
 def test_load_model_refuses_other_rows(tmp_path):
@@ -185,16 +206,50 @@ def test_load_model_refuses_other_rows(tmp_path):
         T.load_model(p)
 
 
-@pytest.mark.parametrize("ckpt", [None, "models/t0_all.pt"])
-def test_run_daily_runs_t0_all_only_with_weights(tmp_path, monkeypatch, ckpt):
+def test_evening_load_rows_come_from_the_substitutes():
+    # the evening edition: no TSO forecast of local D (DE or neighbours) may enter, even
+    # where a later cache holds one; DE = the surrogate (load_d), neighbours = nb_sub
+    delivery = pd.Timestamp("2026-01-15", tz="UTC")
+    ds = _dataset_all(delivery)
+    gate = {"load": pd.Series(3000.0, ds.index), "nb": pd.Series(50.0, ds.index)}
+    prev = _parts(delivery - pd.Timedelta(days=1), (7.0, 8.0, 9.0))
+    _, cov, _, keep = T.build_inputs(
+        delivery, pd.Series(50.0, index=ds.index), ds, _fuels(), _day(delivery, 2000.0),
+        _parts(delivery), prev, context=48, gate=gate, nb_sub=_day(delivery, 77.0),
+    )  # fmt: skip
+    r = dict(zip(T.ROWS, cov, strict=True))
+    np.testing.assert_allclose(r["load"][48:], 2000.0)  # all horizon hours, D-1's too
+    np.testing.assert_allclose(r["nb_sum"][48:], 77.0)
+    np.testing.assert_allclose(r["nb_sum"][:48], 90.0)  # the context stays the dataset's
+    np.testing.assert_allclose(r["rl"][48:][keep], 2000.0 - 90.0)
+
+
+def test_evening_step_flags_its_substitutes(tmp_path, monkeypatch):
+    from pred_el_prices.production import nets
+
+    seen = []
+    monkeypatch.setattr(
+        nets, "neighbour_load_surrogate",
+        lambda f, c, d: seen.append(d) or _day(d, 77.0),
+    )  # fmt: skip
+    rows = _step(tmp_path, monkeypatch, (FakeT0(), "t0_all_seed2"), evening=True)
+    assert rows is not None and len(seen) == 1
+    assert rows["evening"].all() and rows["neighbour_surrogate"].all()
+    assert rows["load_surrogate"].all()
+
+
+def _run_daily_stubs(tmp_path, monkeypatch):
+    """run_daily on stubbed inputs for 2026-07-15; t0_all_step and write_site_json record
+    their calls (t0_all_step returns the sentinel "T0ALL") into the returned list."""
     delivery = pd.Timestamp("2026-07-15", tz="UTC")
     hours = pd.date_range(delivery, periods=24, freq="1h")
     features = pd.DataFrame({"run_date": pd.Timestamp("2026-07-14")}, index=hours)
     cache.upsert(
         tmp_path / "cache", "entsoe/load_forecast", pd.DataFrame({"Forecasted Load": 1.0}, hours)
     )
+    empty = pd.DataFrame({"price_eur_mwh": []}, index=pd.DatetimeIndex([], tz="UTC"))
     monkeypatch.setattr(daily_forecast, "update_features", lambda *a: features)
-    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (pd.DataFrame(), None))
+    monkeypatch.setattr(daily_forecast, "build_dataset", lambda c: (empty, None))
     monkeypatch.setattr(daily_forecast, "site_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(daily_forecast, "quarter_prices", lambda c: pd.Series(dtype=float))
     monkeypatch.setattr(
@@ -203,10 +258,19 @@ def test_run_daily_runs_t0_all_only_with_weights(tmp_path, monkeypatch, ckpt):
     monkeypatch.setattr(
         daily_forecast, "lear_forecast", lambda *a: pd.Series(1.0, hours, name="forecast")
     )
-    monkeypatch.setattr(daily_forecast, "write_site_json", lambda *a: None)
-    monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: None)
     calls = []
-    monkeypatch.setattr(T, "t0_all_step", lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(
+        daily_forecast, "write_site_json", lambda *a, **k: calls.append(("site", a, k))
+    )
+    monkeypatch.setattr(T, "t0_all_step", lambda *a, **k: calls.append(("t0_all", a, k)) or "T0ALL")
+    return calls
+
+
+@pytest.mark.parametrize("ckpt", [None, "models/t0_all.pt"])
+def test_run_daily_runs_t0_all_only_with_weights(tmp_path, monkeypatch, ckpt):
+    delivery = pd.Timestamp("2026-07-15", tz="UTC")
+    calls = _run_daily_stubs(tmp_path, monkeypatch)
+    monkeypatch.setattr(t0_shadow, "t0_step", lambda *a: None)
     monkeypatch.delitem(sys.modules, "t0", raising=False)
 
     daily_forecast.run_daily(
@@ -216,6 +280,8 @@ def test_run_daily_runs_t0_all_only_with_weights(tmp_path, monkeypatch, ckpt):
     )  # fmt: skip
 
     assert "t0" not in sys.modules
-    assert len(calls) == int(ckpt is not None)
+    t0_all = [c for c in calls if c[0] == "t0_all"]
+    assert len(t0_all) == int(ckpt is not None)
     if ckpt:
-        assert calls[0][1]["checkpoint"] == tmp_path / ckpt and calls[0][0][4] == delivery
+        assert t0_all[0][2]["checkpoint"] == tmp_path / ckpt and t0_all[0][1][4] == delivery
+        assert t0_all[0][2]["evening"] is False

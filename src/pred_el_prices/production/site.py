@@ -36,7 +36,13 @@ MODEL_LABELS = {"nets": NETS_MODEL_LABEL, "t0": T0_MODEL_LABEL, "mix": MIX_MODEL
 LOG_DIR = "nets_log"  # monthly partitions
 LOG_NAME = "nets_log.parquet"  # single-file layout (legacy state, backfill outputs)
 MIX_LOG_DIR = "mix_log"  # nets+t0 mix (production/mix.py), monthly partitions only
-MIX_WITH_T0 = "nets+t0"  # the mix log's `components` when t0 made it in
+MIX_WITH_T0 = "nets+t0"  # the mix log's `components` when (zero-shot) t0 made it in
+MIX_WITH_T0_ALL = "nets+t0-all"  # ... when the fine-tuned t0 did: the published mix
+# the nets block's label on days it carries the published mix (pep forecast --primary mix)
+PUBLISHED_MIX_LABEL = (
+    "Equal-weight quantile mix: 24 networks (12 JSU + 12 quantile, recalibrated) "
+    "+ fine-tuned t0-beta"
+)
 SEED_NAME = "nets_pit_seed.parquet"  # PIT/median history before go-live (pep seed-nets-pit)
 T0_SEED_NAME = "t0_pit_seed.parquet"  # t0's PIT history before its log (pep seed-t0-pit)
 DAYS_DIR = "days"  # per-delivery-day detail files for the site
@@ -244,16 +250,50 @@ def _t0_recal(h: pd.DataFrame) -> dict:
     return {"t0_recal_days": n, **({"t0_uncalibrated": True} if n == 0 else {})}
 
 
+def nets_block_days(nets_days: dict, mix_days: dict, since: pd.Timestamp) -> dict:
+    """{day: rows} the `nets` block publishes under `--primary mix` with no sibling blocks.
+
+    From delivery day `since` (the cut-over, UTC) on: the published mix (mix log rows with
+    `components` MIX_WITH_T0_ALL, 24 hours + 96 quarters) where it was built on the day's
+    standing nets run (a nets rerun the mix step missed must not leave an older mix in
+    front of it); otherwise the nets, exactly as before. Earlier days keep the nets.
+
+    The mix rows lose what the nets rows never had, so the block keeps the nets block's
+    keys exactly (trained_through and the substitute-input flags come from the nets run);
+    only its `model` label differs (`model_label`, read by latest_nets).
+    """
+    out = dict(nets_days)
+    for day, mix in mix_days.items():
+        nets = nets_days.get(day)
+        if day < since or nets is None:
+            continue
+        h, qh = mix[mix["kind"] == "h"], mix[mix["kind"] == "qh"]
+        nets_h = nets[nets["kind"] == "h"]
+        if len(h) != 24 or len(qh) != 96 or nets_h.empty:
+            continue
+        if "components" not in h or not (h["components"] == MIX_WITH_T0_ALL).all():
+            continue
+        if str(nets_h["generated_utc"].iloc[0]) != str(h["nets_generated_utc"].iloc[0]):
+            continue
+        extra = [*PROVENANCE, "t0_recal_days", "mixed_editions", "flat_quarters"]
+        out[day] = mix.drop(columns=[c for c in extra if c in mix]).assign(
+            model_label=PUBLISHED_MIX_LABEL
+        )
+    return out
+
+
 def latest_nets(rows: pd.DataFrame, prices, prices_qh, model: str = "nets") -> dict | None:
     """A model block of latest.json from one day's rows in the nets log layout (None
     without hourly rows): `nets` from the nets log, `t0`/`mix` from mix.site_days. t0 is
-    zero-shot and has no trained_through."""
+    zero-shot and has no trained_through. Rows with a `model_label` (nets_block_days)
+    carry their own label."""
     h, qh = rows[rows["kind"] == "h"], rows[rows["kind"] == "qh"]
     if h.empty:
         return None
     trained = h.get("trained_through")  # t0 is zero-shot: none
+    label = str(h["model_label"].iloc[0]) if "model_label" in h else MODEL_LABELS[model]
     return {
-        "model": MODEL_LABELS[model],
+        "model": label,
         **({"trained_through": str(trained.iloc[0])} if trained is not None else {}),
         "generated_utc": str(h["generated_utc"].iloc[0]),
         **{col: str(h[col].iloc[0]) for col in PROVENANCE if col in h},
