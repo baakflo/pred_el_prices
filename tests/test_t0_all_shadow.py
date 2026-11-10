@@ -225,6 +225,7 @@ def test_evening_load_rows_come_from_the_substitutes():
 
 
 def test_evening_step_flags_its_substitutes(tmp_path, monkeypatch):
+    pytest.importorskip("torch")  # production.nets loads the network code
     from pred_el_prices.production import nets
 
     seen = []
