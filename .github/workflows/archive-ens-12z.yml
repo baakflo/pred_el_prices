@@ -79,6 +79,37 @@ jobs:
           echo "::error::12Z push failed after 3 merge retries"
           exit 1
 
+      # Second chance for the ENTSO-E day-ahead snapshot (archive-weather's
+      # evening slot is the primary). 20:35/21:35 UTC are past the 18:00
+      # CET/CEST wind/solar publication year-round; a fixed-UTC 16:30 slot
+      # was not, and missed every day from the 2026-10-25 DST change on
+      # without a single red run. Idempotent: the first complete snapshot
+      # per delivery day wins. Stages only entsoe-forecasts/, so a 12Z
+      # download that died mid-way can't ride along; always() so a missing
+      # 12Z run doesn't skip it.
+      - name: Archive ENTSO-E day-ahead forecast snapshot
+        if: always()
+        continue-on-error: true
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+        run: |
+          uv run python -m pred_el_prices.cli archive-entsoe-forecasts --archive-dir archive_repo
+          cd archive_repo
+          git config user.name "archive-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add entsoe-forecasts
+          if git diff --cached --quiet; then
+            echo "no new entsoe-forecasts snapshot"
+            exit 0
+          fi
+          git commit -m "ENTSO-E forecast snapshot $(date -u +%F)"
+          for i in 1 2 3; do
+            if git push; then exit 0; fi
+            git pull --no-rebase --no-edit
+          done
+          echo "::error::entsoe-forecasts push failed after 3 merge retries"
+          exit 1
+
       # Heal 00Z gaps left by throttled mornings (the bucket keeps history
       # and the evening is off-peak). Best-effort and capped so it can never
       # starve the job again: fast-fail per request instead of out-waiting

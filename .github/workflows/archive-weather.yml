@@ -16,7 +16,11 @@ on:
   #     year-round. Also takes the _late benchmark snapshot.
   #   1630 - evening slot: the TSO wind/solar day-ahead forecast publishes
   #     only at 18:00 CET/CEST (EEV Par. 3) - it never exists pre-gate, so
-  #     the snapshot captures the evening vintage. 18:30 CEST = 16:30 UTC.
+  #     the snapshot captures the evening vintage. Scheduled at 18:30
+  #     Europe/Berlin in cron-job.org (16:30 UTC in summer, 17:30 UTC in
+  #     winter): a fixed 16:30 UTC is 17:30 CET, before publication, and
+  #     silently missed every snapshot from 2026-10-25 to 11-12. The slot
+  #     name stays "1630"; archive-ens-12z retries the snapshot at 20:35.
   # A dispatch without a slot behaves like a generic manual run (no _late).
   workflow_dispatch:
     inputs:
@@ -221,5 +225,33 @@ jobs:
               gh issue create --repo "${{ github.repository }}" \
                 --title "Weather archive gap:$missing" \
                 --body "Missing daily 00Z parquet for:$missing. These days are likely unrecoverable (DWD keeps ~24h). Check workflow runs and fix before the gap grows."
+            fi
+          fi
+
+      # The ENTSO-E snapshot skips quietly while the data isn't published
+      # yet, so a slot that always fires too early stays green forever
+      # (2026-10-25..11-12). Today's delivery file is written the previous
+      # evening, so it must exist by any slot of the day. Separate issue
+      # title: an open weather-gap issue must not mute this one.
+      - name: ENTSO-E snapshot gap detection (last 3 delivery days)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd archive_repo
+          missing=""
+          for d in 0 1 2; do
+            day=$(TZ=Europe/Berlin date -d "-$d day" +%Y%m%d)
+            f="entsoe-forecasts/${day:0:4}/entsoe-forecasts_${day}.parquet"
+            [ -f "$f" ] || missing="$missing $day"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::entsoe-forecasts snapshot missing for:$missing"
+            open=$(gh issue list --repo "${{ github.repository }}" --state open \
+              --search "ENTSO-E snapshot gap" --json number --jq 'length')
+            if [ "$open" = "0" ]; then
+              gh issue create --repo "${{ github.repository }}" \
+                --title "ENTSO-E snapshot gap:$missing" \
+                --body "Missing entsoe-forecasts snapshot for delivery day(s):$missing. ENTSO-E serves only the latest version, so the first-published vintage is lost; check the evening archive-weather slot and archive-ens-12z."
             fi
           fi
